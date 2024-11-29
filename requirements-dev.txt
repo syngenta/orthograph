@@ -7,4 +7,5 @@ sphinx
 black
 flake8
 isort
+black[jupyter]
 
