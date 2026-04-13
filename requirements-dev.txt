@@ -3,9 +3,7 @@ bumpver
 pytest
 pytest-cov
 pytest-mock
-sphinx
-black
-flake8
-isort
-black[jupyter]
-
+ruff
+mypy
+pre-commit
+types-PyYAML

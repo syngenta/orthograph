@@ -1,60 +1,30 @@
-import networkx as nx
+"""Depiction: Mermaid diagram generation from GraphDataModel."""
 
-from orthograph.graph_schema import GraphSchema
+from orthograph.core.graph_data_model import GraphDataModel
 
 
-def to_networkx(schema: GraphSchema) -> nx.MultiDiGraph:
-    """
-    Convert a GraphSchema to a NetworkX MultiDiGraph.
+def to_mermaid(model: GraphDataModel) -> str:
+    """Convert a GraphDataModel to a Mermaid diagram string."""
+    lines = ["graph TD"]
 
-    Args:
-        schema (GraphSchema): The schema to convert.
-
-    Returns:
-        nx.MultiDiGraph: A NetworkX graph representation of the schema.
-    """
-    g = nx.MultiDiGraph()
-
-    # Add nodes
-    for label, node_spec in schema.node_specs.items():
-        g.add_node(label, type="node", properties=node_spec.properties)
-
-    # Add edges (relationships)
-    for label, rel_spec in schema.relationship_specs.items():
-        g.add_edge(
-            rel_spec.source_type,
-            rel_spec.target_type,
-            key=label,
-            type="relationship",
-            properties=rel_spec.properties,
-            directed=rel_spec.directed,
+    for nt in model.node_types:
+        specs = nt.get_property_specs()
+        props = ", ".join(
+            f"{name}: {info.python_type.__name__}" for name, info in specs.items()
         )
+        lines.append(f'    {nt.__label__}["{nt.__label__}<br>{props}"]')
 
-    return g
+    for rt in model.relationship_types:
+        src = rt.__source_type__.__label__
+        tgt = rt.__target_type__.__label__
+        arrow = "-->" if rt.__directed__ else "---"
+        specs = rt.get_property_specs()
+        props = ", ".join(
+            f"{name}: {info.python_type.__name__}" for name, info in specs.items()
+        )
+        label_str = rt.__label__
+        if props:
+            label_str += f"<br>{props}"
+        lines.append(f"    {src} {arrow}|{label_str}| {tgt}")
 
-
-def to_mermaid(schema: GraphSchema) -> str:
-    """
-    Convert a GraphSchema to a Mermaid diagram string.
-
-    Args:
-        schema (GraphSchema): The schema to convert.
-
-    Returns:
-        str: A Mermaid diagram string representing the schema.
-    """
-    mermaid_lines = ["graph TD"]
-
-    # Add nodes
-    for label, node_spec in schema.node_specs.items():
-        properties = ", ".join(f"{k}: {v}" for k, v in node_spec.properties.items())
-        mermaid_lines.append(f'    {label}["{label}<br>{properties}"]')
-
-    # Add relationships
-    for label, rel_spec in schema.relationship_specs.items():
-        source, target = rel_spec.node_types
-        arrow = "-->" if rel_spec.directed else "---"
-        properties = ", ".join(f"{k}: {v}" for k, v in rel_spec.properties.items())
-        mermaid_lines.append(f"    {source} {arrow}|{label}<br>{properties}| {target}")
-
-    return "\n".join(mermaid_lines)
+    return "\n".join(lines)

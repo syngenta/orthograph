@@ -16,6 +16,7 @@ dist/
 
 # pytest
 .pytest_cache
+pytest-report.xml
 
 # IPython Notebook
 .ipynb_checkpoints
@@ -25,6 +26,31 @@ docs/build/
 docs/source/reference/generated/*rst
 
 # managing secrets
-.ini
-.env
 .secrets.*
+.env
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# Logs
+*.log
+logs/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Mypy cache
+.mypy_cache/
+
+# Ruff cache
+.ruff_cache/
+
+# Hypothesis testing cache
+.hypothesis/

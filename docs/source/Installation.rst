@@ -25,6 +25,3 @@ packages. To install orthograph in development setting simply type:
     $ git clone
     $ cd orthograph
     $ pip install -e .[dev]
-
-
-

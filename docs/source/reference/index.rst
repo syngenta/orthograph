@@ -12,4 +12,3 @@ my_module
 
      my_module.my_function
      my_module.my_class
-

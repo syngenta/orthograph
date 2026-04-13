@@ -1,0 +1,72 @@
+stages:
+  - lint
+  - pytest
+  - release
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - when: never
+
+
+cache:
+  paths:
+    - .cache/pip
+
+pre-commit:
+  stage: lint
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  image: python:3.12
+  script:
+    - pip install -e '.[dev]'
+    - SKIP=no-commit-to-branch pre-commit run --all-files --show-diff-on-failure --color=always
+
+pytest:
+  stage: pytest
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  image: "python:$VERSION"
+  script:
+    - pip install -e '.[dev]'
+    - python -m pytest -v
+  parallel:
+    matrix:
+      - VERSION: [ "3.11", "3.12", "3.13"]
+
+.bumpver:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  image: python:3.12
+  when: manual
+  variables:
+    TYPE: ""
+  tags:
+    - docker
+  script:
+    - pip install bumpver build twine
+    - git config --global user.email "bumpver@syngenta.com"
+    - git config --global user.name "bumpver"
+    - git remote set-url origin "https://gitlab-ci-token:${BUMPVER_TOKEN}@gitlab.com/${CI_PROJECT_NAMESPACE}/${CI_PROJECT_NAME}.git"
+    - bumpver update $TYPE --no-push
+    - git push -o ci.skip --tags origin HEAD:${CI_COMMIT_REF_NAME}
+    - python -m build
+    - twine check dist/*
+    - twine upload --cert $ROOT_CA dist/*
+
+bumpver-minor:
+  extends: .bumpver
+  variables:
+    TYPE: "--minor"
+
+bumpver-major:
+  extends: .bumpver
+  variables:
+    TYPE: "--major"
+
+bumpver-patch:
+  extends: .bumpver
+  variables:
+    TYPE: "--patch"

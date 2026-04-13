@@ -7,6 +7,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 import orthograph
 
+
 project = "orthograph"
 copyright = "2023 Syngenta Group Co. Ltd."
 author = "John Smith"
