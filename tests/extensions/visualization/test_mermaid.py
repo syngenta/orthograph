@@ -1,17 +1,16 @@
-"""Tests for orthograph.depiction -- Mermaid diagram generation."""
+"""Tests for orthograph.extensions.visualization.mermaid."""
 
 import pytest
 
 from orthograph.core.graph_data_model import GraphDataModel
 from orthograph.core.node_model import NodeModel
 from orthograph.core.relationship_model import RelationshipModel
-from orthograph.depiction import to_mermaid
+from orthograph.extensions.visualization import to_mermaid
 
 
 class Person(NodeModel):
     __label__ = "Person"
     __uid_field__ = "name"
-
     name: str
     age: int
 
@@ -19,7 +18,6 @@ class Person(NodeModel):
 class Movie(NodeModel):
     __label__ = "Movie"
     __uid_field__ = "title"
-
     title: str
     year: int
 
@@ -28,7 +26,6 @@ class ActedIn(RelationshipModel):
     __label__ = "ACTED_IN"
     __source_type__ = Person
     __target_type__ = Movie
-
     role: str
 
 
@@ -64,9 +61,6 @@ def undirected_model() -> GraphDataModel:
     )
 
 
-# --- Mermaid generation tests ---
-
-
 def test_mermaid_basic(model: GraphDataModel):
     mermaid = to_mermaid(model)
     assert "graph TD" in mermaid
@@ -81,12 +75,14 @@ def test_mermaid_directed_arrow(model: GraphDataModel):
     assert "-->" in mermaid
 
 
-def test_mermaid_undirected_arrow(undirected_model: GraphDataModel):
+def test_mermaid_undirected_arrow(
+    undirected_model: GraphDataModel,
+):
     mermaid = to_mermaid(undirected_model)
     assert "---" in mermaid
 
 
-def test_mermaid_node_properties_in_output(model: GraphDataModel):
+def test_mermaid_node_properties(model: GraphDataModel):
     mermaid = to_mermaid(model)
     assert "name" in mermaid
     assert "age" in mermaid

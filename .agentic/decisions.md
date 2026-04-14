@@ -79,3 +79,74 @@ These are not active code and should not block the pre-commit pipeline.
 The pydantic mypy plugin makes dynamic class creation in `io/yaml.py`
 type-safe. Removed 4 unnecessary `# type: ignore` comments that were
 suppressing non-existent errors.
+
+## 2026-04-14: Extensions Redesign -- Two-Phase Architecture
+
+### Problem
+The original extensions (flat files: `introspector.py`, `adapter.py`, `_neo4j_common.py`)
+mixed inspection logic with validation logic. Each backend produced `IntrospectedSchema`
+dataclasses that were compared via `compare_schema()`. This was functional but:
+- No shared interface (no ABC) across backends
+- `IntrospectedSchema` was a plain dataclass, not serialisable or injectable
+- Validation was tightly coupled to introspection (no way to inject external profiles)
+- No property completeness metrics, no cardinality stats populated
+- Duplicated logic across Neo4j/Memgraph introspectors
+
+### Decision: Two-Phase Architecture (Inspect, then Validate)
+Inspired by Soda Core (inspect-then-check) and SHACL (shapes graph vs. data graph):
+
+- **Phase 1: Inspection** -- `GraphInspector` ABC with `inspect() -> GraphProfile`.
+  Three implementations: `NetworkxInspector`, `Neo4jInspector`, `MemgraphInspector`.
+- **Phase 2: Validation** -- `validate_profile(profile, model) -> ValidationResult`.
+  The validator never touches the backend. Profiles are injectable, serialisable.
+
+### `GraphProfile` as shared currency
+A frozen Pydantic model with `NodeTypeProfile`, `RelationshipTypeProfile`,
+`PropertyProfile` (with `completeness`, `observed_types`, `is_mandatory`),
+`CardinalityStats`, and `ConstraintInfo`. Replaces the old `IntrospectedSchema`
+dataclass. Richer data: counts, completeness, observed endpoint labels.
+
+### `QueryStrategy` protocol (Neo4j)
+Extensible strategy for Neo4j query generation. `ApocQueryStrategy` uses APOC
+procedures; `CypherQueryStrategy` uses pure Cypher. Auto-detected, user-overridable.
+
+### Module naming
+No underscore-prefixed modules. Clear names: `models.py` (not `_base.py`),
+`queries.py` (not `_queries.py`), `validation.py` (not `_validation.py`).
+
+### Visualization moved to extensions
+`depiction.py` moved to `extensions/visualization/mermaid.py`. Clean break,
+no backward-compatible shim. All import sites updated.
+
+### `schema_to_networkx()` kept in `networkx/conversion.py`
+Useful utility for future converters. Prepares for a conversion extension
+that can reshape data between formats.
+
+## 2026-04-14: Visualization -- Separation from Extensions
+
+### Problem
+Visualization (`to_mermaid`) was placed inside `extensions/visualization/`
+during the redesign. But visualization is not an extension in the same sense
+as neo4j or networkx: it does not inspect or validate. It is a **consumer**
+of orthograph's data structures (models, profiles, results).
+
+### Decision: Move to top-level `src/orthograph/visualization/`
+Visualization becomes its own subpackage at the same level as `core/`, `io/`,
+and `extensions/`. Rationale:
+- Different concern: rendering vs. inspecting/validating
+- Different dependency profile (Jinja2, matplotlib vs. neo4j, networkx)
+- Consumes outputs from both core (GraphDataModel) and extensions (GraphProfile,
+  ValidationResult)
+- `extensions/networkx/conversion.py` stays -- it produces a data object
+  (nx.MultiDiGraph), not a visual format
+
+### Renderer naming convention
+Functions follow `{input_type}_to_{format}`:
+- `model_to_mermaid(model: GraphDataModel) -> str`
+- `profile_to_text(profile: GraphProfile) -> str`
+- `result_to_text(result: ValidationResult) -> str`
+
+### Implementation deferred to dedicated branch
+The move and new renderers will be implemented on a separate branch
+after the current extensions redesign is merged.
+See `.agentic/visualization/plan.md` for the full plan.

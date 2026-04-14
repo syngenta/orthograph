@@ -1,4 +1,4 @@
-"""Validate neo4j driver query results against a GraphDataModel."""
+"""Adapt neo4j driver results for orthograph validation."""
 
 from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
@@ -69,10 +69,10 @@ def records_to_graph_data(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Extract nodes and relationships from neo4j Records.
 
-    Inspects each value in each record. Objects with a `labels`
-    attribute are treated as nodes; objects with a `type` and
-    `start_node` attribute are treated as relationships. Scalars
-    are skipped.
+    Inspects each value in each record. Objects with a ``labels``
+    attribute (frozenset) are treated as nodes; objects with ``type``
+    and ``start_node`` attributes are treated as relationships.
+    Scalars are skipped.
     """
     seen_node_ids: set[str] = set()
     seen_rel_ids: set[str] = set()
@@ -104,8 +104,8 @@ def validate_result(
 
     Args:
         records: Query result records from the neo4j driver.
-        model: The GraphDataModel to validate against. If result_model
-            is provided, this parameter is ignored and result_model
+        model: The GraphDataModel to validate against. If *result_model*
+            is provided, this parameter is ignored and *result_model*
             is used instead.
         result_model: Optional specific model for the query's expected
             output. If provided, validation uses this model.
@@ -130,7 +130,6 @@ def _pick_primary_label(
         return next(iter(matching))
     if len(matching) > 1:
         return sorted(matching)[0]
-    # No match -- return first alphabetically from the node's labels
     return sorted(labels)[0] if labels else "__unknown__"
 
 

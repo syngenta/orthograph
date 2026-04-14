@@ -1,4 +1,4 @@
-"""Tests for orthograph.extensions.networkx -- NetworkX validation and conversion."""
+"""Tests for schema_to_networkx conversion."""
 
 import networkx as nx
 import pytest
@@ -6,7 +6,7 @@ import pytest
 from orthograph.core.graph_data_model import GraphDataModel
 from orthograph.core.node_model import NodeModel
 from orthograph.core.relationship_model import RelationshipModel
-from orthograph.extensions.networkx import schema_to_networkx, validate_networkx_graph
+from orthograph.extensions.networkx import schema_to_networkx
 
 
 class Person(NodeModel):
@@ -48,9 +48,6 @@ def model() -> GraphDataModel:
     )
 
 
-# --- Schema to NetworkX tests ---
-
-
 def test_schema_to_networkx_convert(model: GraphDataModel):
     g = schema_to_networkx(model)
     assert isinstance(g, nx.MultiDiGraph)
@@ -69,60 +66,3 @@ def test_schema_to_networkx_node_attributes(model: GraphDataModel):
     g = schema_to_networkx(model)
     assert g.nodes["Person"]["uid_field"] == "name"
     assert "name" in g.nodes["Person"]["properties"]
-
-
-# --- Validate NetworkX graph tests ---
-
-
-def test_validate_networkx_graph_valid(model: GraphDataModel):
-    g = nx.MultiDiGraph()
-    g.add_node(
-        "alice",
-        __label__="Person",
-        name="Alice",
-        age=30,
-    )
-    g.add_node(
-        "inception",
-        __label__="Movie",
-        title="Inception",
-        year=2010,
-    )
-    g.add_edge(
-        "alice",
-        "inception",
-        __label__="ACTED_IN",
-        role="Cobb",
-    )
-
-    result = validate_networkx_graph(g, model)
-    assert result.is_valid
-
-
-def test_validate_networkx_graph_invalid_node_label(model: GraphDataModel):
-    g = nx.MultiDiGraph()
-    g.add_node("x", __label__="Unknown", val="test")
-
-    result = validate_networkx_graph(g, model)
-    assert not result.is_valid
-    assert any(e.code == "UNKNOWN_NODE_LABEL" for e in result.errors)
-
-
-def test_validate_networkx_graph_invalid_relationship_label(model: GraphDataModel):
-    g = nx.MultiDiGraph()
-    g.add_node(
-        "a",
-        __label__="Person",
-        name="A",
-        age=1,
-    )
-    g.add_node(
-        "b",
-        __label__="Movie",
-        title="B",
-        year=2020,
-    )
-    g.add_edge("a", "b", __label__="FAKE")
-
-    result = validate_networkx_graph(g, model)
-    assert not result.is_valid

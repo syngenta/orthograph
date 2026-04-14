@@ -1,10 +1,12 @@
-from orthograph.extensions.memgraph.introspector import (
-    MemgraphSchemaIntrospector,
+"""Memgraph extension for orthograph."""
+
+from orthograph.extensions.memgraph.inspector import (
+    MemgraphInspector,
     validate_database,
 )
 
 
 __all__ = [
-    "MemgraphSchemaIntrospector",
+    "MemgraphInspector",
     "validate_database",
 ]

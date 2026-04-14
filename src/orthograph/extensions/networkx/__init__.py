@@ -1,10 +1,7 @@
-from orthograph.extensions.networkx.adapter import (
-    schema_to_networkx,
-    validate_networkx_graph,
-)
+"""NetworkX extension for orthograph."""
+
+from orthograph.extensions.networkx.conversion import schema_to_networkx
+from orthograph.extensions.networkx.inspector import NetworkxInspector
 
 
-__all__ = [
-    "schema_to_networkx",
-    "validate_networkx_graph",
-]
+__all__ = ["NetworkxInspector", "schema_to_networkx"]

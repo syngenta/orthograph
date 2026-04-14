@@ -1,13 +1,13 @@
 [build-system]
-requires = [
-    "setuptools>=42",
-]
+requires = ["setuptools>=42"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "orthograph"
 version = "0.1.0"
+description = "Pydantic-native graph data model definition and validation"
 requires-python = ">=3.10"
+readme = {file = "README.rst", content-type = "text/x-rst"}
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
@@ -18,23 +18,68 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
-dynamic = [
-    "dependencies",
-    "description",
-    "optional-dependencies",
-    "readme",
+
+# --------------------------------------------------------------------------- #
+#  Dependencies
+# --------------------------------------------------------------------------- #
+
+# Core: the minimum needed to define models, validate data, and load YAML configs
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
 ]
+
+[project.optional-dependencies]
+
+# Extension: NetworkX graph inspection and conversion
+networkx = [
+    "networkx>=3.0",
+]
+
+# Extension: Cypher query parsing and validation (graphglot parser)
+cypher = [
+    "graphglot>=0.9",
+]
+
+# Extension: Neo4j database inspection and result validation
+neo4j = [
+    "neo4j>=5.0",
+]
+
+# Extension: Memgraph database inspection (uses the neo4j Bolt driver)
+memgraph = [
+    "neo4j>=5.0",
+]
+
+# All extensions
+all = [
+    "orthograph[networkx,cypher,neo4j]",
+]
+
+# Development: testing, linting, type checking
+dev = [
+    "orthograph[all]",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.0",
+    "ruff>=0.9",
+    "mypy>=1.10",
+    "pre-commit>=3.0",
+    "bumpver>=2023.0",
+    "types-PyYAML>=6.0",
+    "types-networkx>=3.0",
+]
+
+# --------------------------------------------------------------------------- #
+#  Packaging
+# --------------------------------------------------------------------------- #
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.dynamic]
-dependencies = {file = "requirements.txt"}
-description = {file = "description.txt"}
-readme = {file = "README.rst", content-type = "text/x-rst"}
-
-[tool.setuptools.dynamic.optional-dependencies]
-dev = {file = "requirements-dev.txt"}
+# --------------------------------------------------------------------------- #
+#  Bumpver
+# --------------------------------------------------------------------------- #
 
 [tool.bumpver]
 current_version = "0.1.0"
@@ -47,6 +92,10 @@ push = true
 [tool.bumpver.file_patterns]
 "pyproject.toml" = ['current_version = "{version}"', 'version = "{version}"']
 
+# --------------------------------------------------------------------------- #
+#  Pytest
+# --------------------------------------------------------------------------- #
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --strict-markers --tb=short"
@@ -57,6 +106,7 @@ markers = [
 # --------------------------------------------------------------------------- #
 #  Ruff
 # --------------------------------------------------------------------------- #
+
 [tool.ruff]
 line-length = 88
 target-version = "py310"
@@ -69,7 +119,6 @@ select = [
     "F",      # pyflakes
     "I",      # isort
 ]
-
 ignore = [
     "E203",   # whitespace before ':'
 ]

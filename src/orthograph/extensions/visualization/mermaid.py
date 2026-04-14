@@ -1,4 +1,4 @@
-"""Depiction: Mermaid diagram generation from GraphDataModel."""
+"""Mermaid diagram generation from GraphDataModel."""
 
 from orthograph.core.graph_data_model import GraphDataModel
 

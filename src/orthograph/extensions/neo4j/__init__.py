@@ -1,7 +1,6 @@
-from orthograph.extensions.neo4j.introspector import (
-    Neo4jSchemaIntrospector,
-    validate_database,
-)
+"""Neo4j extension for orthograph."""
+
+from orthograph.extensions.neo4j.inspector import Neo4jInspector, validate_database
 from orthograph.extensions.neo4j.result_adapter import (
     node_to_dict,
     records_to_graph_data,
@@ -11,7 +10,7 @@ from orthograph.extensions.neo4j.result_adapter import (
 
 
 __all__ = [
-    "Neo4jSchemaIntrospector",
+    "Neo4jInspector",
     "node_to_dict",
     "records_to_graph_data",
     "rel_to_dict",
