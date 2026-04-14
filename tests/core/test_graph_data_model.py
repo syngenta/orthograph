@@ -282,3 +282,125 @@ def test_graph_data_model_relationship_label_enum():
     enum = model.get_relationship_label_enum()
     assert set(enum.__members__.keys()) == {"ACTED_IN", "DIRECTED"}
     assert enum.ACTED_IN.value == "ACTED_IN"
+
+
+# --- Undirected relationship tests ---
+
+
+class Company(NodeModel):
+    __label__ = "Company"
+    __uid_field__ = "name"
+    name: str
+
+
+class FriendOf(RelationshipModel):
+    __label__ = "FRIEND_OF"
+    __source_type__ = Person
+    __target_type__ = Person
+    __directed__ = False
+
+
+class Collaborates(RelationshipModel):
+    __label__ = "COLLABORATES"
+    __source_type__ = Person
+    __target_type__ = Company
+    __directed__ = False
+
+
+def test_undirected_same_type_outgoing_includes_both_directions():
+    """Undirected self-referencing rel appears in outgoing for the node type."""
+    model = GraphDataModel(
+        name="Social",
+        node_types=[Person],
+        relationship_types=[FriendOf],
+    )
+    outgoing = model.get_outgoing_relationship_types(Person)
+    labels = {r.__label__ for r in outgoing}
+    assert "FRIEND_OF" in labels
+
+
+def test_undirected_same_type_incoming_includes_both_directions():
+    """Undirected self-referencing rel appears in incoming for the node type."""
+    model = GraphDataModel(
+        name="Social",
+        node_types=[Person],
+        relationship_types=[FriendOf],
+    )
+    incoming = model.get_incoming_relationship_types(Person)
+    labels = {r.__label__ for r in incoming}
+    assert "FRIEND_OF" in labels
+
+
+def test_undirected_cross_type_outgoing_from_source():
+    model = GraphDataModel(
+        name="Cross",
+        node_types=[Person, Company],
+        relationship_types=[Collaborates],
+    )
+    outgoing = model.get_outgoing_relationship_types(Person)
+    labels = {r.__label__ for r in outgoing}
+    assert "COLLABORATES" in labels
+
+
+def test_undirected_cross_type_outgoing_from_target():
+    """Undirected cross-type: target_type also sees it as outgoing."""
+    model = GraphDataModel(
+        name="Cross",
+        node_types=[Person, Company],
+        relationship_types=[Collaborates],
+    )
+    outgoing = model.get_outgoing_relationship_types(Company)
+    labels = {r.__label__ for r in outgoing}
+    assert "COLLABORATES" in labels
+
+
+def test_undirected_cross_type_incoming_from_source():
+    """Undirected cross-type: source_type also sees it as incoming."""
+    model = GraphDataModel(
+        name="Cross",
+        node_types=[Person, Company],
+        relationship_types=[Collaborates],
+    )
+    incoming = model.get_incoming_relationship_types(Person)
+    labels = {r.__label__ for r in incoming}
+    assert "COLLABORATES" in labels
+
+
+def test_undirected_cross_type_incoming_from_target():
+    model = GraphDataModel(
+        name="Cross",
+        node_types=[Person, Company],
+        relationship_types=[Collaborates],
+    )
+    incoming = model.get_incoming_relationship_types(Company)
+    labels = {r.__label__ for r in incoming}
+    assert "COLLABORATES" in labels
+
+
+def test_undirected_same_type_no_duplicates():
+    """For self-referencing undirected, should not duplicate entries."""
+    model = GraphDataModel(
+        name="Social",
+        node_types=[Person],
+        relationship_types=[FriendOf],
+    )
+    outgoing = model.get_outgoing_relationship_types(Person)
+    # source_type == target_type == Person, first branch catches it,
+    # second elif won't trigger (since source_type is also Person)
+    labels = [r.__label__ for r in outgoing]
+    assert labels.count("FRIEND_OF") == 1
+
+
+def test_directed_not_affected_by_undirected_logic():
+    """Directed relationships remain strictly directional."""
+    model = GraphDataModel(
+        name="Test",
+        node_types=[Person, Movie],
+        relationship_types=[ActedIn],
+    )
+    # Movie should not see ACTED_IN as outgoing (only incoming)
+    outgoing_movie = model.get_outgoing_relationship_types(Movie)
+    assert all(r.__label__ != "ACTED_IN" for r in outgoing_movie)
+    # Person should not see ACTED_IN as incoming
+    incoming_person = model.get_incoming_relationship_types(Person)
+    assert all(r.__label__ != "ACTED_IN" for r in incoming_person)

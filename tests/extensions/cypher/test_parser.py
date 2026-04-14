@@ -34,6 +34,12 @@ class City(NodeModel):
     name: str
 
 
+class Company(NodeModel):
+    __label__ = "Company"
+    __uid_field__ = "name"
+    name: str
+
+
 class ActedIn(RelationshipModel):
     __label__ = "ACTED_IN"
     __source_type__ = Person
@@ -48,12 +54,44 @@ class LivesIn(RelationshipModel):
     __source_cardinality__ = Cardinality.ONE
 
 
+class FriendOf(RelationshipModel):
+    __label__ = "FRIEND_OF"
+    __source_type__ = Person
+    __target_type__ = Person
+    __directed__ = False
+
+
+class Collaborates(RelationshipModel):
+    __label__ = "COLLABORATES"
+    __source_type__ = Person
+    __target_type__ = Company
+    __directed__ = False
+
+
 @pytest.fixture()
 def model() -> GraphDataModel:
     return GraphDataModel(
         name="Film",
         node_types=[Person, Movie, City],
         relationship_types=[ActedIn, LivesIn],
+    )
+
+
+@pytest.fixture()
+def social_model() -> GraphDataModel:
+    return GraphDataModel(
+        name="Social",
+        node_types=[Person],
+        relationship_types=[FriendOf],
+    )
+
+
+@pytest.fixture()
+def cross_undirected_model() -> GraphDataModel:
+    return GraphDataModel(
+        name="CrossUndirected",
+        node_types=[Person, Company],
+        relationship_types=[Collaborates],
     )
 
 
@@ -243,3 +281,80 @@ def test_validate_cypher_accepts_custom_strategy(
         parser=GraphglotParser(),
     )
     assert result.is_valid
+
+
+# --- Undirected relationship endpoint validation tests ---
+
+
+def test_validate_undirected_same_type_forward_valid(social_model: GraphDataModel):
+    """Undirected same-type: forward direction is valid."""
+    from orthograph.extensions.cypher.parser import validate_cypher
+
+    result = validate_cypher(
+        "MATCH (a:Person)-[:FRIEND_OF]->(b:Person) RETURN a, b",
+        social_model,
+    )
+    assert result.is_valid
+
+
+def test_validate_undirected_same_type_reverse_valid(social_model: GraphDataModel):
+    """Undirected same-type: reverse direction is also valid (trivially, same types)."""
+    from orthograph.extensions.cypher.parser import validate_cypher
+
+    result = validate_cypher(
+        "MATCH (a:Person)-[:FRIEND_OF]->(b:Person) RETURN a, b",
+        social_model,
+    )
+    assert result.is_valid
+
+
+def test_validate_undirected_cross_type_forward_valid(
+    cross_undirected_model: GraphDataModel,
+):
+    """Undirected cross-type: Person->Company (forward) is valid."""
+    from orthograph.extensions.cypher.parser import validate_cypher
+
+    result = validate_cypher(
+        "MATCH (a:Person)-[:COLLABORATES]->(b:Company) RETURN a, b",
+        cross_undirected_model,
+    )
+    assert result.is_valid
+
+
+def test_validate_undirected_cross_type_reverse_valid(
+    cross_undirected_model: GraphDataModel,
+):
+    """Undirected cross-type: Company->Person (reversed) should also be valid."""
+    from orthograph.extensions.cypher.parser import validate_cypher
+
+    result = validate_cypher(
+        "MATCH (a:Company)-[:COLLABORATES]->(b:Person) RETURN a, b",
+        cross_undirected_model,
+    )
+    assert result.is_valid
+
+
+def test_validate_undirected_cross_type_wrong_types_rejected(
+    cross_undirected_model: GraphDataModel,
+):
+    """Undirected cross-type: completely wrong types still rejected."""
+    from orthograph.extensions.cypher.parser import validate_cypher
+
+    result = validate_cypher(
+        "MATCH (a:Person)-[:COLLABORATES]->(b:Person) RETURN a, b",
+        cross_undirected_model,
+    )
+    assert not result.is_valid
+    assert any(e.code == "QUERY_INVALID_ENDPOINT" for e in result.errors)
+
+
+def test_validate_directed_cross_type_reverse_rejected(model: GraphDataModel):
+    """Directed: reverse direction is still rejected."""
+    from orthograph.extensions.cypher.parser import validate_cypher
+
+    result = validate_cypher(
+        "MATCH (a:Movie)-[:ACTED_IN]->(b:Person) RETURN a, b",
+        model,
+    )
+    assert not result.is_valid
+    assert any(e.code == "QUERY_INVALID_ENDPOINT" for e in result.errors)

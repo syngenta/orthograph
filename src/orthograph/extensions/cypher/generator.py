@@ -113,12 +113,14 @@ class CypherGenerator:
             f"(b:{tgt_label} {{{tgt_uid_field}: $tgt_uid}}) "
         )
 
+        arrow = "->" if rel_type.__directed__ else "-"
+
         if props:
             prop_str = ", ".join(f"{k}: ${k}" for k in props)
-            query += f"{verb} (a)-[r:{label} {{{prop_str}}}]->(b)"
+            query += f"{verb} (a)-[r:{label} {{{prop_str}}}]{arrow}(b)"
             params.update(props)
         else:
-            query += f"{verb} (a)-[r:{label}]->(b)"
+            query += f"{verb} (a)-[r:{label}]{arrow}(b)"
 
         query += " RETURN r"
         return query, params

@@ -285,7 +285,16 @@ def _check_endpoints(
         expected_src = rel_type.__source_type__.__label__
         expected_tgt = rel_type.__target_type__.__label__
 
-        if pat.source_label != expected_src or pat.target_label != expected_tgt:
+        forward_ok = (
+            pat.source_label == expected_src and pat.target_label == expected_tgt
+        )
+        reverse_ok = (
+            not rel_type.__directed__
+            and pat.source_label == expected_tgt
+            and pat.target_label == expected_src
+        )
+
+        if not forward_ok and not reverse_ok:
             result.add(
                 ValidationIssue(
                     code="QUERY_INVALID_ENDPOINT",

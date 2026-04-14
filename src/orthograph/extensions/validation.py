@@ -245,9 +245,16 @@ def _check_rel_endpoints(
 
         expected_src = rt.__source_type__.__label__
         expected_tgt = rt.__target_type__.__label__
+        # For undirected relationships, both endpoint types are valid
+        # in either source or target position
+        valid_sources = {expected_src}
+        valid_targets = {expected_tgt}
+        if not rt.__directed__:
+            valid_sources.add(expected_tgt)
+            valid_targets.add(expected_src)
 
         for src in rel_profile.source_labels:
-            if src != expected_src:
+            if src not in valid_sources:
                 result.add(
                     ValidationIssue(
                         code="INVALID_ENDPOINT",
@@ -267,7 +274,7 @@ def _check_rel_endpoints(
                 )
 
         for tgt in rel_profile.target_labels:
-            if tgt != expected_tgt:
+            if tgt not in valid_targets:
                 result.add(
                     ValidationIssue(
                         code="INVALID_ENDPOINT",

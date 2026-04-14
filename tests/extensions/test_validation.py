@@ -268,3 +268,179 @@ def test_validate_profile_no_cardinality_stats_skipped(
     # _complete_profile already has cardinality_stats=None
     result = validate_profile(profile, filmography_model)
     assert not any(e.code == "CARDINALITY_VIOLATION" for e in result.issues)
+
+
+# --- Undirected relationship endpoint validation tests ---
+
+
+def test_validate_profile_undirected_cross_type_forward_valid():
+    """Undirected cross-type: forward source/target is valid."""
+    from orthograph.core.node_model import NodeModel
+    from orthograph.core.relationship_model import RelationshipModel
+
+    class UPerson(NodeModel):
+        __label__ = "UPerson"
+        __uid_field__ = "name"
+        name: str
+
+    class UCompany(NodeModel):
+        __label__ = "UCompany"
+        __uid_field__ = "name"
+        name: str
+
+    class UCollaborates(RelationshipModel):
+        __label__ = "U_COLLABORATES"
+        __source_type__ = UPerson
+        __target_type__ = UCompany
+        __directed__ = False
+
+    model = GraphDataModel(
+        name="Cross",
+        node_types=[UPerson, UCompany],
+        relationship_types=[UCollaborates],
+    )
+    profile = _complete_profile(model)
+    result = validate_profile(profile, model)
+    assert result.is_valid, [str(e) for e in result.errors]
+
+
+def test_validate_profile_undirected_cross_type_reverse_valid():
+    """Undirected cross-type: reversed source/target should also be valid."""
+    from orthograph.core.node_model import NodeModel
+    from orthograph.core.relationship_model import RelationshipModel
+
+    class RPerson(NodeModel):
+        __label__ = "RPerson"
+        __uid_field__ = "name"
+        name: str
+
+    class RCompany(NodeModel):
+        __label__ = "RCompany"
+        __uid_field__ = "name"
+        name: str
+
+    class RCollaborates(RelationshipModel):
+        __label__ = "R_COLLABORATES"
+        __source_type__ = RPerson
+        __target_type__ = RCompany
+        __directed__ = False
+
+    model = GraphDataModel(
+        name="Cross",
+        node_types=[RPerson, RCompany],
+        relationship_types=[RCollaborates],
+    )
+
+    # Build profile with reversed endpoints
+    rel_profiles = {
+        "R_COLLABORATES": RelationshipTypeProfile(
+            rel_type="R_COLLABORATES",
+            count=200,
+            source_labels={"RCompany"},  # reversed
+            target_labels={"RPerson"},  # reversed
+        ),
+    }
+    node_profiles = {
+        "RPerson": NodeTypeProfile(
+            label="RPerson",
+            count=100,
+            property_profiles={
+                "name": PropertyProfile(
+                    name="name",
+                    present_count=100,
+                    total_count=100,
+                    observed_types=["str"],
+                ),
+            },
+        ),
+        "RCompany": NodeTypeProfile(
+            label="RCompany",
+            count=100,
+            property_profiles={
+                "name": PropertyProfile(
+                    name="name",
+                    present_count=100,
+                    total_count=100,
+                    observed_types=["str"],
+                ),
+            },
+        ),
+    }
+    profile = GraphProfile(
+        source="test",
+        node_type_profiles=node_profiles,
+        rel_type_profiles=rel_profiles,
+    )
+    result = validate_profile(profile, model)
+    # Should not have INVALID_ENDPOINT errors
+    assert not any(e.code == "INVALID_ENDPOINT" for e in result.errors)
+
+
+def test_validate_profile_directed_cross_type_reverse_rejected():
+    """Directed: reversed source/target is rejected."""
+    from orthograph.core.node_model import NodeModel
+    from orthograph.core.relationship_model import RelationshipModel
+
+    class DPerson(NodeModel):
+        __label__ = "DPerson"
+        __uid_field__ = "name"
+        name: str
+
+    class DMovie(NodeModel):
+        __label__ = "DMovie"
+        __uid_field__ = "title"
+        title: str
+
+    class DActedIn(RelationshipModel):
+        __label__ = "D_ACTED_IN"
+        __source_type__ = DPerson
+        __target_type__ = DMovie
+        __directed__ = True
+
+    model = GraphDataModel(
+        name="Dir",
+        node_types=[DPerson, DMovie],
+        relationship_types=[DActedIn],
+    )
+
+    rel_profiles = {
+        "D_ACTED_IN": RelationshipTypeProfile(
+            rel_type="D_ACTED_IN",
+            count=200,
+            source_labels={"DMovie"},  # wrong
+            target_labels={"DPerson"},  # wrong
+        ),
+    }
+    node_profiles = {
+        "DPerson": NodeTypeProfile(
+            label="DPerson",
+            count=100,
+            property_profiles={
+                "name": PropertyProfile(
+                    name="name",
+                    present_count=100,
+                    total_count=100,
+                    observed_types=["str"],
+                ),
+            },
+        ),
+        "DMovie": NodeTypeProfile(
+            label="DMovie",
+            count=100,
+            property_profiles={
+                "title": PropertyProfile(
+                    name="title",
+                    present_count=100,
+                    total_count=100,
+                    observed_types=["str"],
+                ),
+            },
+        ),
+    }
+    profile = GraphProfile(
+        source="test",
+        node_type_profiles=node_profiles,
+        rel_type_profiles=rel_profiles,
+    )
+    result = validate_profile(profile, model)
+    assert any(e.code == "INVALID_ENDPOINT" for e in result.errors)

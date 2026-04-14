@@ -122,7 +122,43 @@ no backward-compatible shim. All import sites updated.
 Useful utility for future converters. Prepares for a conversion extension
 that can reshape data between formats.
 
-## 2026-04-14: Visualization -- Separation from Extensions
+## 2026-04-14: Undirected Relationship Semantics
+
+### Problem
+`__directed__ = False` was effectively metadata-only. It affected only Mermaid arrow
+rendering (`---` vs `-->`) and Cypher MATCH patterns (`-` vs `->`). The rest of the
+system ignored the flag:
+
+- `GraphDataModel.get_outgoing/incoming_relationship_types()` -- only returned an undirected
+  relationship as outgoing from its `__source_type__` and incoming to its `__target_type__`,
+  not bidirectionally.
+- `GraphValidator._check_referential_integrity()` -- strictly enforced `__source_uid__`
+  must be `__source_type__` and `__target_uid__` must be `__target_type__`, even when
+  the relationship was undirected. A reversed cross-type pair in the DB would be rejected.
+- `GraphValidator._check_cardinality()` -- counted outgoing and incoming separately,
+  even for undirected. This was semantically wrong (e.g. a node with 2 outgoing + 3
+  incoming FRIEND_OF would be counted as 2 for cardinality, ignoring the 3 incoming).
+- `CypherGenerator._rel_query()` (CREATE/MERGE) -- always emitted `->`, regardless of
+  `__directed__`.
+- Cypher parser `_check_endpoints()` and profile validator `_check_rel_endpoints()` --
+  both did strict directional endpoint matching.
+
+### Decision: `directed=false` means either endpoint order is valid
+
+For an undirected relationship `R` with `__source_type__ = A`, `__target_type__ = B`:
+- Both `A->B` and `B->A` are valid in data and in queries.
+- Cardinality counts total connections (outgoing + incoming) per node per rel type.
+- Cypher MATCH and CREATE/MERGE both use `-` (no arrow).
+- `get_outgoing_relationship_types(A)` and `get_outgoing_relationship_types(B)` both
+  return `R`. Same for incoming lookups.
+- For same-type endpoints (`A == B`), no duplicates are returned from lookups (the first
+  branch `source_type is node_type` always catches it before the undirected `elif`).
+
+### Error reporting for undirected type mismatches
+When neither forward nor reverse endpoint ordering matches for an undirected relationship,
+a single `WRONG_ENDPOINT_TYPE` error is emitted with a combined message listing both
+expected endpoint types. For directed relationships, individual source/target errors are
+reported as before.
 
 ### Problem
 Visualization (`to_mermaid`) was placed inside `extensions/visualization/`

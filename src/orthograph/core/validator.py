@@ -292,30 +292,6 @@ class GraphValidator:
                         },
                     )
                 )
-            else:
-                # Check source type matches
-                actual_label = node_index[src_uid][0]
-                expected = rel_type.__source_type__.__label__
-                if actual_label != expected:
-                    result.add(
-                        ValidationIssue(
-                            code="WRONG_ENDPOINT_TYPE",
-                            severity=Severity.ERROR,
-                            entity_type=EntityType.RELATIONSHIP,
-                            entity_id=f"{label}:{src_uid}->{tgt_uid}",
-                            message=(
-                                f"Source node '{src_uid}' has label "
-                                f"'{actual_label}', expected "
-                                f"'{expected}'"
-                            ),
-                            context={
-                                "uid": src_uid,
-                                "role": "source",
-                                "actual": actual_label,
-                                "expected": expected,
-                            },
-                        )
-                    )
 
             # Check target exists
             if tgt_uid not in node_index:
@@ -334,29 +310,86 @@ class GraphValidator:
                         },
                     )
                 )
-            else:
-                actual_label = node_index[tgt_uid][0]
-                expected = rel_type.__target_type__.__label__
-                if actual_label != expected:
-                    result.add(
-                        ValidationIssue(
-                            code="WRONG_ENDPOINT_TYPE",
-                            severity=Severity.ERROR,
-                            entity_type=EntityType.RELATIONSHIP,
-                            entity_id=f"{label}:{src_uid}->{tgt_uid}",
-                            message=(
-                                f"Target node '{tgt_uid}' has label "
-                                f"'{actual_label}', expected "
-                                f"'{expected}'"
-                            ),
-                            context={
-                                "uid": tgt_uid,
-                                "role": "target",
-                                "actual": actual_label,
-                                "expected": expected,
-                            },
+
+            # Check endpoint types (only if both nodes exist)
+            if src_uid in node_index and tgt_uid in node_index:
+                src_actual = node_index[src_uid][0]
+                tgt_actual = node_index[tgt_uid][0]
+                expected_src = rel_type.__source_type__.__label__
+                expected_tgt = rel_type.__target_type__.__label__
+
+                forward_ok = src_actual == expected_src and tgt_actual == expected_tgt
+                reverse_ok = (
+                    not rel_type.__directed__
+                    and src_actual == expected_tgt
+                    and tgt_actual == expected_src
+                )
+
+                if not forward_ok and not reverse_ok:
+                    if rel_type.__directed__:
+                        # Report specific endpoint mismatches
+                        if src_actual != expected_src:
+                            result.add(
+                                ValidationIssue(
+                                    code="WRONG_ENDPOINT_TYPE",
+                                    severity=Severity.ERROR,
+                                    entity_type=EntityType.RELATIONSHIP,
+                                    entity_id=f"{label}:{src_uid}->{tgt_uid}",
+                                    message=(
+                                        f"Source node '{src_uid}' has label "
+                                        f"'{src_actual}', expected "
+                                        f"'{expected_src}'"
+                                    ),
+                                    context={
+                                        "uid": src_uid,
+                                        "role": "source",
+                                        "actual": src_actual,
+                                        "expected": expected_src,
+                                    },
+                                )
+                            )
+                        if tgt_actual != expected_tgt:
+                            result.add(
+                                ValidationIssue(
+                                    code="WRONG_ENDPOINT_TYPE",
+                                    severity=Severity.ERROR,
+                                    entity_type=EntityType.RELATIONSHIP,
+                                    entity_id=f"{label}:{src_uid}->{tgt_uid}",
+                                    message=(
+                                        f"Target node '{tgt_uid}' has label "
+                                        f"'{tgt_actual}', expected "
+                                        f"'{expected_tgt}'"
+                                    ),
+                                    context={
+                                        "uid": tgt_uid,
+                                        "role": "target",
+                                        "actual": tgt_actual,
+                                        "expected": expected_tgt,
+                                    },
+                                )
+                            )
+                    else:
+                        # Undirected: neither forward nor reverse matched
+                        valid_types = sorted({expected_src, expected_tgt})
+                        result.add(
+                            ValidationIssue(
+                                code="WRONG_ENDPOINT_TYPE",
+                                severity=Severity.ERROR,
+                                entity_type=EntityType.RELATIONSHIP,
+                                entity_id=f"{label}:{src_uid}->{tgt_uid}",
+                                message=(
+                                    f"Undirected relationship '{label}' "
+                                    f"endpoints ({src_actual}, {tgt_actual}) "
+                                    f"do not match expected types "
+                                    f"({', '.join(valid_types)})"
+                                ),
+                                context={
+                                    "actual_source": src_actual,
+                                    "actual_target": tgt_actual,
+                                    "expected_types": valid_types,
+                                },
+                            )
                         )
-                    )
 
         return result
 
@@ -373,10 +406,16 @@ class GraphValidator:
         outgoing_counts: dict[tuple[str, str], int] = defaultdict(int)
         # Count incoming rels per (target_uid, rel_label)
         incoming_counts: dict[tuple[str, str], int] = defaultdict(int)
+        # For undirected: total connections per (uid, rel_label)
+        undirected_counts: dict[tuple[str, str], int] = defaultdict(int)
 
         for label, src_uid, tgt_uid, _ in rel_records:
+            rel_type = self.model.get_relationship_type(label)
             outgoing_counts[(src_uid, label)] += 1
             incoming_counts[(tgt_uid, label)] += 1
+            if rel_type and not rel_type.__directed__:
+                undirected_counts[(src_uid, label)] += 1
+                undirected_counts[(tgt_uid, label)] += 1
 
         # Check source cardinality for each node
         for uid, (node_label, _) in node_index.items():
@@ -387,9 +426,15 @@ class GraphValidator:
             outgoing_rels = self.model.get_outgoing_relationship_types(node_type)
             for rel_type in outgoing_rels:
                 cardinality = rel_type.__source_cardinality__
-                count = outgoing_counts.get((uid, rel_type.__label__), 0)
+
+                if not rel_type.__directed__:
+                    count = undirected_counts.get((uid, rel_type.__label__), 0)
+                else:
+                    count = outgoing_counts.get((uid, rel_type.__label__), 0)
+
                 if not cardinality.contains(count):
                     max_str = "N" if cardinality.max is None else str(cardinality.max)
+                    direction = "total" if not rel_type.__directed__ else "outgoing"
                     result.add(
                         ValidationIssue(
                             code="CARDINALITY_VIOLATION",
@@ -398,14 +443,14 @@ class GraphValidator:
                             entity_id=f"{node_label}:{uid}",
                             message=(
                                 f"Node '{uid}' ({node_label}) has "
-                                f"{count} outgoing "
+                                f"{count} {direction} "
                                 f"{rel_type.__label__} relationships, "
                                 f"expected "
                                 f"{cardinality.min}..{max_str}"
                             ),
                             context={
                                 "rel_label": rel_type.__label__,
-                                "direction": "outgoing",
+                                "direction": direction,
                                 "expected_min": cardinality.min,
                                 "expected_max": cardinality.max,
                                 "actual": count,
@@ -414,8 +459,13 @@ class GraphValidator:
                     )
 
             # Check target cardinality (incoming)
+            # For undirected rels, skip this check since source cardinality
+            # already covers both directions via undirected_counts
             incoming_rels = self.model.get_incoming_relationship_types(node_type)
             for rel_type in incoming_rels:
+                if not rel_type.__directed__:
+                    # Already handled above via undirected_counts
+                    continue
                 cardinality = rel_type.__target_cardinality__
                 count = incoming_counts.get((uid, rel_type.__label__), 0)
                 if not cardinality.contains(count):

@@ -7,7 +7,7 @@
 Pydantic-native graph data model definition and validation.
 Like Pandera for DataFrames, but for graph data structures.
 
-**Version:** 0.1.0-alpha | **Python:** >= 3.10 | **Tests:** 221 | **License:** Private
+**Version:** 0.1.0-alpha | **Python:** >= 3.10 | **Tests:** 257 | **License:** Private
 
 ## Quick Reference
 

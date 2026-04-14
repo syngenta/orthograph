@@ -68,12 +68,26 @@ class GraphDataModel:
     def get_outgoing_relationship_types(
         self, node_type: type[NodeModel]
     ) -> list[type[RelationshipModel]]:
-        return [rt for rt in self.relationship_types if rt.__source_type__ is node_type]
+        result: list[type[RelationshipModel]] = []
+        for rt in self.relationship_types:
+            if rt.__source_type__ is node_type:
+                result.append(rt)
+            elif not rt.__directed__ and rt.__target_type__ is node_type:
+                # Undirected: also outgoing from target_type
+                result.append(rt)
+        return result
 
     def get_incoming_relationship_types(
         self, node_type: type[NodeModel]
     ) -> list[type[RelationshipModel]]:
-        return [rt for rt in self.relationship_types if rt.__target_type__ is node_type]
+        result: list[type[RelationshipModel]] = []
+        for rt in self.relationship_types:
+            if rt.__target_type__ is node_type:
+                result.append(rt)
+            elif not rt.__directed__ and rt.__source_type__ is node_type:
+                # Undirected: also incoming to source_type
+                result.append(rt)
+        return result
 
     # --- Enum generation ---
 

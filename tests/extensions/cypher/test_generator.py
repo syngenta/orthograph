@@ -169,3 +169,111 @@ def test_cypher_match_relationship_pattern(model: GraphDataModel):
     assert ":Movie" in query
     assert "ACTED_IN" in query
     assert "RETURN" in query
+
+
+# --- Undirected relationship Cypher tests ---
+
+
+class Company(NodeModel):
+    __label__ = "Company"
+    __uid_field__ = "name"
+    name: str
+
+
+class FriendOf(RelationshipModel):
+    __label__ = "FRIEND_OF"
+    __source_type__ = Person
+    __target_type__ = Person
+    __directed__ = False
+
+    since: Optional[int] = None
+
+
+class Collaborates(RelationshipModel):
+    __label__ = "COLLABORATES"
+    __source_type__ = Person
+    __target_type__ = Company
+    __directed__ = False
+
+
+@pytest.fixture()
+def undirected_model() -> GraphDataModel:
+    return GraphDataModel(
+        name="Undirected",
+        node_types=[Person, Company],
+        relationship_types=[FriendOf, Collaborates],
+    )
+
+
+def test_cypher_match_relationship_undirected_pattern(undirected_model: GraphDataModel):
+    """Match query for undirected rel uses '-' instead of '->'."""
+    gen = CypherGenerator(undirected_model)
+    query = gen.match_relationship(FriendOf)
+    assert "MATCH" in query
+    assert "FRIEND_OF" in query
+    # Should NOT contain directed arrow
+    assert "->" not in query
+    # Should end pattern with -(b:Person)
+    assert "-(b:" in query or "]-(b:" in query
+
+
+def test_cypher_match_relationship_directed_pattern(model: GraphDataModel):
+    """Match query for directed rel uses '->'."""
+    gen = CypherGenerator(model)
+    query = gen.match_relationship(ActedIn)
+    assert "->" in query
+
+
+def test_cypher_create_undirected_relationship(undirected_model: GraphDataModel):
+    """CREATE for undirected rel uses '-' instead of '->'."""
+    gen = CypherGenerator(undirected_model)
+    query, params = gen.create_relationship(
+        {
+            "__label__": "FRIEND_OF",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Bob",
+            "since": 2020,
+        }
+    )
+    assert "CREATE" in query
+    assert "FRIEND_OF" in query
+    assert "->" not in query
+    assert params["src_uid"] == "Alice"
+
+
+def test_cypher_merge_undirected_relationship(undirected_model: GraphDataModel):
+    """MERGE for undirected rel uses '-' instead of '->'."""
+    gen = CypherGenerator(undirected_model)
+    query, params = gen.merge_relationship(
+        {
+            "__label__": "COLLABORATES",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Acme",
+        }
+    )
+    assert "MERGE" in query
+    assert "COLLABORATES" in query
+    assert "->" not in query
+
+
+def test_cypher_create_directed_relationship_still_uses_arrow(model: GraphDataModel):
+    """CREATE for directed rel still uses '->'."""
+    gen = CypherGenerator(model)
+    query, params = gen.create_relationship(
+        {
+            "__label__": "ACTED_IN",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Inception",
+            "role": "Cobb",
+        }
+    )
+    assert "->" in query
+
+
+def test_cypher_match_undirected_cross_type(undirected_model: GraphDataModel):
+    """Undirected cross-type match uses correct labels without arrow."""
+    gen = CypherGenerator(undirected_model)
+    query = gen.match_relationship(Collaborates)
+    assert ":Person" in query
+    assert ":Company" in query
+    assert "->" not in query

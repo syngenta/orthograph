@@ -86,3 +86,47 @@ def test_mermaid_node_properties(model: GraphDataModel):
     mermaid = to_mermaid(model)
     assert "name" in mermaid
     assert "age" in mermaid
+
+
+# --- Undirected relationship Mermaid tests ---
+
+
+class Company(NodeModel):
+    __label__ = "Company"
+    __uid_field__ = "name"
+    name: str
+
+
+class Collaborates(RelationshipModel):
+    __label__ = "COLLABORATES"
+    __source_type__ = Person
+    __target_type__ = Company
+    __directed__ = False
+
+
+def test_mermaid_undirected_cross_type():
+    """Undirected cross-type relationship uses '---' arrow."""
+    m = GraphDataModel(
+        name="Cross",
+        node_types=[Person, Company],
+        relationship_types=[Collaborates],
+    )
+    mermaid = to_mermaid(m)
+    assert "---" in mermaid
+    assert "-->" not in mermaid
+    assert "Person" in mermaid
+    assert "Company" in mermaid
+    assert "COLLABORATES" in mermaid
+
+
+def test_mermaid_mixed_directed_and_undirected():
+    """Model with both directed and undirected uses correct arrows."""
+    m = GraphDataModel(
+        name="Mixed",
+        node_types=[Person, Movie, Company],
+        relationship_types=[ActedIn, FriendOf, Collaborates],
+    )
+    mermaid = to_mermaid(m)
+    # Should contain both arrow types
+    assert "---" in mermaid
+    assert "-->" in mermaid

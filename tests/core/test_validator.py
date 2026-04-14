@@ -558,3 +558,228 @@ def test_validate_full_graph_complete_valid(filmography_model: GraphDataModel):
     ]
     result = v.validate(nodes=nodes, relationships=rels)
     assert result.is_valid
+
+
+# --- Undirected relationship validation tests ---
+
+
+class Company(NodeModel):
+    __label__ = "Company"
+    __uid_field__ = "name"
+    name: str
+
+
+class FriendOf(RelationshipModel):
+    __label__ = "FRIEND_OF"
+    __source_type__ = Person
+    __target_type__ = Person
+    __directed__ = False
+    __source_cardinality__ = Cardinality.ZERO_OR_MORE
+
+
+class Collaborates(RelationshipModel):
+    __label__ = "COLLABORATES"
+    __source_type__ = Person
+    __target_type__ = Company
+    __directed__ = False
+
+
+@pytest.fixture()
+def social_model() -> GraphDataModel:
+    return GraphDataModel(
+        name="Social",
+        node_types=[Person],
+        relationship_types=[FriendOf],
+    )
+
+
+@pytest.fixture()
+def cross_undirected_model() -> GraphDataModel:
+    return GraphDataModel(
+        name="CrossUndirected",
+        node_types=[Person, Company],
+        relationship_types=[Collaborates],
+    )
+
+
+def test_undirected_same_type_forward_valid(social_model: GraphDataModel):
+    """Undirected same-type: forward direction is valid."""
+    v = GraphValidator(social_model)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Person", "name": "Alice", "age": 30},
+        {"__label__": "Person", "name": "Bob", "age": 25},
+    ]
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "FRIEND_OF",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Bob",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert result.is_valid
+
+
+def test_undirected_same_type_reverse_valid(social_model: GraphDataModel):
+    """Undirected same-type: reverse direction is also valid."""
+    v = GraphValidator(social_model)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Person", "name": "Alice", "age": 30},
+        {"__label__": "Person", "name": "Bob", "age": 25},
+    ]
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "FRIEND_OF",
+            "__source_uid__": "Bob",
+            "__target_uid__": "Alice",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert result.is_valid
+
+
+def test_undirected_cross_type_forward_valid(
+    cross_undirected_model: GraphDataModel,
+):
+    """Undirected cross-type: Person->Company (forward) is valid."""
+    v = GraphValidator(cross_undirected_model)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Person", "name": "Alice", "age": 30},
+        {"__label__": "Company", "name": "Acme"},
+    ]
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "COLLABORATES",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Acme",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert result.is_valid
+
+
+def test_undirected_cross_type_reverse_valid(
+    cross_undirected_model: GraphDataModel,
+):
+    """Undirected cross-type: Company->Person (reversed) should also be valid."""
+    v = GraphValidator(cross_undirected_model)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Person", "name": "Alice", "age": 30},
+        {"__label__": "Company", "name": "Acme"},
+    ]
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "COLLABORATES",
+            "__source_uid__": "Acme",
+            "__target_uid__": "Alice",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert result.is_valid
+
+
+def test_undirected_cross_type_wrong_types_rejected(
+    cross_undirected_model: GraphDataModel,
+):
+    """Undirected cross-type: neither direction matches (wrong types) is rejected."""
+    v = GraphValidator(cross_undirected_model)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Person", "name": "Alice", "age": 30},
+        {"__label__": "Person", "name": "Bob", "age": 25},
+    ]
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "COLLABORATES",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Bob",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert not result.is_valid
+    assert any(e.code == "WRONG_ENDPOINT_TYPE" for e in result.errors)
+
+
+def test_directed_cross_type_reverse_rejected(filmography_model: GraphDataModel):
+    """Directed relationship: reverse direction is rejected."""
+    v = GraphValidator(filmography_model)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Person", "name": "Alice", "age": 30},
+        {"__label__": "Movie", "title": "Inception", "year": 2010},
+    ]
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "ACTED_IN",
+            "__source_uid__": "Inception",  # Movie, not Person
+            "__target_uid__": "Alice",  # Person, not Movie
+            "role": "Cobb",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert not result.is_valid
+    assert any(e.code == "WRONG_ENDPOINT_TYPE" for e in result.errors)
+
+
+def test_undirected_cardinality_counts_both_directions(
+    social_model: GraphDataModel,
+):
+    """Undirected cardinality counts both outgoing and incoming."""
+    v = GraphValidator(social_model)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Person", "name": "Alice", "age": 30},
+        {"__label__": "Person", "name": "Bob", "age": 25},
+        {"__label__": "Person", "name": "Carol", "age": 35},
+    ]
+    # Alice has 1 outgoing + 1 incoming = 2 total FRIEND_OF
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "FRIEND_OF",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Bob",
+        },
+        {
+            "__label__": "FRIEND_OF",
+            "__source_uid__": "Carol",
+            "__target_uid__": "Alice",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert result.is_valid
+
+
+def test_undirected_cardinality_violation():
+    """Undirected cardinality violation when total exceeds max."""
+
+    class LimitedFriend(RelationshipModel):
+        __label__ = "LIMITED_FRIEND"
+        __source_type__ = Person
+        __target_type__ = Person
+        __directed__ = False
+        __source_cardinality__ = CardinalitySpec(min=0, max=1)
+
+    model = GraphDataModel(
+        name="Limited",
+        node_types=[Person],
+        relationship_types=[LimitedFriend],
+    )
+    v = GraphValidator(model)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Person", "name": "Alice", "age": 30},
+        {"__label__": "Person", "name": "Bob", "age": 25},
+        {"__label__": "Person", "name": "Carol", "age": 35},
+    ]
+    # Alice has 1 outgoing + 1 incoming = 2 total, exceeds max=1
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "LIMITED_FRIEND",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Bob",
+        },
+        {
+            "__label__": "LIMITED_FRIEND",
+            "__source_uid__": "Carol",
+            "__target_uid__": "Alice",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert not result.is_valid
+    assert any(e.code == "CARDINALITY_VIOLATION" for e in result.errors)

@@ -2,7 +2,7 @@
 
 ## Current Status
 
-**221 tests passing** | All pre-commit hooks green | 7 notebooks
+**257 tests passing** | All pre-commit hooks green | 7 notebooks
 
 ## Milestones
 
@@ -40,7 +40,21 @@
 | P12 | Cleanup + integration tests | done |
 | P13 | Notebooks (NB06 rewrite, NB07 new) | done |
 
-## Test Coverage: 221 tests
+### Undirected Relationship Semantics (2026-04-14)
+
+| # | Milestone | Status |
+|---|-----------|--------|
+| U1 | Audit `__directed__` behavior across all subsystems | done |
+| U2 | Fix `GraphDataModel` outgoing/incoming lookups for undirected | done |
+| U3 | Fix `GraphValidator` referential integrity for undirected | done |
+| U4 | Fix `GraphValidator` cardinality to combine both directions | done |
+| U5 | Fix `CypherGenerator` CREATE/MERGE to use `-` for undirected | done |
+| U6 | Fix Cypher parser endpoint check to accept reversed endpoints | done |
+| U7 | Fix `validate_profile()` endpoint check for undirected | done |
+| U8 | Expand tests (+36 tests across all affected modules) | done |
+| U9 | Expand notebooks (NB01, NB02, NB05) | done |
+
+## Test Coverage: 257 tests
 
 | Module | Tests |
 |--------|-------|
@@ -48,18 +62,18 @@
 | core/errors | 11 |
 | core/node_model | 13 |
 | core/relationship_model | 15 |
-| core/graph_data_model | 19 |
-| core/validator | 28 |
+| core/graph_data_model | 27 (+8) |
+| core/validator | 40 (+12) |
 | io/yaml | 13 |
-| extensions/models + validation | 27 |
-| extensions/cypher/generator | 9 |
-| extensions/cypher/parser | 18 |
+| extensions/models + validation | 30 (+3) |
+| extensions/cypher/generator | 17 (+8) |
+| extensions/cypher/parser | 26 (+8) |
 | extensions/neo4j/inspector | 5 |
 | extensions/neo4j/result_adapter | 10 |
 | extensions/memgraph/inspector | 2 |
 | extensions/networkx/inspector | 9 |
-| extensions/networkx/conversion | 3 |
-| extensions/visualization/mermaid | 4 |
+| extensions/networkx/conversion | 6 (+3) |
+| extensions/visualization/mermaid | 6 (+2) |
 | integration | 9 |
 
 ## Key Design Decisions
@@ -74,3 +88,4 @@ See `decisions.md` for the full log. Summary of active decisions:
 - Duck-typed neo4j driver objects (no hard import of `neo4j` package)
 - Pydantic frozen models for all profile/report data classes
 - Shared test fixtures in `conftest.py` (no model duplication across tests)
+- Undirected relationships: either endpoint direction is semantically valid; cardinality counts both directions combined; Cypher uses `-` (no arrow)
