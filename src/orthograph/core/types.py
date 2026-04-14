@@ -38,12 +38,39 @@ class CardinalitySpec(BaseModel):
 
 
 class Cardinality:
-    """Named cardinality constants."""
+    """Named cardinality constants for relationship constraints.
+
+    Cardinality constrains **how many instances** of a relationship type each
+    individual node may have.  It does NOT control whether the relationship
+    type exists in the schema -- that is a separate concern handled by
+    ``__optional__`` on the ``RelationshipModel``.
+
+    A cardinality of ``ZERO_OR_MORE`` (0..*) means "each node of the source
+    (or target) type may have zero or more instances of this relationship".
+    Zero is a valid count -- the node simply does not participate.  This is
+    semantically distinct from ``ONE_OR_MORE`` (1..*), which requires every
+    node to have at least one instance.
+
+    This follows standard data-modelling conventions (UML multiplicity,
+    ER crow's-foot notation, OWL cardinality restrictions).
+    """
 
     ZERO_OR_ONE: typing.ClassVar[CardinalitySpec] = CardinalitySpec(min=0, max=1)
+    """0..1 -- optional, at most one.  The node may or may not participate."""
+
     ONE: typing.ClassVar[CardinalitySpec] = CardinalitySpec(min=1, max=1)
+    """1..1 -- exactly one.  Every node of this type must have one instance."""
+
     ZERO_OR_MORE: typing.ClassVar[CardinalitySpec] = CardinalitySpec(min=0, max=None)
+    """0..* -- optional, unbounded.  The permissive default: no constraint is
+    enforced.  A count of zero is valid (the node simply has no such
+    relationship).  This does **not** mean the relationship type is absent
+    from the schema; it means individual nodes are not required to use it."""
+
     ONE_OR_MORE: typing.ClassVar[CardinalitySpec] = CardinalitySpec(min=1, max=None)
+    """1..* -- mandatory, unbounded.  Every node must have at least one
+    instance of this relationship.  Use this when participation is required
+    but there is no upper bound."""
 
 
 class EntityType(Enum):

@@ -6,7 +6,7 @@ import pytest
 from orthograph.extensions.networkx import NetworkxInspector
 
 
-def _make_graph() -> nx.MultiDiGraph:
+def _make_graph() -> nx.MultiDiGraph:  # type: ignore[type-arg]
     """Helper to create a fresh empty MultiDiGraph."""
     return nx.MultiDiGraph()
 

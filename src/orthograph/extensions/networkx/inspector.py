@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class NetworkxInspector(GraphInspector):
     """Inspects a NetworkX MultiDiGraph and produces a structural profile."""
 
-    def __init__(self, graph: nx.MultiDiGraph) -> None:
+    def __init__(self, graph: nx.MultiDiGraph) -> None:  # type: ignore[type-arg]
         self._graph = graph
 
     def inspect(self) -> GraphProfile:

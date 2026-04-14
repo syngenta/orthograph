@@ -26,7 +26,20 @@ class RelationshipModel(BaseModel):
     __directed__: ClassVar[bool] = True
     __optional__: ClassVar[bool] = True
     __source_cardinality__: ClassVar[CardinalitySpec] = Cardinality.ZERO_OR_MORE
+    """Default: ZERO_OR_MORE is a permissive default -- no cardinality
+    constraint is enforced on the source side.  Override per relationship
+    type to express business rules (e.g. ``Cardinality.ONE`` to require
+    exactly one outgoing instance per source node).
+
+    This is orthogonal to ``__optional__``: ``__optional__`` controls whether
+    the relationship *type* must have at least one instance anywhere in the
+    data; cardinality controls how many instances each *individual node* may
+    have.  Both axes can be set independently."""
+
     __target_cardinality__: ClassVar[CardinalitySpec] = Cardinality.ZERO_OR_MORE
+    """Default: ZERO_OR_MORE on the target side.  Same semantics as
+    ``__source_cardinality__`` but applied to incoming relationship counts
+    per target node."""
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)

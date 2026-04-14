@@ -5,12 +5,12 @@ import networkx as nx
 from orthograph.core.graph_data_model import GraphDataModel
 
 
-def schema_to_networkx(model: GraphDataModel) -> nx.MultiDiGraph:
+def schema_to_networkx(model: GraphDataModel) -> nx.MultiDiGraph:  # type: ignore[type-arg]
     """Convert a GraphDataModel to a NetworkX MultiDiGraph (schema visualization).
 
     Nodes represent node types, edges represent relationship types.
     """
-    g = nx.MultiDiGraph()
+    g: nx.MultiDiGraph = nx.MultiDiGraph()  # type: ignore[type-arg]
 
     for nt in model.node_types:
         props = {

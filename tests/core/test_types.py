@@ -62,7 +62,7 @@ def test_cardinality_spec_repr():
 def test_cardinality_spec_frozen():
     spec = CardinalitySpec(min=1, max=5)
     with pytest.raises(ValidationError):
-        spec.min = 2  # type: ignore[misc]
+        spec.min = 2  # type: ignore[misc,unused-ignore]
 
 
 def test_cardinality_spec_contains_count_within_bounds():
@@ -106,10 +106,42 @@ def test_cardinality_zero_or_more():
     assert spec.max is None
 
 
+def test_cardinality_zero_or_more_accepts_zero():
+    """ZERO_OR_MORE (0..*) must accept count=0 -- participation is optional."""
+    spec = Cardinality.ZERO_OR_MORE
+    assert spec.contains(0)
+    assert spec.contains(1)
+    assert spec.contains(999)
+
+
 def test_cardinality_one_or_more():
     spec = Cardinality.ONE_OR_MORE
     assert spec.min == 1
     assert spec.max is None
+
+
+def test_cardinality_one_or_more_rejects_zero():
+    """ONE_OR_MORE (1..*) must reject count=0 -- participation is mandatory."""
+    spec = Cardinality.ONE_OR_MORE
+    assert not spec.contains(0)
+    assert spec.contains(1)
+    assert spec.contains(999)
+
+
+def test_cardinality_zero_or_more_vs_one_or_more():
+    """The semantic difference: both accept high counts, but only ZERO_OR_MORE
+    accepts zero.  This is the core distinction between optional and mandatory
+    participation."""
+    zero_plus = Cardinality.ZERO_OR_MORE
+    one_plus = Cardinality.ONE_OR_MORE
+
+    # Both accept count > 0
+    assert zero_plus.contains(5)
+    assert one_plus.contains(5)
+
+    # Only ZERO_OR_MORE accepts count = 0
+    assert zero_plus.contains(0)
+    assert not one_plus.contains(0)
 
 
 def test_cardinality_custom():

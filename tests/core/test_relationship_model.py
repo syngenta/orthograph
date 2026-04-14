@@ -49,6 +49,9 @@ def test_relationship_model_simple():
     assert ActedIn.__target_type__ is Movie
     assert ActedIn.__directed__ is True
     assert ActedIn.__optional__ is True
+    # Default cardinality is ZERO_OR_MORE on both sides (permissive default)
+    assert ActedIn.__source_cardinality__ == Cardinality.ZERO_OR_MORE
+    assert ActedIn.__target_cardinality__ == Cardinality.ZERO_OR_MORE
 
 
 def test_relationship_model_with_cardinality():

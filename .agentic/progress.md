@@ -2,7 +2,7 @@
 
 ## Current Status
 
-**257 tests passing** | All pre-commit hooks green | 7 notebooks
+**264 tests passing** | All pre-commit hooks green | 7 notebooks
 
 ## Milestones
 
@@ -54,16 +54,26 @@
 | U8 | Expand tests (+36 tests across all affected modules) | done |
 | U9 | Expand notebooks (NB01, NB02, NB05) | done |
 
+### Documentation: Cardinality Semantics (2026-04-14)
+
+| # | Milestone | Status |
+|---|-----------|--------|
+| D1 | Expand Cardinality docstrings in core/types.py | done |
+| D2 | Document cardinality defaults in relationship_model.py | done |
+| D3 | Expand notebook 03 with ZERO_OR_MORE vs ONE_OR_MORE examples | done |
+| D4 | Add decision entry to decisions.md | done |
+| D5 | Add cardinality semantic tests (contains, validator, target cardinality) | done |
+
 ## Test Coverage: 257 tests
 
 | Module | Tests |
 |--------|-------|
-| core/types | 26 |
+| core/types | 29 (+3) |
 | core/errors | 11 |
 | core/node_model | 13 |
 | core/relationship_model | 15 |
 | core/graph_data_model | 27 (+8) |
-| core/validator | 40 (+12) |
+| core/validator | 44 (+4) |
 | io/yaml | 13 |
 | extensions/models + validation | 30 (+3) |
 | extensions/cypher/generator | 17 (+8) |
@@ -89,3 +99,4 @@ See `decisions.md` for the full log. Summary of active decisions:
 - Pydantic frozen models for all profile/report data classes
 - Shared test fixtures in `conftest.py` (no model duplication across tests)
 - Undirected relationships: either endpoint direction is semantically valid; cardinality counts both directions combined; Cypher uses `-` (no arrow)
+- `ZERO_OR_MORE` (0..*) is a valid cardinality distinct from `ONE_OR_MORE` (1..*); cardinality constrains per-node instance counts, not relationship type existence (which is controlled by `__optional__`)

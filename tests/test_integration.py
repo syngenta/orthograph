@@ -218,7 +218,7 @@ def test_chemistry_inspect_and_validate_nx(chemistry_model: GraphDataModel):
     """End-to-end: build nx graph, inspect, validate against model."""
     import networkx as nx
 
-    g = nx.MultiDiGraph()
+    g: nx.MultiDiGraph = nx.MultiDiGraph()  # type: ignore[type-arg]
     g.add_node("m1", __label__="Molecule", uid="M1", smiles="CCO")
     g.add_node("ce1", __label__="ChemicalEquation", uid="CE1", smiles="CCO>>CC=O")
     g.add_edge("m1", "ce1", __label__="REACTANT")

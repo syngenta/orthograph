@@ -463,6 +463,220 @@ def test_validate_cardinality_violation_too_many():
     assert any(e.code == "CARDINALITY_VIOLATION" for e in result.errors)
 
 
+def test_validate_cardinality_zero_or_more_accepts_zero():
+    """ZERO_OR_MORE on source side must accept nodes with 0 relationships."""
+
+    class ZPerson(NodeModel):
+        __label__ = "ZPerson"
+        __uid_field__ = "name"
+        name: str
+
+    class ZProject(NodeModel):
+        __label__ = "ZProject"
+        __uid_field__ = "name"
+        name: str
+
+    class ZWorksOn(RelationshipModel):
+        __label__ = "Z_WORKS_ON"
+        __source_type__ = ZPerson
+        __target_type__ = ZProject
+        __source_cardinality__ = Cardinality.ZERO_OR_MORE  # 0..* -- optional
+        __target_cardinality__ = Cardinality.ZERO_OR_MORE
+
+    model = GraphDataModel(
+        name="ZeroOrMoreTest",
+        node_types=[ZPerson, ZProject],
+        relationship_types=[ZWorksOn],
+    )
+    v = GraphValidator(model)
+
+    # Bob has 0 WORKS_ON relationships -- should be valid under ZERO_OR_MORE
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "ZPerson", "name": "Alice"},
+        {"__label__": "ZPerson", "name": "Bob"},
+        {"__label__": "ZProject", "name": "Alpha"},
+    ]
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "Z_WORKS_ON",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Alpha",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert result.is_valid
+    assert not any(e.code == "CARDINALITY_VIOLATION" for e in result.errors)
+
+
+def test_validate_cardinality_one_or_more_rejects_zero():
+    """ONE_OR_MORE on source side must reject nodes with 0 relationships."""
+
+    class OPerson(NodeModel):
+        __label__ = "OPerson"
+        __uid_field__ = "name"
+        name: str
+
+    class OProject(NodeModel):
+        __label__ = "OProject"
+        __uid_field__ = "name"
+        name: str
+
+    class OWorksOn(RelationshipModel):
+        __label__ = "O_WORKS_ON"
+        __source_type__ = OPerson
+        __target_type__ = OProject
+        __source_cardinality__ = Cardinality.ONE_OR_MORE  # 1..* -- mandatory
+        __target_cardinality__ = Cardinality.ZERO_OR_MORE
+
+    model = GraphDataModel(
+        name="OneOrMoreTest",
+        node_types=[OPerson, OProject],
+        relationship_types=[OWorksOn],
+    )
+    v = GraphValidator(model)
+
+    # Bob has 0 WORKS_ON -- should fail under ONE_OR_MORE
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "OPerson", "name": "Alice"},
+        {"__label__": "OPerson", "name": "Bob"},
+        {"__label__": "OProject", "name": "Alpha"},
+    ]
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "O_WORKS_ON",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Alpha",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert not result.is_valid
+    card_errors = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert len(card_errors) == 1
+    assert "Bob" in card_errors[0].message
+    assert "0 outgoing" in card_errors[0].message
+
+
+def test_validate_cardinality_zero_or_more_vs_one_or_more_same_data():
+    """Side-by-side: same data is valid under ZERO_OR_MORE but invalid under
+    ONE_OR_MORE when a node has zero relationships."""
+
+    class SPerson(NodeModel):
+        __label__ = "SPerson"
+        __uid_field__ = "name"
+        name: str
+
+    class SProject(NodeModel):
+        __label__ = "SProject"
+        __uid_field__ = "name"
+        name: str
+
+    class SWorksOnRelaxed(RelationshipModel):
+        __label__ = "S_WORKS_ON_R"
+        __source_type__ = SPerson
+        __target_type__ = SProject
+        __source_cardinality__ = Cardinality.ZERO_OR_MORE
+
+    class SWorksOnStrict(RelationshipModel):
+        __label__ = "S_WORKS_ON_S"
+        __source_type__ = SPerson
+        __target_type__ = SProject
+        __source_cardinality__ = Cardinality.ONE_OR_MORE
+
+    relaxed = GraphDataModel(
+        name="Relaxed",
+        node_types=[SPerson, SProject],
+        relationship_types=[SWorksOnRelaxed],
+    )
+    strict = GraphDataModel(
+        name="Strict",
+        node_types=[SPerson, SProject],
+        relationship_types=[SWorksOnStrict],
+    )
+
+    # Alice works on Alpha, Bob has 0 relationships
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "SPerson", "name": "Alice"},
+        {"__label__": "SPerson", "name": "Bob"},
+        {"__label__": "SProject", "name": "Alpha"},
+    ]
+    rels_relaxed: list[dict[str, Any]] = [
+        {
+            "__label__": "S_WORKS_ON_R",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Alpha",
+        },
+    ]
+    rels_strict: list[dict[str, Any]] = [
+        {
+            "__label__": "S_WORKS_ON_S",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Alpha",
+        },
+    ]
+
+    # Relaxed: valid (Bob with 0 is fine)
+    result_relaxed = GraphValidator(relaxed).validate(nodes, rels_relaxed)
+    assert result_relaxed.is_valid
+
+    # Strict: invalid (Bob with 0 violates ONE_OR_MORE)
+    result_strict = GraphValidator(strict).validate(nodes, rels_strict)
+    assert not result_strict.is_valid
+    assert any(e.code == "CARDINALITY_VIOLATION" for e in result_strict.errors)
+
+
+def test_validate_target_cardinality_violation():
+    """Target cardinality violation: too many incoming relationships."""
+
+    class TAuthor(NodeModel):
+        __label__ = "TAuthor"
+        __uid_field__ = "name"
+        name: str
+
+    class TBook(NodeModel):
+        __label__ = "TBook"
+        __uid_field__ = "title"
+        title: str
+
+    class TWrote(RelationshipModel):
+        __label__ = "T_WROTE"
+        __source_type__ = TAuthor
+        __target_type__ = TBook
+        __source_cardinality__ = Cardinality.ZERO_OR_MORE
+        __target_cardinality__ = Cardinality.ONE  # each book has exactly 1 author
+
+    model = GraphDataModel(
+        name="TargetCard",
+        node_types=[TAuthor, TBook],
+        relationship_types=[TWrote],
+    )
+    v = GraphValidator(model)
+
+    # "Dune" has 2 authors -- violates target cardinality ONE
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "TAuthor", "name": "Frank"},
+        {"__label__": "TAuthor", "name": "Brian"},
+        {"__label__": "TBook", "title": "Dune"},
+    ]
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "T_WROTE",
+            "__source_uid__": "Frank",
+            "__target_uid__": "Dune",
+        },
+        {
+            "__label__": "T_WROTE",
+            "__source_uid__": "Brian",
+            "__target_uid__": "Dune",
+        },
+    ]
+    result = v.validate(nodes=nodes, relationships=rels)
+    assert not result.is_valid
+    card_errors = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert len(card_errors) == 1
+    assert "Dune" in card_errors[0].message
+    assert "incoming" in card_errors[0].message
+
+
 # --- Validate entity presence tests ---
 
 
