@@ -31,9 +31,12 @@ pytest:
   script:
     - pip install -e '.[dev]'
     - python -m pytest -v
+    # Notebook regression tests (cell execution via nbval).
+    # Notebook 07 (neo4j_end_to_end) is excluded -- it requires a live Neo4j instance.
+    - pytest notebooks/ --nbval-lax -v --ignore=notebooks/07_neo4j_end_to_end.ipynb
   parallel:
     matrix:
-      - VERSION: [ "3.11", "3.12", "3.13"]
+      - VERSION: [ "3.11", "3.12", "3.13", "3.14"]
 
 .bumpver:
   stage: release

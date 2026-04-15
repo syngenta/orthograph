@@ -56,17 +56,22 @@ all = [
     "orthograph[networkx,cypher,neo4j]",
 ]
 
-# Extension: Jupyter notebook support (IPython kernel, matplotlib plotting)
+# Notebook execution in CI (lightweight -- no full Jupyter install)
 notebooks = [
-    "jupyter>=1.0",
-    "jupyterlab>=4.0",
     "ipykernel>=6.0",
-    "matplotlib>=3.7",
+    "nbval>=0.11",
+]
+
+# Support for documentation generation with Sphinx
+docs = [
+    "sphinx>=5.0",
+    "sphinx-rtd-theme>=3.0.0",
 ]
 
 # Development: testing, linting, type checking
 dev = [
     "orthograph[all]",
+    "orthograph[docs]",
     "orthograph[notebooks]",
     "pytest>=8.0",
     "pytest-cov>=5.0",
@@ -119,7 +124,7 @@ markers = [
 [tool.ruff]
 line-length = 88
 target-version = "py310"
-exclude = ["notebooks", "build"]
+exclude = ["build"]
 
 [tool.ruff.lint]
 select = [
@@ -131,6 +136,10 @@ select = [
 ignore = [
     "E203",   # whitespace before ':'
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Notebooks naturally have long data-literal lines; enforcing E501 hurts readability.
+"notebooks/*.ipynb" = ["E501"]
 
 [tool.ruff.lint.isort]
 force-single-line = false
