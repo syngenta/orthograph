@@ -2,7 +2,7 @@
 
 ## Current Status
 
-**264 tests passing** | All pre-commit hooks green | 7 notebooks
+**307 tests passing** | All pre-commit hooks green | 8 notebooks
 
 ## Milestones
 
@@ -35,7 +35,7 @@
 | P7 | neo4j/inspector.py | done |
 | P8 | neo4j/result_adapter.py | done |
 | P9 | memgraph/queries.py + inspector.py | done |
-| P10 | visualization/mermaid.py | done |
+| P10 | visualization/mermaid.py (since moved to top-level) | done |
 | P11 | Cypher carry-forward | done |
 | P12 | Cleanup + integration tests | done |
 | P13 | Notebooks (NB06 rewrite, NB07 new) | done |
@@ -64,27 +64,46 @@
 | D4 | Add decision entry to decisions.md | done |
 | D5 | Add cardinality semantic tests (contains, validator, target cardinality) | done |
 
-## Test Coverage: 257 tests
+### Visualization Package Refactoring (2026-04-15)
+
+| # | Milestone | Status |
+|---|-----------|--------|
+| V1 | Create `src/orthograph/visualization/` package | done |
+| V2 | Move `to_mermaid` to new location, rename to `model_to_mermaid` | done |
+| V3 | Delete `extensions/visualization/` | done |
+| V4 | Update all imports (tests, integration, notebooks) | done |
+| V5 | Move and update tests to `tests/visualization/` | done |
+| V6 | Enrich `model_to_mermaid` (cardinality, required/optional, UID) | done |
+| V7 | Implement `model_to_text` (plain text schema table) | done |
+| V8 | Implement `profile_to_text` (profile with counts, completeness) | done |
+| V9 | Implement `result_to_text` (severity-coded validation summary) | done |
+| V10 | Implement `render()` dispatcher | done |
+| V11 | Implement `display_mermaid()` (inline Jupyter rendering via mermaid.ink) | done |
+| V12 | Reorganise notebooks: NB06 (NetworkX inspect/validate), NB08 (Visualization) | done |
+
+## Test Coverage: 307 tests
 
 | Module | Tests |
 |--------|-------|
-| core/types | 29 (+3) |
+| core/types | 29 |
 | core/errors | 11 |
 | core/node_model | 13 |
 | core/relationship_model | 15 |
-| core/graph_data_model | 27 (+8) |
-| core/validator | 44 (+4) |
+| core/graph_data_model | 27 |
+| core/validator | 44 |
 | io/yaml | 13 |
-| extensions/models + validation | 30 (+3) |
-| extensions/cypher/generator | 17 (+8) |
-| extensions/cypher/parser | 26 (+8) |
+| extensions/models + validation | 30 |
+| extensions/cypher/generator | 17 |
+| extensions/cypher/parser | 26 |
 | extensions/neo4j/inspector | 5 |
 | extensions/neo4j/result_adapter | 10 |
 | extensions/memgraph/inspector | 2 |
 | extensions/networkx/inspector | 9 |
-| extensions/networkx/conversion | 6 (+3) |
-| extensions/visualization/mermaid | 6 (+2) |
-| integration | 9 |
+| extensions/networkx/conversion | 6 |
+| visualization/mermaid | 16 |
+| visualization/text | 23 |
+| visualization/render | 8 |
+| integration | 10 |
 
 ## Key Design Decisions
 
@@ -100,3 +119,4 @@ See `decisions.md` for the full log. Summary of active decisions:
 - Shared test fixtures in `conftest.py` (no model duplication across tests)
 - Undirected relationships: either endpoint direction is semantically valid; cardinality counts both directions combined; Cypher uses `-` (no arrow)
 - `ZERO_OR_MORE` (0..*) is a valid cardinality distinct from `ONE_OR_MORE` (1..*); cardinality constrains per-node instance counts, not relationship type existence (which is controlled by `__optional__`)
+- `display_mermaid()` soft-imports IPython at call time; `profile_to_mermaid` was not implemented -- profiles are statistical summaries, Mermaid diagrams represent schema structure only

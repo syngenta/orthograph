@@ -98,7 +98,7 @@ html = render(result, format="html")
 Or, for explicit control:
 
 ```python
-from orthograph.visualization.mermaid import model_to_mermaid, profile_to_mermaid
+from orthograph.visualization.mermaid import model_to_mermaid
 from orthograph.visualization.text import profile_to_text, result_to_text
 ```
 
@@ -116,22 +116,23 @@ from orthograph.visualization.text import profile_to_text, result_to_text
 - `extensions/visualization/mermaid.py` (`to_mermaid`) -- moves to
   `visualization/mermaid.py`. Becomes one of several renderers.
 
-### New top-level package
+### New top-level package (IMPLEMENTED)
 
 ```
 src/orthograph/
-├── visualization/              # NEW: top-level subpackage
+├── visualization/              # Top-level subpackage
 │   ├── __init__.py             # render() dispatcher + re-exports
-│   ├── mermaid.py              # Mermaid renderers (model, profile, result)
-│   └── text.py                 # Plain text renderers (tables for terminal)
+│   ├── mermaid.py              # model_to_mermaid, display_mermaid
+│   └── text.py                 # model_to_text, profile_to_text, result_to_text
 ```
 
 Tests:
 ```
 tests/visualization/
 ├── __init__.py
-├── test_mermaid.py             # Moved from tests/extensions/visualization/
-└── test_text.py                # New
+├── test_mermaid.py             # model mermaid renderers, display_mermaid, URL builder
+├── test_text.py                # 23 tests (model, profile, result text renderers)
+└── test_render.py              # dispatcher tests
 ```
 
 ### What gets deleted
@@ -147,54 +148,57 @@ tests/visualization/
 
 ## Implementation Plan
 
-### Phase 1: Move and restructure (foundation)
+> **Status: Phases 1-5 IMPLEMENTED** (2026-04-14, branch CAST-1224)
 
-| # | Task | Description |
-|---|------|-------------|
-| V1 | Create `src/orthograph/visualization/` package | `__init__.py`, `mermaid.py` |
-| V2 | Move `to_mermaid` to new location | Rename to `model_to_mermaid` for clarity |
-| V3 | Delete `extensions/visualization/` | Clean break |
-| V4 | Update all imports | Notebooks, integration tests, `extensions/__init__.py` |
-| V5 | Tests | Move and update `test_mermaid.py` |
+### Phase 1: Move and restructure (foundation) -- DONE
 
-### Phase 2: Schema visualization enrichment
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| V1 | Create `src/orthograph/visualization/` package | `__init__.py`, `mermaid.py`, `text.py` | done |
+| V2 | Move `to_mermaid` to new location | Renamed to `model_to_mermaid` | done |
+| V3 | Delete `extensions/visualization/` | Clean break | done |
+| V4 | Update all imports | Notebooks, integration tests | done |
+| V5 | Tests | Moved to `tests/visualization/` | done |
 
-| # | Task | Description |
-|---|------|-------------|
-| V6 | `model_to_mermaid` improvements | Add cardinality labels on edges, required/optional markers on properties, UID field highlighting |
-| V7 | `model_to_text` | Plain text table of the model: node types with properties, relationship types with endpoints and cardinality |
+### Phase 2: Schema visualization enrichment -- DONE
 
-### Phase 3: Profile visualization (new)
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| V6 | `model_to_mermaid` improvements | Cardinality labels, required/optional markers, UID highlighting | done |
+| V7 | `model_to_text` | Plain text table of model | done |
 
-| # | Task | Description |
-|---|------|-------------|
-| V8 | `profile_to_text` | Text table of a `GraphProfile`: node types with counts, property completeness, observed types. Relationship types with counts, endpoint labels, cardinality stats. |
-| V9 | `profile_to_mermaid` | Mermaid diagram with node counts as labels, completeness-coded edges |
+### Phase 3: Profile visualization (new) -- DONE
 
-### Phase 4: Validation result visualization (new)
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| V8 | `profile_to_text` | Text table with counts, completeness, cardinality stats | done |
+| V9 | `profile_to_mermaid` | Not implemented -- profile is statistical, Mermaid is for schema structure | removed |
 
-| # | Task | Description |
-|---|------|-------------|
-| V10 | `result_to_text` | Text summary of `ValidationResult`: grouped by entity, severity-coded |
+### Phase 4: Validation result visualization (new) -- DONE
 
-### Phase 5: Unified API (optional)
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| V9 | `result_to_text` | Severity-coded text summary grouped by entity | done |
 
-| # | Task | Description |
-|---|------|-------------|
-| V11 | `render()` dispatcher | Single entry point that dispatches based on input type and format parameter |
+### Phase 5: Unified API -- DONE
 
-### Phase 6: HTML reports (future, not in first pass)
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| V10 | `render()` dispatcher | Single entry point dispatching on input type and format | done |
+| V11 | `display_mermaid()` | Inline Mermaid image in Jupyter via mermaid.ink; soft IPython import | done |
 
-| # | Task | Description |
-|---|------|-------------|
-| V12 | `model_to_html`, `profile_to_html`, `result_to_html` | Jinja2-based HTML reports |
+### Phase 6: HTML reports (future, not yet implemented)
+
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| V12 | `model_to_html`, `profile_to_html`, `result_to_html` | Jinja2-based HTML reports | pending |
 
 ## Input Types and Renderers Matrix
 
 | Input type | `mermaid` | `text` | `html` (future) |
 |------------|-----------|--------|------------------|
 | `GraphDataModel` | `model_to_mermaid` (exists, enrich) | `model_to_text` (new) | `model_to_html` |
-| `GraphProfile` | `profile_to_mermaid` (new) | `profile_to_text` (new) | `profile_to_html` |
+| `GraphProfile` | -- | `profile_to_text` (new) | `profile_to_html` |
 | `ValidationResult` | -- | `result_to_text` (new) | `result_to_html` |
 
 ## Dependencies
@@ -207,44 +211,28 @@ tests/visualization/
 
 ## Notebook Plan
 
-| # | Notebook | Content |
-|---|----------|---------|
-| NB06 | Update: Graph Inspection and Visualization | Update imports to `orthograph.visualization`. Show `model_to_mermaid`, `profile_to_text`, `result_to_text`. |
-| NB08 | New: Visualization Showcase | All renderers side by side. Define a model, inspect a graph, validate, then render each artifact in every available format. |
+| # | Notebook | Content | Status |
+|---|----------|---------|--------|
+| NB06 | NetworkX Graph Inspection and Validation | Filmography domain. NetworkxInspector, GraphProfile exploration, validate_profile, schema_to_networkx, profile serialisation. | done |
+| NB07 | Neo4j End-to-End (Reference) | Filmography domain. Full Neo4j workflow (unchanged). | done |
+| NB08 | Visualization | Filmography domain. All renderers: model_to_mermaid, model_to_text, profile_to_text, result_to_text, display_mermaid, render() dispatcher, schema-vs-observed comparison. | done |
 
-## Implementation Notes for Agents
+## Implementation Notes
 
-### Key files to read before implementing
+### Key design decisions made
 
-1. `.agentic/index.md` -- overall package layout
-2. `.agentic/extensions/overview.md` -- two-phase architecture (visualization consumes its outputs)
-3. `src/orthograph/extensions/models.py` -- `GraphProfile` and sub-models (input for profile renderers)
-4. `src/orthograph/core/errors.py` -- `ValidationResult`, `ValidationIssue` (input for result renderers)
-5. `src/orthograph/core/graph_data_model.py` -- `GraphDataModel` (input for model renderers)
-6. `src/orthograph/extensions/visualization/mermaid.py` -- current implementation (to be moved)
-7. `tests/extensions/visualization/test_mermaid.py` -- current tests (to be moved)
+- `profile_to_mermaid` was not implemented: Mermaid diagrams represent schema structure; profiles are statistical summaries best rendered as text tables
+- `[UID]` marker in `model_to_mermaid` uses plain `UID` text (no square brackets) -- square brackets inside Mermaid `["..."]` quoted labels break the parser and cause mermaid.ink to return a broken image
+- `_mermaid_ink_url` uses `base64.urlsafe_b64encode` (RFC 4648) -- standard base64 `+`/`/` characters are not URL-safe
+- `display_mermaid` soft-imports IPython at call time and raises a clear `ImportError` if not in a notebook environment
+- `render(profile, format="mermaid")` raises `ValueError` -- mermaid format is only meaningful for `GraphDataModel`
 
 ### Naming convention
 
-- Module names: `mermaid.py`, `text.py`, `html.py` (by output format)
+- Module names: `mermaid.py`, `text.py` (by output format)
 - Function names: `{input_type}_to_{format}` -- e.g., `model_to_mermaid`, `profile_to_text`
 - The `render()` dispatcher is a convenience; direct function calls are the primary API
 
-### Testing strategy
-
-- Shared fixtures from `tests/extensions/conftest.py` (model definitions)
-- For profile rendering tests: construct `GraphProfile` instances directly (no inspector needed)
-- For result rendering tests: construct `ValidationResult` with pre-built `ValidationIssue` list
-- Assert on content presence (labels, counts, codes) not exact string matching (formatting may change)
-
-### Strict typing requirements
-
-- All renderer functions take a single typed input and return `str`
-- No `Any` in renderer signatures (inputs are always concrete types)
-- Frozen Pydantic models throughout (profiles, issues)
-
 ### Branch
 
-Implement on a dedicated branch (e.g., `feat/visualization-package`).
-The current branch (`CAST-1213-reimplement-extensions-architecture`) should
-be merged first to avoid conflicts.
+Implemented on branch `CAST-1224-change-architecture-of-visualization-module`.

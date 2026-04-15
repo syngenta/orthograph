@@ -14,8 +14,9 @@ from orthograph import (
 from orthograph.extensions.cypher import CypherGenerator
 from orthograph.extensions.networkx import NetworkxInspector, schema_to_networkx
 from orthograph.extensions.validation import validate_profile
-from orthograph.extensions.visualization import to_mermaid
 from orthograph.io.yaml import load_yaml_file, save_yaml_file
+from orthograph.visualization import render
+from orthograph.visualization.mermaid import model_to_mermaid
 
 
 # ===================================================================
@@ -199,10 +200,18 @@ def test_cypher_generate_full_workflow(chemistry_model: GraphDataModel):
 
 
 def test_chemistry_mermaid(chemistry_model: GraphDataModel):
-    mermaid = to_mermaid(chemistry_model)
+    mermaid = model_to_mermaid(chemistry_model)
     assert "graph TD" in mermaid
     assert "Molecule" in mermaid
     assert "REACTANT" in mermaid
+
+
+def test_chemistry_render_dispatcher(chemistry_model: GraphDataModel):
+    mermaid = render(chemistry_model, format="mermaid")
+    assert "graph TD" in mermaid
+    text = render(chemistry_model, format="text")
+    assert "Model:" in text
+    assert "Molecule" in text
 
 
 # --- NetworkX ---

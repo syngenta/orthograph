@@ -75,13 +75,22 @@ src/orthograph/
     ├── networkx/
     │   ├── inspector.py               # NetworkxInspector
     │   └── conversion.py              # schema_to_networkx()
-    └── visualization/                 # PLANNED MOVE: -> src/orthograph/visualization/
-        └── mermaid.py                 # to_mermaid() (see visualization/plan.md)
 ```
 
-**Planned change:** `extensions/visualization/` will move to a top-level
-`src/orthograph/visualization/` package. See `visualization/plan.md` for
-the requirements, decisions, and implementation plan.
+### Visualization (top-level package)
+
+```
+src/orthograph/
+└── visualization/                     # Top-level visualization package
+    ├── __init__.py                    # render() dispatcher + re-exports
+    ├── mermaid.py                     # model_to_mermaid, display_mermaid
+    └── text.py                        # model_to_text, profile_to_text, result_to_text
+```
+
+The visualization package is a **consumer** of orthograph's data structures
+(GraphDataModel, GraphProfile, ValidationResult). It does not inspect or
+validate -- it renders for human consumption. See `visualization/plan.md`
+for the original requirements and design decisions.
 
 ## Core Concepts (one-paragraph each)
 
@@ -117,5 +126,6 @@ Phase 1 produces data. Phase 2 compares it against a model. Visualization is a
 | 03 | Optionality and Cardinality | Yes |
 | 04 | YAML Configuration | Yes |
 | 05 | Cypher Query Generation | Yes |
-| 06 | Graph Inspection and Visualization | Yes |
+| 06 | NetworkX Graph Inspection and Validation | Yes |
 | 07 | Neo4j End-to-End (Reference) | No (requires Neo4j) |
+| 08 | Visualization | Yes |

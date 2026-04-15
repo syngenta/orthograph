@@ -56,9 +56,18 @@ all = [
     "orthograph[networkx,cypher,neo4j]",
 ]
 
+# Extension: Jupyter notebook support (IPython kernel, matplotlib plotting)
+notebooks = [
+    "jupyter>=1.0",
+    "jupyterlab>=4.0",
+    "ipykernel>=6.0",
+    "matplotlib>=3.7",
+]
+
 # Development: testing, linting, type checking
 dev = [
     "orthograph[all]",
+    "orthograph[notebooks]",
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "pytest-mock>=3.0",
@@ -102,6 +111,21 @@ addopts = "-v --strict-markers --tb=short"
 markers = [
     "slow: marks tests as slow",
 ]
+
+# --------------------------------------------------------------------------- #
+#  Mypy
+# --------------------------------------------------------------------------- #
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[[tool.mypy.overrides]]
+# IPython is an optional runtime dependency (notebooks extra).  It is imported
+# inside a try/except in display_mermaid() so the code is safe without it;
+# mypy just needs to know not to error on the missing stubs.
+module = "IPython.*"
+ignore_missing_imports = true
 
 # --------------------------------------------------------------------------- #
 #  Ruff
