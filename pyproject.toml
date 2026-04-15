@@ -113,21 +113,6 @@ markers = [
 ]
 
 # --------------------------------------------------------------------------- #
-#  Mypy
-# --------------------------------------------------------------------------- #
-
-[tool.mypy]
-python_version = "3.12"
-strict = true
-
-[[tool.mypy.overrides]]
-# IPython is an optional runtime dependency (notebooks extra).  It is imported
-# inside a try/except in display_mermaid() so the code is safe without it;
-# mypy just needs to know not to error on the missing stubs.
-module = "IPython.*"
-ignore_missing_imports = true
-
-# --------------------------------------------------------------------------- #
 #  Ruff
 # --------------------------------------------------------------------------- #
 

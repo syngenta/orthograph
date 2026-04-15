@@ -1,12 +1,14 @@
 """Tests for NetworkxInspector."""
 
+from __future__ import annotations
+
 import networkx as nx
 import pytest
 
 from orthograph.extensions.networkx import NetworkxInspector
 
 
-def _make_graph() -> nx.MultiDiGraph:  # type: ignore[type-arg]
+def _make_graph() -> nx.MultiDiGraph[str]:
     """Helper to create a fresh empty MultiDiGraph."""
     return nx.MultiDiGraph()
 

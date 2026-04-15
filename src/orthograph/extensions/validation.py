@@ -1,9 +1,21 @@
 """Validate a GraphProfile against a GraphDataModel."""
 
+from typing import Protocol
+
 from orthograph.core.errors import ValidationIssue, ValidationResult
 from orthograph.core.graph_data_model import GraphDataModel
-from orthograph.core.types import EntityType, Severity
+from orthograph.core.types import EntityType, Severity, TypeInfo
 from orthograph.extensions.models import GraphProfile, PropertyProfile
+
+
+class _HasPropertySpecs(Protocol):
+    """Protocol for types that expose a property spec classmethod.
+
+    Both ``NodeModel`` and ``RelationshipModel`` satisfy this protocol.
+    """
+
+    @classmethod
+    def get_property_specs(cls) -> dict[str, TypeInfo]: ...
 
 
 # --- DB type to Python type mapping ---
@@ -148,11 +160,11 @@ def _check_rel_properties(
 def _check_entity_properties(
     label: str,
     entity_type: EntityType,
-    model_type: type,
+    model_type: type[_HasPropertySpecs],
     profile_props: dict[str, PropertyProfile],
     result: ValidationResult,
 ) -> None:
-    model_specs = model_type.get_property_specs()  # type: ignore[attr-defined]
+    model_specs = model_type.get_property_specs()
 
     for prop_name, type_info in model_specs.items():
         prop_profile = profile_props.get(prop_name)

@@ -16,19 +16,19 @@ class PropertyProfile(BaseModel):
     total_count: int
     observed_types: list[str] = Field(default_factory=list)
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field
     @property
     def missing_count(self) -> int:
         return self.total_count - self.present_count
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field
     @property
     def completeness(self) -> float:
         if self.total_count == 0:
             return 0.0
         return self.present_count / self.total_count
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field
     @property
     def is_mandatory(self) -> bool:
         return self.total_count > 0 and self.present_count == self.total_count

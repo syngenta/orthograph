@@ -1,16 +1,18 @@
 """Convert a GraphDataModel schema to a NetworkX graph."""
 
+from __future__ import annotations
+
 import networkx as nx
 
 from orthograph.core.graph_data_model import GraphDataModel
 
 
-def schema_to_networkx(model: GraphDataModel) -> nx.MultiDiGraph:  # type: ignore[type-arg]
+def schema_to_networkx(model: GraphDataModel) -> nx.MultiDiGraph[str]:
     """Convert a GraphDataModel to a NetworkX MultiDiGraph (schema visualization).
 
     Nodes represent node types, edges represent relationship types.
     """
-    g: nx.MultiDiGraph = nx.MultiDiGraph()  # type: ignore[type-arg]
+    g: nx.MultiDiGraph[str] = nx.MultiDiGraph()
 
     for nt in model.node_types:
         props = {

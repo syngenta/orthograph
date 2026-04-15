@@ -1,5 +1,7 @@
 """NetworkX graph inspector producing a GraphProfile."""
 
+from __future__ import annotations
+
 import logging
 from collections import defaultdict
 from datetime import datetime
@@ -23,7 +25,7 @@ logger = logging.getLogger(__name__)
 class NetworkxInspector(GraphInspector):
     """Inspects a NetworkX MultiDiGraph and produces a structural profile."""
 
-    def __init__(self, graph: nx.MultiDiGraph) -> None:  # type: ignore[type-arg]
+    def __init__(self, graph: nx.MultiDiGraph[str]) -> None:
         self._graph = graph
 
     def inspect(self) -> GraphProfile:
