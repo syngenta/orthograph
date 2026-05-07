@@ -1,15 +1,18 @@
 """
-Notebook regression tests using pytest-nbval.
+Notebook inventory and existence checks.
 
-Run with:
-    pytest tests/notebooks/test_notebooks.py --nbval-lax
+This file documents which notebooks exist and verifies they're present
+on disk.  Actual notebook execution is handled by nbval when running:
 
-Use --nbval-lax to ignore output differences (matplotlib figures, etc.)
-while still catching cell execution errors.
+    pytest notebooks/ --nbval-lax
 
-Add new notebooks to NOTEBOOKS to include them in CI.
-Notebook 07 (neo4j_end_to_end) is excluded because it requires a live
-Neo4j database connection.
+DB-requiring notebooks are excluded from collection by
+``notebooks/conftest.py`` unless the relevant CLI flag is passed:
+
+    pytest notebooks/ --nbval-lax --neo4j      # include Neo4j notebooks
+    pytest notebooks/ --nbval-lax --memgraph   # include Memgraph notebooks
+
+See the root ``conftest.py`` for marker/flag definitions.
 """
 
 from pathlib import Path
@@ -17,29 +20,33 @@ from pathlib import Path
 import pytest
 
 
-# Two parents up from tests/notebooks/test_notebooks.py -> project root
 NOTEBOOKS_DIR = Path(__file__).resolve().parent.parent.parent / "notebooks"
 
-# All notebooks safe to run without external services.
-# Notebook 07 (neo4j_end_to_end) is excluded -- it requires a live Neo4j instance.
-NOTEBOOKS = [
-    NOTEBOOKS_DIR / "01_defining_a_graph_data_model.ipynb",
-    NOTEBOOKS_DIR / "02_validating_graph_data.ipynb",
-    NOTEBOOKS_DIR / "03_optionality_and_cardinality.ipynb",
-    NOTEBOOKS_DIR / "04_yaml_configuration.ipynb",
-    NOTEBOOKS_DIR / "05_cypher_query_generation.ipynb",
-    NOTEBOOKS_DIR / "06_networkx_inspection_and_validation.ipynb",
-    NOTEBOOKS_DIR / "08_visualization.ipynb",
+# All notebooks in the project, grouped by section.
+ALL_NOTEBOOKS = [
+    # 01 -- Core
+    NOTEBOOKS_DIR / "01.01_defining_a_graph_data_model.ipynb",
+    NOTEBOOKS_DIR / "01.02_validating_graph_data.ipynb",
+    NOTEBOOKS_DIR / "01.03_optionality_and_cardinality.ipynb",
+    NOTEBOOKS_DIR / "01.04_visualization.ipynb",
+    # 02 -- Serialization / IO
+    NOTEBOOKS_DIR / "02.01_yaml_configuration.ipynb",
+    NOTEBOOKS_DIR / "02.02_cypher_query_generation.ipynb",
+    # 03 -- Extensions
+    NOTEBOOKS_DIR / "03.01_networkx_inspection_and_validation.ipynb",
+    NOTEBOOKS_DIR / "03.02_neo4j_end_to_end.ipynb",
+    NOTEBOOKS_DIR / "03.03_gqlalchemy_integration.ipynb",
+    NOTEBOOKS_DIR / "03.04_gqlalchemy_database_interaction.ipynb",
 ]
 
 
 @pytest.mark.parametrize(
     "notebook_path",
-    [pytest.param(nb, id=nb.name) for nb in NOTEBOOKS],
+    [pytest.param(nb, id=nb.name) for nb in ALL_NOTEBOOKS],
 )
 def test_notebook_exists(notebook_path: Path) -> None:
-    """Confirm the notebook file is present before nbval attempts to run it."""
+    """Confirm all documented notebooks are present on disk."""
     assert notebook_path.exists(), (
         f"Notebook not found: {notebook_path}\n"
-        "Add the notebook or remove it from NOTEBOOKS in this file."
+        "Either add the notebook or remove it from ALL_NOTEBOOKS."
     )

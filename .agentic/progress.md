@@ -2,7 +2,7 @@
 
 ## Current Status
 
-**307 tests passing** | All pre-commit hooks green | 8 notebooks
+**369 tests passing** | All pre-commit hooks green | 9 notebooks
 
 ## Milestones
 
@@ -81,7 +81,59 @@
 | V11 | Implement `display_mermaid()` (inline Jupyter rendering via mermaid.ink) | done |
 | V12 | Reorganise notebooks: NB06 (NetworkX inspect/validate), NB08 (Visualization) | done |
 
-## Test Coverage: 307 tests
+### GQLAlchemy Integration (2026-04-17)
+
+| # | Milestone | Status |
+|---|-----------|--------|
+| G1 | `GqlAlchemySchema` data class | done |
+| G2 | `generate_gqlalchemy_classes()` core codegen | done |
+| G3 | Node class generation (properties, label, uid) | done |
+| G4 | Relationship class generation (properties, type) | done |
+| G5 | Type translation (Pydantic v2 -> v1) | done |
+| G6 | Codegen tests | done |
+| G7 | Pydantic v1/v2 coexistence test | done |
+| G8 | `gqa_node_to_dict()` | done |
+| G9 | `gqa_relationship_to_dict()` | done |
+| G10 | `gqa_results_to_graph_data()` | done |
+| G11 | `validate_gqa_result()` | done |
+| G12 | Result adapter tests | done |
+| G13 | `GqlAlchemyClient.__init__` | done |
+| G14 | `save_node()` with validation | done |
+| G15 | `save_relationship()` with endpoint validation | done |
+| G16 | `load_node()` with post-load validation | pending |
+| G17 | `load_relationship()` with post-load validation | pending |
+| G18 | `execute()` raw passthrough | done |
+| G19 | `validate_database()` delegation | done |
+| G20 | Client tests | done |
+| G21 | `ValidatedQueryBuilder` class | done |
+| G22 | `execute_validated()` with Cypher validation | done |
+| G23 | `validate_query()` static analysis | done |
+| G24 | Query builder tests | done |
+| G25 | `__init__.py` public API | done |
+| G26 | `pyproject.toml` optional dependency | done |
+| G27 | Notebook 09 (design) | done |
+| G28 | `.agentic/` documentation (plan, decisions, roadmap) | done |
+
+### Code Review & Planning (2026-05-07)
+
+| # | Milestone | Status |
+|---|-----------|--------|
+| R1 | Full codebase review against objectives | done |
+| R2 | Review documented in `reviews/` | done |
+| R3 | Epics and tasks defined in `planning/` | done |
+| R4 | `.agentic/` restructured for progressive disclosure | done |
+| R5 | Decisions updated | done |
+
+### Next: Quality & Polish (planned -- see `planning/overview.md`)
+
+| Epic | Title | Status |
+|------|-------|--------|
+| E1 | API Ergonomics & Developer Experience | planned |
+| E2 | Code Deduplication & Internal Quality | planned |
+| E3 | Documentation & Onboarding | planned |
+| E4 | Extension Robustness & Consistency | planned |
+
+## Test Coverage: 369 tests
 
 | Module | Tests |
 |--------|-------|
@@ -100,6 +152,10 @@
 | extensions/memgraph/inspector | 2 |
 | extensions/networkx/inspector | 9 |
 | extensions/networkx/conversion | 6 |
+| extensions/gqlalchemy/codegen | 28 |
+| extensions/gqlalchemy/result_adapter | 13 |
+| extensions/gqlalchemy/client | 14 |
+| extensions/gqlalchemy/query_builder | 7 |
 | visualization/mermaid | 16 |
 | visualization/text | 23 |
 | visualization/render | 8 |
@@ -120,3 +176,4 @@ See `decisions.md` for the full log. Summary of active decisions:
 - Undirected relationships: either endpoint direction is semantically valid; cardinality counts both directions combined; Cypher uses `-` (no arrow)
 - `ZERO_OR_MORE` (0..*) is a valid cardinality distinct from `ONE_OR_MORE` (1..*); cardinality constrains per-node instance counts, not relationship type existence (which is controlled by `__optional__`)
 - `display_mermaid()` soft-imports IPython at call time; `profile_to_mermaid` was not implemented -- profiles are statistical summaries, Mermaid diagrams represent schema structure only
+- GQLAlchemy integration: extension module pattern, Orthograph models as single source of truth, codegen for GQLAlchemy classes, plain dicts as bridge between Pydantic v1/v2, result validation opt-in

@@ -51,9 +51,14 @@ memgraph = [
     "neo4j>=5.0",
 ]
 
+# Extension: GQLAlchemy OGM + query builder integration
+gqlalchemy = [
+    "gqlalchemy>=1.6",
+]
+
 # All extensions
 all = [
-    "orthograph[networkx,cypher,neo4j]",
+    "orthograph[networkx,cypher,neo4j,gqlalchemy]",
 ]
 
 # Notebook execution in CI (lightweight -- no full Jupyter install)
@@ -115,6 +120,8 @@ testpaths = ["tests"]
 addopts = "-v --strict-markers --tb=short"
 markers = [
     "slow: marks tests as slow",
+    "neo4j: requires a live Neo4j instance (run with --neo4j)",
+    "memgraph: requires a live Memgraph instance (run with --memgraph)",
 ]
 
 # --------------------------------------------------------------------------- #

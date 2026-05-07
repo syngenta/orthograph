@@ -19,8 +19,11 @@ Like Pandera for DataFrames, but for graph data structures.
 | Neo4j-specific details (queries, APOC, driver) | `extensions/neo4j.md` |
 | Memgraph-specific details | `extensions/memgraph.md` |
 | Cypher parser and generator details | `extensions/cypher.md` |
+| GQLAlchemy integration plan | `extensions/gqlalchemy.md` |
 | Visualization requirements and plan | `visualization/plan.md` |
 | What's not yet implemented, future plans | `roadmap.md` |
+| Code review findings | `reviews/` |
+| Planned work (epics + tasks) | `planning/` |
 | Superseded plans (historical reference only) | `archive/` |
 
 ## Documentation Structure
@@ -31,16 +34,34 @@ Like Pandera for DataFrames, but for graph data structures.
 ├── decisions.md             # Tier 1: architectural decisions log
 ├── progress.md              # Tier 1: milestones, test counts, status
 ├── roadmap.md               # Tier 1: future work, open questions
+├── reviews/                 # Tier 1: timestamped review records
+│   └── 2026-05-07_post-gqlalchemy-review.md
+├── planning/                # Tier 1: actionable work breakdown
+│   ├── overview.md          #   Epic index, dependency order, relationship to roadmap
+│   └── epics/               #   One file per epic with full task specs
+│       ├── E1_api_ergonomics.md
+│       ├── E2_code_deduplication.md
+│       ├── E3_documentation.md
+│       └── E4_extension_robustness.md
 ├── extensions/              # Tier 2: extensions area
 │   ├── overview.md          #   Architecture, abstractions, validation codes
 │   ├── neo4j.md             #   Tier 3: Neo4j inspector, queries, result adapter
 │   ├── memgraph.md          #   Tier 3: Memgraph inspector, differences
-│   └── cypher.md            #   Tier 3: Cypher generator + parser
+│   ├── cypher.md            #   Tier 3: Cypher generator + parser
+│   └── gqlalchemy.md        #   Tier 3: GQLAlchemy OGM + query builder integration plan
 ├── visualization/           # Tier 2: visualization area
 │   └── plan.md              #   Requirements, decisions, implementation plan
 └── archive/                 # Historical reference only
     └── extensions_plan_v1.md
 ```
+
+## Reading Order (progressive disclosure)
+
+1. **"Where are we?"** -- Read `progress.md` (current state, test counts)
+2. **"Where are we going?"** -- Read `planning/overview.md` (next work)
+3. **"Why was X decided?"** -- Read `decisions.md` (searchable log)
+4. **"What was found in reviews?"** -- Read `reviews/` (timestamped)
+5. **"How does subsystem X work?"** -- Read the relevant `extensions/` or `visualization/` doc
 
 **For agents:** Read `index.md` -> read the relevant area doc -> drill into tier 3 only if needed. Maximum 3 files for any question.
 
@@ -75,6 +96,11 @@ src/orthograph/
     ├── networkx/
     │   ├── inspector.py               # NetworkxInspector
     │   └── conversion.py              # schema_to_networkx()
+    └── gqlalchemy/                    # GQLAlchemy OGM + query builder (planned)
+        ├── codegen.py                 # Auto-generate GQLAlchemy classes from models
+        ├── client.py                  # GqlAlchemyClient (validated wrapper)
+        ├── query_builder.py           # ValidatedQueryBuilder
+        └── result_adapter.py          # Convert GQLAlchemy results to validation dicts
 ```
 
 ### Visualization (top-level package)
@@ -119,13 +145,15 @@ Phase 1 produces data. Phase 2 compares it against a model. Visualization is a
 
 ## Notebooks
 
-| # | Title | Executable? |
-|---|-------|-------------|
-| 01 | Defining a Graph Data Model | Yes |
-| 02 | Validating Graph Data | Yes |
-| 03 | Optionality and Cardinality | Yes |
-| 04 | YAML Configuration | Yes |
-| 05 | Cypher Query Generation | Yes |
-| 06 | NetworkX Graph Inspection and Validation | Yes |
-| 07 | Neo4j End-to-End (Reference) | No (requires Neo4j) |
-| 08 | Visualization | Yes |
+| # | Title | DB Required | CI-Safe |
+|---|-------|:-----------:|:-------:|
+| 01.01 | Defining a Graph Data Model | No | Yes |
+| 01.02 | Validating Graph Data | No | Yes |
+| 01.03 | Optionality and Cardinality | No | Yes |
+| 01.04 | Visualization | No | Yes |
+| 02.01 | YAML Configuration | No | Yes |
+| 02.02 | Cypher Query Generation | No | Yes |
+| 03.01 | NetworkX Inspection and Validation | No | Yes |
+| 03.02 | Neo4j End-to-End (Reference) | **Yes** (Neo4j) | No |
+| 03.03 | GQLAlchemy Compatibility | No | Yes |
+| 03.04 | GQLAlchemy Database Interaction | **Yes** (Neo4j or Memgraph) | No |

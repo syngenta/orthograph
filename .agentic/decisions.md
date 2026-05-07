@@ -248,3 +248,181 @@ package (`.`) to `additional_dependencies` resolved this.
 - Added 7 tests: `contains()` for `ZERO_OR_MORE`/`ONE_OR_MORE`, side-by-side
   validator comparison, target cardinality violation, default cardinality assertion
 - Added `py.typed` marker and fixed pre-commit mypy configuration
+
+## 2026-04-17: GQLAlchemy Integration
+
+### Problem
+
+Orthograph defines graph schemas and validates data, but has no OGM (object
+persistence/retrieval) and no general-purpose query builder. Users who need
+both strict schema governance and database interaction must manually wire
+Orthograph validation around a separate database client. GQLAlchemy provides
+a mature OGM and fluent query builder for Memgraph and Neo4j but lacks
+schema validation, cardinality constraints, endpoint enforcement, and Cypher
+static analysis.
+
+### Decision: GQLAlchemy as an optional Orthograph extension
+
+GQLAlchemy is added as an **optional dependency** and exposed through a new
+extension module `orthograph.extensions.gqlalchemy`. This follows the same
+pattern as the existing `neo4j`, `memgraph`, and `networkx` extensions.
+
+**Key architectural choices:**
+
+1. **Only Orthograph is modified.** GQLAlchemy is treated as an external
+   dependency. No fork, no patches.
+
+2. **Orthograph models are the single source of truth.** Users define
+   `NodeModel` / `RelationshipModel` classes. GQLAlchemy `Node` / `Relationship`
+   classes are auto-generated at runtime via `codegen.py`. Users never define
+   or import GQLAlchemy model classes directly.
+
+3. **Extension module, not deep wrapping.** The integration lives in
+   `orthograph.extensions.gqlalchemy/` and is only imported when needed.
+   Core Orthograph has zero awareness of GQLAlchemy.
+
+4. **Bridge via plain dicts.** Orthograph (Pydantic v2) and GQLAlchemy
+   (Pydantic v1) model hierarchies cannot share a base class. All data
+   exchange happens through plain Python dicts. The codegen layer translates
+   Orthograph model metadata into GQLAlchemy class definitions. The result
+   adapter layer converts GQLAlchemy objects back into validation dicts.
+
+5. **Schema features Orthograph has but GQLAlchemy lacks** (cardinality,
+   endpoint types, directed/undirected, entity optionality) are enforced
+   by Orthograph's validation layer, not by the generated GQLAlchemy classes.
+
+6. **Both Memgraph and Neo4j** are supported via GQLAlchemy's vendor
+   abstraction (`Memgraph` and `Neo4j` classes both implement `DatabaseClient`).
+
+### Deferred decisions
+
+| Decision | Status | Notes |
+|---|---|---|
+| Cardinality enforcement on write | Deferred | Requires pre-save DB query for current count. Performance cost unclear. Can be added as opt-in `enforce_cardinality=True` later. |
+| Result validation default | Decided: opt-in | `validate_results=False` by default on `execute_validated()`. Activated with `validate_results=True`. |
+| Index/constraint auto-creation | Deferred | Not implemented in first version. Users use `CypherGenerator.generate_constraints()` or GQLAlchemy's `Field(unique=True, db=db)` directly. |
+
+### Tradeoffs accepted
+
+| Tradeoff | Accepted cost | Benefit |
+|---|---|---|
+| Dynamic class generation via `type()` | Harder to debug, no IDE autocomplete on generated classes | Users never see generated classes; they use Orthograph models |
+| Pydantic v1/v2 coexistence | Runtime complexity, potential subtle bugs | No fork of GQLAlchemy needed; clean separation |
+| Schema features enforced outside GQLAlchemy | GQLAlchemy's own validation is bypassed/redundant | Orthograph's richer validation is always the authority |
+| GQLAlchemy's `Extra.allow` on models | Generated classes accept undeclared properties | Orthograph validates BEFORE save; extra props are caught |
+| No re-implementation of query builder | Users must import `gqlalchemy.match/create/merge` | Full access to GQLAlchemy's query builder; no maintenance burden |
+
+### Alternatives considered
+
+1. **Fork GQLAlchemy and add Pydantic v2 + validation** -- Rejected.
+   Maintenance burden of a fork. GQLAlchemy's OGM design is fundamentally
+   different from Orthograph's schema-first approach.
+
+2. **Build OGM from scratch in Orthograph** -- Rejected for now. Large
+   effort. GQLAlchemy already handles connection management, Cypher
+   generation, result deserialization, and multi-vendor support.
+
+3. **Use Neomodel instead of GQLAlchemy** -- Rejected. Neomodel is Neo4j-only,
+   not Pydantic-based, and has a heavier ORM abstraction that conflicts with
+   Orthograph's schema-first philosophy.
+
+4. **Lightweight bridge (users wire both libraries manually)** -- Rejected
+   in favor of extension module. A bridge requires users to understand both
+   APIs and handle conversion themselves. The extension provides a cohesive
+   experience.
+
+5. **Deep wrapping (hide GQLAlchemy completely)** -- Rejected. Would require
+   re-implementing the query builder API surface. The extension module exposes
+   GQLAlchemy's query builder directly and adds validation on top.
+
+### Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Pydantic v1/v2 conflict | Low | High | Both coexist since Pydantic 2.0. Test in CI. |
+| GQLAlchemy API changes | Medium | Medium | Pin `>= 1.6, < 2.0`. All imports behind extension boundary. |
+| `pymgclient` build issues | Medium | Medium | Only needed for Memgraph. Document clearly. |
+| Dynamic class generation breaks | Low | Medium | Comprehensive codegen tests. |
+
+### References
+
+- GQLAlchemy docs: https://memgraph.github.io/gqlalchemy/
+- GQLAlchemy source: https://github.com/memgraph/gqlalchemy
+- Detailed integration plan: `.agentic/extensions/gqlalchemy.md`
+- Target behavior notebook: `notebooks/09_gqlalchemy_integration.ipynb`
+
+## 2026-05-07: Post-GQLAlchemy Review -- API & Structure Decisions
+
+### Trigger
+
+Full code review after completing CAST-1233 (GQLAlchemy integration).
+See `reviews/2026-05-07_post-gqlalchemy-review.md` for the full analysis.
+
+### Decision: Shared `PropertySpecMixin` for model classes
+
+`NodeModel` and `RelationshipModel` both define identical `get_property_specs()`,
+`get_required_property_names()`, and `get_all_property_names()` classmethods.
+These will be extracted to a shared mixin class.
+
+**Rationale:** DRY principle. 30 lines duplicated verbatim. Bug fixes would
+need to be applied in two places.
+
+**Tradeoff:** Slightly more complex inheritance hierarchy (Mixin + BaseModel).
+Acceptable because the mixin is pure logic with no state.
+
+### Decision: Convenience methods on `GraphDataModel` and `GraphValidator`
+
+Adding `GraphDataModel.validate()`, `GraphDataModel.validate_profile()`,
+and `GraphValidator.validate_node()` / `validate_relationship()` singular
+methods. These are thin delegation wrappers.
+
+**Rationale:** Reduces ceremony for the 80% use case. The verbose path
+(`GraphValidator(model).validate([item])`) remains for advanced use.
+
+**Tradeoff:** Slightly larger public API surface. Acceptable because
+the methods are discoverable and self-explanatory.
+
+### Decision: Keep `__source_uid__` / `__target_uid__` dict format as primary
+
+The magic-key dict format will remain the primary internal representation.
+Tuple input `(src, tgt, label, props)` will be added as an **alternative**
+input format, not a replacement.
+
+**Rationale:** The dict format is used throughout the codebase (validator,
+Cypher generator, result adapters, notebooks). Changing the canonical
+format would be a breaking refactor. Adding tuple support is additive.
+
+### Decision: Explicit `backend=` parameter for GqlAlchemyClient
+
+String-matching on class names is fragile. Adding an explicit `backend=`
+parameter that defaults to auto-detection but can be overridden.
+
+**Rationale:** Testability, robustness against GQLAlchemy API changes,
+explicit over implicit.
+
+### Decision: MemgraphQueries intentionally does NOT implement QueryStrategy
+
+The Memgraph schema procedures return all metadata in single calls (not
+per-label), so the API shape genuinely differs from Neo4j's. This is
+documented, not fixed.
+
+**Rationale:** Forcing API alignment would either waste queries (calling
+per-label when Memgraph gives all-at-once) or break the protocol contract
+(accepting parameters it ignores). Documentation is the correct solution.
+
+### Decision: Progressive disclosure structure for `.agentic/`
+
+Restructured `.agentic/` to separate:
+- `reviews/` -- timestamped code review records
+- `planning/` -- epics and tasks derived from reviews
+- `archive/` -- superseded documents
+- Root files -- current-state documents (index, progress, decisions, roadmap)
+
+**Rationale:** A developer or agent should be able to answer "where are we?"
+(progress), "where are we going?" (planning/), "why was this decided?"
+(decisions), and "what was found?" (reviews/) without reading everything.
+
+### Actions
+
+- Epic/task breakdown: see `planning/overview.md`
+- Detailed specs: see `planning/epics/E1-E4`

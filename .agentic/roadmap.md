@@ -8,6 +8,7 @@
 
 | Feature | Description | Effort | Plan |
 |---------|-------------|--------|------|
+| GQLAlchemy integration | OGM + query builder via GQLAlchemy as an optional extension. Auto-generate GQLAlchemy classes from Orthograph models, validated save/load, query builder bridge with Cypher validation. Supports both Memgraph and Neo4j. | Large | `extensions/gqlalchemy.md` |
 | Visualization package | Move to top-level `visualization/`. Add profile and result renderers (text, mermaid). Enrich model renderer with cardinality and optionality. | Medium | `visualization/plan.md` |
 | Schema / Projection hierarchy | Formal distinction between `GraphSchema` (DB truth) and `GraphProjection` (usage subset). A projection can only relax constraints from the schema. Enables "does this query result model make sense given the DB schema?" | Large | -- |
 | Custom validators / checks | User-defined validation rules beyond type + structure (like Pandera's `Check`). E.g., regex on property values, range constraints, cross-property rules. | Medium | -- |
@@ -44,6 +45,8 @@
 | T4 | Should `GraphProfile` support incremental construction (builder pattern)? | Not yet needed -- inspectors build internally, freeze on return. |
 | T5 | For NetworkX inspector, should `observed_types` use Python type names or standardized names? | Currently uses Python names (`str`, `int`). Consider standardizing. |
 | T6 | Should the Cypher generator be made dialect-aware (Neo4j vs Memgraph differences)? | Yes, eventually. Current syntax is Neo4j-specific. |
+| T7 | Should GQLAlchemy client enforce cardinality on write (pre-save DB query)? | Deferred. Performance cost. Can add `enforce_cardinality=True` later. |
+| T8 | How should undirected relationships be handled through GQLAlchemy OGM? | Open. GQLAlchemy only supports directed. Client may need to create both directions or use directionless MATCH. |
 
 ## Open Strategic Questions
 

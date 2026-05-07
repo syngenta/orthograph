@@ -75,7 +75,7 @@ GraphProfile
 | `neo4j/` | neo4j driver (runtime) | DB inspection, query result validation |
 | `memgraph/` | neo4j driver (runtime) | DB inspection |
 | `networkx/` | networkx | In-memory graph inspection + conversion |
-| `visualization/` | none | Mermaid diagram generation |
+| `gqlalchemy/` | gqlalchemy (runtime) | OGM (save/load), query builder bridge, validated DB interaction |
 
 Each subpackage has its own `__init__.py` with re-exports.
 Importing one subpackage does not pull in dependencies of others.
@@ -86,3 +86,23 @@ Importing one subpackage does not pull in dependencies of others.
 2. Implement `class MyBackendInspector(GraphInspector)`
 3. Implement `inspect() -> GraphProfile` using your backend's API
 4. Validation comes for free via `validate_profile(profile, model)`
+
+## GQLAlchemy Extension (different pattern)
+
+The `gqlalchemy/` subpackage does **not** follow the inspect/validate pattern.
+It is an **interaction layer**, not an inspection layer. Its purpose is to
+provide OGM capabilities (save, load, merge) and query builder integration
+with Orthograph schema validation on all data paths.
+
+See `gqlalchemy.md` for the full design.
+
+```
+                      inspect/validate extensions        interaction extension
+                     ┌───────────────────────────┐     ┌─────────────────────┐
+GraphDataModel ─────►│ neo4j, memgraph, networkx │     │     gqlalchemy      │
+                     │                           │     │                     │
+                     │ Inspector → GraphProfile  │     │ codegen → GQA class │
+                     │ validate_profile() → VR   │     │ client → save/load  │
+                     └───────────────────────────┘     │ QB → validate+exec  │
+                                                       └─────────────────────┘
+```

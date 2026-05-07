@@ -48,3 +48,34 @@ that, run:
 
    git clone git@gitlab.com:syngentagroup/cas/prod/orthograph.git
    pip install -e orthograph/[dev]
+
+
+Running Tests
+~~~~~~~~~~~~~
+
+Unit tests run by default without any external services:
+
+.. code-block:: shell
+
+   pytest
+
+Notebooks are tested separately via nbval (CI-safe notebooks only):
+
+.. code-block:: shell
+
+   pytest notebooks/ --nbval-lax
+
+Tests and notebooks that require a live database are gated behind CLI flags
+and skipped by default. Use ``--neo4j`` or ``--memgraph`` to include them:
+
+.. code-block:: shell
+
+   pytest --neo4j                            # include @pytest.mark.neo4j unit tests
+   pytest notebooks/ --nbval-lax --neo4j     # include Neo4j-requiring notebooks
+   pytest notebooks/ --nbval-lax --memgraph  # include Memgraph-requiring notebooks
+
+To mark a new test as DB-dependent, decorate it with ``@pytest.mark.neo4j`` or
+``@pytest.mark.memgraph``. For notebooks, add an entry to the ``_DB_NOTEBOOKS``
+dict in ``notebooks/conftest.py``.
+
+See ``conftest.py`` (project root) for the flag registration and auto-skip logic.
