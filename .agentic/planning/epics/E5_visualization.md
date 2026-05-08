@@ -1,4 +1,7 @@
-# Visualization -- Requirements, Decisions, and Implementation Plan
+# E5: Visualization Package
+
+> **Status: IMPLEMENTED** (2026-04-14, branch CAST-1224)
+> Generated from: `decisions/004-undirected-relationships-and-visualization.md`
 
 ## Context
 
@@ -48,9 +51,6 @@ Generate a visual representation of an inspection profile:
 - Property-level detail: completeness percentage, observed types, missing count
 - Highlight anomalies: low completeness, type mismatches, unexpected types
 
-This is new functionality. The `GraphProfile` Pydantic model is already
-serialisable -- visualization renders it for human consumption.
-
 ### R4: Visualize a ValidationResult
 
 Generate a visual summary of validation results:
@@ -58,9 +58,6 @@ Generate a visual summary of validation results:
 - Pass/fail status per node type and relationship type
 - List of errors, warnings, info grouped by entity
 - Severity-coded (red/yellow/blue)
-
-This is also new. The `ValidationResult` already has structured data (`issues`,
-`errors`, `warnings`); visualization formats it for reports.
 
 ### R5: Multiple output formats
 
@@ -102,7 +99,7 @@ from orthograph.visualization.mermaid import model_to_mermaid
 from orthograph.visualization.text import profile_to_text, result_to_text
 ```
 
-## Separation of Concerns: Decision
+## Separation of Concerns
 
 ### What stays in `extensions/`
 
@@ -111,12 +108,12 @@ from orthograph.visualization.text import profile_to_text, result_to_text
   algorithms). It is a **data conversion**, not a visualization. It stays in the
   networkx extension because the output is a `nx.MultiDiGraph`, not a visual format.
 
-### What moves to `visualization/`
+### What moved to `visualization/`
 
-- `extensions/visualization/mermaid.py` (`to_mermaid`) -- moves to
-  `visualization/mermaid.py`. Becomes one of several renderers.
+- `extensions/visualization/mermaid.py` (`to_mermaid`) -- moved to
+  `visualization/mermaid.py`. Became one of several renderers.
 
-### New top-level package (IMPLEMENTED)
+### Top-level package (IMPLEMENTED)
 
 ```
 src/orthograph/
@@ -135,20 +132,13 @@ tests/visualization/
 └── test_render.py              # dispatcher tests
 ```
 
-### What gets deleted
-
-- `src/orthograph/extensions/visualization/` (entire directory)
-- `tests/extensions/visualization/` (entire directory)
-
 ### Import path changes
 
 | Old | New |
 |-----|-----|
 | `from orthograph.extensions.visualization import to_mermaid` | `from orthograph.visualization import render` or `from orthograph.visualization.mermaid import model_to_mermaid` |
 
-## Implementation Plan
-
-> **Status: Phases 1-5 IMPLEMENTED** (2026-04-14, branch CAST-1224)
+## Implementation Record
 
 ### Phase 1: Move and restructure (foundation) -- DONE
 
@@ -209,30 +199,16 @@ tests/visualization/
 | Text table | None | Always available |
 | HTML report | Jinja2 (optional) | Future |
 
-## Notebook Plan
+## Naming Conventions
 
-| # | Notebook | Content | Status |
-|---|----------|---------|--------|
-| NB06 | NetworkX Graph Inspection and Validation | Filmography domain. NetworkxInspector, GraphProfile exploration, validate_profile, schema_to_networkx, profile serialisation. | done |
-| NB07 | Neo4j End-to-End (Reference) | Filmography domain. Full Neo4j workflow (unchanged). | done |
-| NB08 | Visualization | Filmography domain. All renderers: model_to_mermaid, model_to_text, profile_to_text, result_to_text, display_mermaid, render() dispatcher, schema-vs-observed comparison. | done |
+- Module names: `mermaid.py`, `text.py` (by output format)
+- Function names: `{input_type}_to_{format}` -- e.g., `model_to_mermaid`, `profile_to_text`
+- The `render()` dispatcher is a convenience; direct function calls are the primary API
 
 ## Implementation Notes
-
-### Key design decisions made
 
 - `profile_to_mermaid` was not implemented: Mermaid diagrams represent schema structure; profiles are statistical summaries best rendered as text tables
 - `[UID]` marker in `model_to_mermaid` uses plain `UID` text (no square brackets) -- square brackets inside Mermaid `["..."]` quoted labels break the parser and cause mermaid.ink to return a broken image
 - `_mermaid_ink_url` uses `base64.urlsafe_b64encode` (RFC 4648) -- standard base64 `+`/`/` characters are not URL-safe
 - `display_mermaid` soft-imports IPython at call time and raises a clear `ImportError` if not in a notebook environment
 - `render(profile, format="mermaid")` raises `ValueError` -- mermaid format is only meaningful for `GraphDataModel`
-
-### Naming convention
-
-- Module names: `mermaid.py`, `text.py` (by output format)
-- Function names: `{input_type}_to_{format}` -- e.g., `model_to_mermaid`, `profile_to_text`
-- The `render()` dispatcher is a convenience; direct function calls are the primary API
-
-### Branch
-
-Implemented on branch `CAST-1224-change-architecture-of-visualization-module`.

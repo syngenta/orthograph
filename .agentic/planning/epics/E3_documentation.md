@@ -93,7 +93,7 @@ minor staleness (wrong titles, no shared model setup).
 
 **Implementation:**
 
-1. Add a Mermaid diagram to `.agentic/index.md` (or a new `architecture.md` file) showing:
+1. Add a Mermaid diagram to `.agentic/CONTEXT.md` (or a new `architecture.md` file) showing:
    - Package layers: core -> io, extensions, visualization
    - The two-phase flow: Inspector -> GraphProfile -> validate_profile -> ValidationResult
    - The GQLAlchemy interaction flow: model -> codegen -> client -> validate -> save
