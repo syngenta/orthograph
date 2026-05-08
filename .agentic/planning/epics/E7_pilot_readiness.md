@@ -1,81 +1,102 @@
-# Epic E7: Pilot Readiness
+# Epic E7: Pilot Readiness (Gate)
 
 > **Priority:** High
 > **Phase:** v0.1.0 — Pilot Readiness
-> **Goal:** Ensure Orthograph is stable and documented enough that a pilot project team can adopt it with agent assistance, with no prior knowledge of the library
-> **Origin:** Product definition grilling session 2026-05-07 — see `reviews/2026-05-07_product-definition-grilling.md`
+> **Goal:** Validate that Orthograph is stable and documented enough for two pilot teams to adopt with no prior knowledge
+> **Blocked by:** E1, E2, E3, E4, E6, E8, E9, E10, E11 substantially complete
+> **User stories:** All
 
 ---
 
 ## Context
 
-Orthograph reaches "pilot ready" when a software engineer on a target project —
-guided by an agent reading `knowledge/product.md` — can:
+Orthograph reaches "pilot ready" when a software engineer on a target project can:
 
-1. Understand what Orthograph is and whether it fits their use case (README + product.md)
+1. Understand what Orthograph is and whether it fits their use case (README + PRD)
 2. Define a `GraphDataModel` for their existing graph database schema
 3. Validate their existing query results against that model
 4. Inspect their live Neo4j or Memgraph database and compare against the model
 5. Declare their queries in a `queries.yaml` and dispatch them via `CypherQueryCatalogue`
+6. Use GQLAlchemy codegen + validated query builder for ORM interactions
 
-This epic is a **gate epic** — it is not a feature epic. It validates that all other
-epics (E1–E6) combine into a coherent, adoptable product. Its tasks are integration,
-documentation, and agent-readiness checks, not new features.
+Two pilot projects:
+- **Pilot A:** Hardcoded Cypher, transactional, no schema → Cypher catalogue path
+- **Pilot B:** Existing Cypher catalogue pattern → formalise with Orthograph validation
+
+This epic is a **gate** — it validates that all other epics combine into a
+coherent, adoptable product. Its tasks are integration, documentation, and
+verification checks, not new features.
 
 ---
 
-## Description of Tasks (not yet fully scoped)
+## Tasks
 
-### E7.1: `product.md` — Complete and Validated
+### E7.1: PRD Accuracy Check
 
-Write `knowledge/product.md` with all three layers:
-- L1: North star (drift prevention, three-layer model, KPI)
-- L2: Phase definition (current scope, out-of-scope, guardrails)
-- L3: Capability map (headings mirror subpackages, product language + code pointers)
+Verify the PRD (`knowledge/product_requirements_document.md`) accurately reflects the implemented library. Check all file links are valid and descriptions match reality.
 
-**Prerequisite:** Product definition grilling session complete (in progress — see `reviews/2026-05-07_product-definition-grilling.md`).
+**Acceptance criteria:**
+- [ ] All file links in PRD resolve to existing files
+- [ ] Capability descriptions match actual implementations
+- [ ] Items marked "not yet implemented" are either done or still accurately flagged
+- [ ] No drift between PRD constraints and actual code patterns
 
-### E7.2: `CONTEXT.md` North Star and Guardrails
+---
 
-Add `## North Star` and `## Guardrails` sections to `CONTEXT.md`, derived from `product.md` L1 and L2.
-These are the sections that agent scope checks read before acting.
+### E7.2: CONTEXT.md Update
 
-**Prerequisite:** E7.1 complete.
+Update `CONTEXT.md` routing table to reflect new epics, new packages (catalogue), and add North Star / Guardrails sections derived from PRD.
 
-### E7.3: Agent Migration Pattern Validation
+**Acceptance criteria:**
+- [ ] Routing table includes catalogue package
+- [ ] North Star section: one paragraph defining Orthograph's purpose
+- [ ] Guardrails section: link to PRD constraints
+- [ ] An agent can navigate from any question to the correct file in ≤2 hops
 
-Validate that an agent reading `product.md` + `CONTEXT.md` can autonomously generate a migration roadmap for a pilot project. This is tested by running an agent session against a pilot project repo with Orthograph's `.agentic/` as context.
+---
 
-**Prerequisite:** E7.1, E7.2, E1–E6 complete or substantially done.
-**Output:** A documented migration pattern that can be reused across pilot projects.
+### E7.3: End-to-End Pilot Notebook
 
-### E7.4: End-to-End Pilot Notebook
+Write a notebook demonstrating the full vertical slice for a pilot team.
 
-Write a notebook (`04.02_pilot_integration_walkthrough.ipynb`) that demonstrates the full vertical slice:
-1. Existing graph database with no schema declared
-2. Define `GraphDataModel` matching the existing data
-3. Inspect the live database → `GraphProfile`
-4. Validate the profile → `ValidationResult`
-5. Load query catalogue from YAML
-6. Execute named queries with result validation
+**Acceptance criteria:**
+- [ ] Schema definition (YAML or Python) for a representative domain
+- [ ] Database inspection → `GraphProfile` → drift detection
+- [ ] Query catalogue loaded from YAML
+- [ ] Named query execution with result validation
+- [ ] Visualisation of schema and validation results
+- [ ] Runs against a live database (Neo4j or Memgraph)
 
-This notebook is the demo artefact used to recommend adoption.
-**Prerequisite:** E6 complete, live DB available (Neo4j or Memgraph).
+---
+
+### E7.4: Agent Migration Pattern Validation
+
+Validate that an agent reading `.agentic/` can generate a migration roadmap for a pilot project without human intervention.
+
+**Acceptance criteria:**
+- [ ] Agent session produces a coherent adoption plan
+- [ ] Documented as a reusable pattern for future pilot onboarding
+
+---
 
 ### E7.5: Version and Release Preparation
 
-- Bump version to `0.1.0` in `pyproject.toml`
-- Confirm all CI checks pass (tests, pre-commit, notebook tests)
-- Tag the release in git
+Bump version to `0.1.0`, confirm CI passes, tag release.
+
+**Acceptance criteria:**
+- [ ] `pyproject.toml` version = `0.1.0`
+- [ ] All CI checks pass (tests, pre-commit, notebook tests)
+- [ ] Git tag `v0.1.0` created
 
 ---
 
-## Success Criteria
+## Success Criteria (gate conditions)
 
-- [ ] `product.md` exists and is complete (L1, L2, L3)
-- [ ] `CONTEXT.md` has North Star and Guardrails sections
-- [ ] README accurately describes the library and matches the API
+- [ ] PRD is accurate and all links valid
+- [ ] README matches the library
 - [ ] E1–E4 quality epics complete
-- [ ] E6 (CypherQueryCatalogue) complete and tested
-- [ ] End-to-end pilot notebook exists and runs against a live database
-- [ ] An agent reading `.agentic/` can generate a pilot project migration roadmap without human intervention
+- [ ] E6 (Cypher Query Catalogue) complete and tested
+- [ ] E8 (GQLAlchemy Query Catalogue) complete and tested
+- [ ] E9 + E10 (composition pattern + connection audit) complete
+- [ ] End-to-end pilot notebook runs against live database
+- [ ] An agent reading `.agentic/` can generate a pilot migration roadmap
