@@ -1,7 +1,8 @@
 # Epic E6: Cypher Query Catalogue
 
 > **STATUS: RETIRED — superseded by [E16](E16_query_catalogue_unified.md)**
-> Tasks E6.1–E6.4 are reformulated in E16 as T1, T2, T3, T4. Do not pick up new work from this file.
+> The YAML/string-key approach in this epic is NOT being built as-is. Whether YAML returns at all
+> is an open decision in E16 ("OPEN DECISION: YAML"). Do not pick up new work from this file.
 
 ---
 

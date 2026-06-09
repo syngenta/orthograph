@@ -1,593 +1,404 @@
-# Epic E16: Query Catalogue — Unified Interface, Cypher Query Model, and Typed Backends
+# Epic E16: Query Catalogue — Typed Contract, Cypher Backend, and Registry
 
 > **Priority:** High
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Supersedes:** E6 (Cypher Query Catalogue), E12 (Shared Interface Extraction), E13 (Typed
-> Contract), E15 (Typed Cypher Backend). Those four epics are **retired**; their tasks are
-> reformulated here in an order that resolves the tensions between them.
+> Contract), E15 (Typed Cypher Backend). Those four epics are **retired**.
 > **Blocked by:** None — can start immediately
 > **Unblocks:** E8 (GQLAlchemy catalogue), E11 (CRUD auto-generation), E14 (SQLAlchemy backend),
 > matterforge Phase 2 (E9, E10)
+>
+> **SCOPE NOTE:** This epic builds the **typed track only**, in strict implementation order:
+> (1) Read/Write query generics + Executor → (2) Cypher concrete backend → (3) the catalogue.
+> **YAML configuration is deliberately OUT of this epic's build scope** — it is an open
+> architectural decision recorded at the bottom (see "OPEN DECISION: YAML"). We build the clean
+> typed core first, then decide whether YAML earns its place or is dropped.
 
 ---
 
-## Why This Consolidation Was Needed: The Four Tensions
+## Why This Consolidation Was Needed: The Tensions
 
-Before the tasks, here are the concrete design conflicts that the retired epics left unresolved.
-Any agent picking up a task from E6/E12/E13/E15 would have produced code that conflicts.
+The four retired epics left genuine, code-producing conflicts unresolved. Any agent implementing
+them in their original form would produce files that conflict:
 
-### Tension 1 — Two incompatible registration models both called "catalogue"
+### Tension 1 — Two classes both named `QueryCatalogue`, with incompatible registration
+- E13 defined `QueryCatalogue` with `register_read(MyQuery())` (typed object registry).
+- E6 defined `CypherQueryCatalogue` with `register(name, cypher, ...)` / `execute("name", ...)`
+  (string-key registry).
+These are different patterns with different call sites and type-safety properties. They are NOT
+two tiers of one thing.
 
-E6 defined a **string-key registry**: `catalogue.register("my_query", cypher_str, params_spec,
-returns_spec)` / `catalogue.execute("my_query", params, connection=conn)`. The query is identified
-at runtime by a string; the return type is untyped.
+### Tension 2 — Two incompatible Cypher query data models
+- E6's `QueryDefinition` is a **data structure** (a string + a returns spec).
+- E15's `CypherReadQuery` is a **Python class** with a `build()` method and a `materialize()`
+  method. The materialisation logic is Python code that cannot be serialised.
 
-E13 defined a **typed-object registry**: `catalogue.register_read(MyQuery())` where `MyQuery` is
-a Python class carrying `Output: type[Sample]`; the type checker knows the return is `list[Sample]`
-at every call site.
+### Tension 3 — E12's "extract a shared ABC" targets a non-existent commonality
+E12's `execute(name: str, ...)` Protocol describes the string-key catalogue only; it cannot
+describe the typed catalogue (which has no string-key dispatch).
 
-These are **not two tiers** — they are fundamentally different patterns with different call sites,
-different type safety properties, and different serialisability. Calling them "two tiers of one
-catalogue" implied a shared call surface that does not exist.
-
-**Resolution:** they are **two distinct catalogue types** serving two distinct use cases.
-Each gets a clear definition and a clear decision rule for when to use it.
-
-### Tension 2 — The Cypher query data model has two incompatible shapes
-
-E6's `QueryDefinition` is a **data structure** (serialisable to YAML): `(name, cypher: str,
-parameters: list[ParamSpec], returns: dict)`. It holds the query as a raw string.
-
-E15's `CypherReadQuery` is a **Python class** with a `build()` method that returns
-`(cypher: str, params_dict)` and a `materialize(record: dict) -> D` method. The query and the
-materialisation logic are inseparable and cannot be serialised to YAML.
-
-**Resolution:** the Cypher query data model must have a single canonical representation that
-*both* authoring modes (YAML and class) produce or conform to — and the materialisation question
-(who maps driver records to domain objects?) must be answered per mode.
-
-### Tension 3 — YAML-loaded queries have no `materialize()`, typed queries have no YAML
-
-A YAML-loaded query produces raw driver records. A typed `CypherReadQuery.materialize()` is
-Python code. Neither bridged the gap.
-
-**Resolution:** make the materialisation strategy explicit and pluggable:
-- String-key catalogue path: materialisation is **optional and separate** — the consumer provides
-  a `materializer: Callable[[record], DomainType]` at registration or at call time.
-- Typed path: materialisation is **declared on the class** and always present.
-
-### Tension 4 — E12's "extract the common ABC" targets a non-existent commonality
-
-E12's proposed `QueryCatalogue(Protocol)` with `execute(name: str, ...)` describes the string-key
-catalogue only. It cannot describe the typed catalogue (which has no `execute(name: str, ...)`).
-Extracting a single ABC that covers both would produce a `Protocol` so broad it adds nothing.
-
-**Resolution:** there is no single `QueryCatalogue` base class. The two catalogues share a
-**naming convention** and a **`describe()` introspection surface** (both can enumerate their
-queries as `QueryDescription` records with JSON Schema), but their registration and execution
-surfaces are intentionally different. Document this clearly rather than abstracting it away.
+### Resolution adopted by this epic
+- There is **one typed catalogue** (`TypedQueryCatalogue`) and **one typed query contract**
+  (`ReadQuery`/`WriteQuery`). Built here, cleanly.
+- The Cypher query is a **Python class** (`CypherReadQuery`) — the typed model wins for the core.
+- The shared surface is `describe() → list[QueryDescription]`, defined up front (not "extracted
+  later"). This is what E12 should have been.
+- The string-key + YAML model from E6 is **not built in this epic**. Whether it returns at all is
+  the open decision below.
 
 ---
 
-## The Unified Cypher Query Data Model (design decision, resolved here)
-
-A Cypher query in orthograph has exactly these fields, regardless of how it was authored:
+## Implementation Order (build in this sequence)
 
 ```
-CypherQueryDefinition
-  name: str                       # unique within a catalogue
-  cypher: str                     # the Cypher string (with $param placeholders)
-  params: list[ParamSpec]         # name, type, required, default
-  returns: ReturnSpec             # flat field map OR a NodeModel reference OR list of NodeModel
-  description: str | None
-  validated: bool                 # True after validate_cypher() was run at registration
+STEP 1 — Typed query generics + Executor   (T1, T2)   no backend, no catalogue, no YAML
+STEP 2 — Cypher concrete backend           (T3, T4)   first real backend; needs STEP 1
+STEP 3 — TypedQueryCatalogue + describe()   (T5, T6)   registry + introspection; needs STEP 1+2
+STEP 4 — Public API + notebook             (T7)        wire-up; needs STEP 1-3
+─────────────────────────────────────────────────────────────────────────────────────
+THEN STOP. Decide YAML separately (see OPEN DECISION). Do not build YAML in this epic.
 ```
 
-`ReturnSpec` covers three cases:
-- **Flat projection** — `{"total": int, "label": str}` — like E6 had
-- **NodeModel reference** — `{"type": "node", "model": Protocol}` — new; enables auto-materialise
-- **List of NodeModel** — `{"type": "node_list", "model": Sample}` — the common read case
-
-**Authoring modes:**
-
-| Mode | How it produces a `CypherQueryDefinition` |
-|---|---|
-| **YAML** | loaded via `load_catalogue_config(path)`, parsed into `CypherQueryDefinition` records |
-| **Python class** (`CypherReadQuery` subclass) | `to_definition()` method synthesises a `CypherQueryDefinition` from the class's `build()` output (called with dummy params) and `Output` type |
-| **Runtime registration** | `catalogue.register(name, cypher, params, returns)` constructs directly |
-
-**Materialisation strategy per mode:**
-
-| Case | Who materialises |
-|---|---|
-| String-key catalogue, flat projection returns | consumer provides `materializer=` callable, or gets raw record |
-| String-key catalogue, NodeModel returns | auto-materialise: catalogue calls `NodeModel(**record_fields)` using the declared model |
-| Typed catalogue (`CypherReadQuery` subclass) | the class's own `materialize(record)` method — always present, type-checked |
-
-This is the decision E6 never made and E15 assumed without stating.
-
----
-
-## Package Structure (outcome of this epic)
-
+Package structure produced by STEPs 1–4:
 ```
 src/orthograph/catalogue/
-  __init__.py          exports both catalogues + typed contract; explains the two-model split
-  typed.py             ReadQuery/WriteQuery/Executor/QueryCatalogue/ReadPort (typed tier)
-  models.py            CypherQueryDefinition, ParamSpec, ReturnSpec, QueryDescription
-  loader.py            load_catalogue_config(path) -> list[CypherQueryDefinition]
-  validation.py        validate_catalogue(definitions, model) -> ValidationResult
-  cypher.py            StringKeyCypherCatalogue (replaces E6's CypherQueryCatalogue)
-  base.py              shared describe() mixin (both catalogues expose describe())
-
+  __init__.py        exports the typed contract + catalogue (T7)
+  typed.py           ReadQuery, WriteQuery, Executor, ReadPort, QueryBackedReadPort (T1, T2)
+  registry.py        TypedQueryCatalogue, QueryDescription, Backend (T5, T6)
 src/orthograph/extensions/cypher/
-  typed_queries.py     CypherReadQuery / CypherWriteQuery (typed tier — from E15)
-  executor.py          CypherExecutor (typed tier — from E15)
-  [generator.py        UNCHANGED — kept as-is]
-  [parser.py           UNCHANGED — kept as-is]
+  typed_queries.py   CypherReadQuery, CypherWriteQuery (T3)
+  executor.py        CypherExecutor (T4)
+  [generator.py, parser.py  UNCHANGED]
 ```
 
 ---
 
-## Tasks
+## STEP 1 — Typed query generics + Executor
 
-### T1: Define the Cypher query data model (`catalogue/models.py`)
+### T1: `ReadQuery[P, D]` and `WriteQuery[P, R]` base classes
 
-**What:** The canonical data structures for a Cypher query — the single representation that both
-YAML-loaded and class-defined queries conform to. This resolves Tension 2 and 3.
+**What:** Abstract generic base classes enforcing the typed, pure-build, per-record-materialise
+contract. No backend, no I/O. Lives in `src/orthograph/catalogue/typed.py`.
 
 **Actions:**
-1. Create `src/orthograph/catalogue/models.py`:
+1. Create `src/orthograph/catalogue/typed.py`.
+2. Define type variables:
    ```python
-   from __future__ import annotations
-   from dataclasses import dataclass, field
-   from typing import Any, Literal
-
-   from pydantic import BaseModel
-   from orthograph.core.node_model import NodeModel
-
-   @dataclass(frozen=True)
-   class ParamSpec:
-       name: str
-       type: type        # int, str, float, bool — python primitive
-       required: bool = True
-       default: Any = None
-
-   @dataclass(frozen=True)
-   class FlatReturnSpec:
-       """Returns a flat dict projection (not a domain node)."""
-       kind: Literal["flat"] = "flat"
-       fields: dict[str, type] = field(default_factory=dict)  # field_name -> python type
-
-   @dataclass(frozen=True)
-   class NodeReturnSpec:
-       """Returns instances of a declared NodeModel. Enables auto-materialise."""
-       kind: Literal["node"] = "node"
-       model: type[NodeModel]
-       many: bool = True   # True -> list[NodeModel]; False -> NodeModel | None
-
-   ReturnSpec = FlatReturnSpec | NodeReturnSpec
-
-   @dataclass
-   class CypherQueryDefinition:
-       name: str
-       cypher: str
-       params: list[ParamSpec] = field(default_factory=list)
-       returns: ReturnSpec = field(default_factory=FlatReturnSpec)
-       description: str | None = None
-       validated: bool = False   # set True by validate_catalogue()
+   P = TypeVar("P", bound=BaseModel)   # Params — a Pydantic model (validated at boundary, R4)
+   D = TypeVar("D", bound=BaseModel)   # Output — a NodeModel or projection BaseModel (R3)
+   R = TypeVar("R")                    # Write result — rowcount, id, etc. (not a domain object)
    ```
+3. Define `Backend` enum (descriptive tag only — NOT a dispatch switch):
+   ```python
+   class Backend(str, Enum):
+       CYPHER = "cypher"
+       SQLALCHEMY = "sqlalchemy"
+       GQLALCHEMY = "gqlalchemy"
+   ```
+4. Define `ReadQuery(ABC, Generic[P, D])`:
+   ```python
+   class ReadQuery(ABC, Generic[P, D]):
+       Params: ClassVar[type[BaseModel]]   # set by subclass; the P type
+       Output: ClassVar[type[BaseModel]]   # set by subclass; the D type — DIRECT reference, no string
+       name: ClassVar[str]
+       backend: ClassVar[Backend]
 
-2. Tests:
-   - `CypherQueryDefinition` with `NodeReturnSpec(model=Protocol)` stores the model by
-     direct reference (not by string label — Tension 1/string-key resolution).
-   - `FlatReturnSpec` and `NodeReturnSpec` are distinguishable by `kind` field (discriminated union
-     pattern; avoids isinstance sprawl downstream).
-   - A `CypherQueryDefinition` is serialisable to `dict` (for YAML round-trip tests in T2).
+       @abstractmethod
+       def build(self, params: P) -> Any:
+           """Pure, I/O-free construction of the backend construct (R1). MUST NOT touch a session."""
 
-**Verification:** `from orthograph.catalogue.models import CypherQueryDefinition, NodeReturnSpec` works.
+       @abstractmethod
+       def materialize(self, raw: Any) -> D:
+           """Pure per-record storage→domain mapping (R3). Returns the declared Output type."""
+   ```
+5. Define `WriteQuery(ABC, Generic[P, R])`:
+   ```python
+   class WriteQuery(ABC, Generic[P, R]):
+       Params: ClassVar[type[BaseModel]]
+       name: ClassVar[str]
+       backend: ClassVar[Backend]
+
+       @abstractmethod
+       def build(self, params: P) -> Any:
+           """Pure, I/O-free construction of the write construct (R1)."""
+
+       @abstractmethod
+       def interpret_result(self, raw: Any) -> R:
+           """Pure mapping of the driver's write result into the declared result type."""
+   ```
+6. `__init_subclass__` on both: raise `TypeError` at class-definition time if `Params`/`name`/
+   `backend` (and `Output` for reads) are unset. Skip the check for the abstract bases themselves.
+
+**Tests:**
+- A `ReadQuery` subclass missing `Params` raises `TypeError` at definition time.
+- A concrete subclass's `build(params)` runs with no executor/session and returns non-None.
+- `materialize(fake_raw)` returns an instance of the declared `Output` type.
+- `WriteQuery` has no `Output` attribute requirement (only `Params`/`name`/`backend`).
+
+**Verification:** `from orthograph.catalogue.typed import ReadQuery, WriteQuery, Backend` works.
+`mypy src/` passes. No import of any backend library in `typed.py`.
 
 ---
 
-### T2: YAML loader (`catalogue/loader.py`)
+### T2: `Executor` ABC + `ReadPort`
 
-**What:** Load a YAML catalogue file into a list of `CypherQueryDefinition` records. This is E6.1
-reformulated against the new data model.
-
-**Actions:**
-1. Create `src/orthograph/catalogue/loader.py`.
-2. Define the YAML schema (document in a module-level docstring):
-   ```yaml
-   # catalogue.yaml
-   version: "1"
-   queries:
-     find_protocols_by_version:
-       cypher: "MATCH (p:Protocol {version: $version}) RETURN p.protocol_id, p.name"
-       description: "Find all protocols at a given version"
-       params:
-         - name: version
-           type: str
-           required: true
-       returns:
-         kind: flat
-         fields:
-           protocol_id: int
-           name: str
-     samples_for_protocol:
-       cypher: "MATCH (p:Protocol {protocol_id: $pid})<-[:HAS_OPERATION]-(op)<-[:PRODUCES]-(s) RETURN s"
-       params:
-         - name: pid
-           type: int
-           required: true
-       returns:
-         kind: node
-         model: Sample          # resolved against a model_map at load time
-         many: true
-   ```
-3. Implement:
-   ```python
-   def load_catalogue(
-       path: str | Path,
-       model_map: dict[str, type[NodeModel]] | None = None,
-   ) -> list[CypherQueryDefinition]:
-       """Load a YAML catalogue. model_map resolves NodeModel labels in 'node' returns.
-       If model_map is None, node returns are stored with the label string only and
-       resolved lazily on first use."""
-   ```
-4. Tests:
-   - Valid YAML with flat returns loads correctly.
-   - Valid YAML with node returns resolves the model label against `model_map`.
-   - Unknown model label in a node return raises `CatalogueLoadError` with the query name.
-   - Invalid YAML raises `CatalogueLoadError`.
-   - Missing required field raises `CatalogueLoadError`.
-
-**Verification:** `from orthograph.catalogue.loader import load_catalogue` works.
-
----
-
-### T3: Catalogue validation (`catalogue/validation.py`)
-
-**What:** Validate `CypherQueryDefinition` records against a `GraphDataModel`. E6.2 reformulated.
+**What:** The `Executor` ABC (per-backend session seam; read ≠ write) and the `ReadPort`
+swappable-read abstraction. Still no concrete backend.
 
 **Actions:**
-1. Create `src/orthograph/catalogue/validation.py`:
+1. In `typed.py`, define `Executor(ABC)`:
    ```python
-   def validate_catalogue(
-       definitions: list[CypherQueryDefinition],
-       model: GraphDataModel,
-   ) -> ValidationResult:
-       """Validate every query definition against the schema.
-       Reuses validate_cypher() from extensions/cypher/parser.py for structural checks.
-       Additionally validates:
-       - NodeReturnSpec.model label exists in the GraphDataModel
-       - All param names referenced in $placeholders are declared in params list
+   class Executor(ABC):
+       """The only place a connection/session is touched. read() and write() are DISTINCT
+       methods (not a kind flag). Implementations MUST NOT store a connection as instance
+       state — a factory is passed at construction (orthograph Constraint 13).
+
+       Example:
+           executor = SqlExecutor(lambda: Session(engine))   # factory, not a live session
        """
-   ```
-2. Tests:
-   - Valid definitions against a matching model → empty result.
-   - Query with unknown label → `ValidationIssue(severity=ERROR, entity_id=query_name)`.
-   - Query with `$param` placeholder but no matching `ParamSpec` → `ValidationIssue`.
-   - Multiple queries, multiple errors — all collected (no fail-fast).
+       @abstractmethod
+       def read(self, query: ReadQuery[P, D], raw_params: Any) -> list[D]:
+           """Validate params (R4) → build() (R1, pure) → open session → execute →
+           materialize each record (R3). Commits NOTHING."""
 
-**Verification:** `from orthograph.catalogue.validation import validate_catalogue` works.
+       @abstractmethod
+       def write(self, query: WriteQuery[P, R], raw_params: Any) -> R:
+           """Validate params → build() → open session → execute → commit →
+           interpret_result(). Commits (distinct transactional intent from read)."""
+   ```
+2. Define `ReadPort(ABC, Generic[P, D])` and `QueryBackedReadPort`:
+   ```python
+   class ReadPort(ABC, Generic[P, D]):
+       """A named read capability with a store-neutral signature. Consuming code depends on a
+       ReadPort subclass, never on a specific ReadQuery or Executor. The composition root binds
+       the port to a concrete query + executor, making the read store swappable at ONE point
+       without touching callers."""
+       @abstractmethod
+       def fetch(self, params: P) -> list[D]: ...
+
+   class QueryBackedReadPort(ReadPort[P, D]):
+       def __init__(self, query: ReadQuery[P, D], executor: Executor) -> None:
+           self._query, self._executor = query, executor
+       def fetch(self, params: P) -> list[D]:
+           return self._executor.read(self._query, params)
+   ```
+
+**Tests:**
+- `Executor` cannot be instantiated (abstract).
+- Two `QueryBackedReadPort`s with different query+executor but the same `Output` type both satisfy
+  the same `ReadPort[P, D]` annotation (static + runtime).
+- `fetch()` delegates to `executor.read()`.
+
+**Verification:** `from orthograph.catalogue.typed import Executor, ReadPort, QueryBackedReadPort`
+works.
 
 ---
 
-### T4: `StringKeyCypherCatalogue` — the named-string registry (`catalogue/cypher.py`)
+## STEP 2 — Cypher concrete backend
 
-**What:** The E6.3 `CypherQueryCatalogue` reformulated to use `CypherQueryDefinition` internally.
-Named string dispatch; optional auto-materialise for NodeModel returns; schema-validated at registration.
+### T3: `CypherReadQuery` and `CypherWriteQuery`
 
-This is the **string-key tier**. Its `execute(name, params, connection=conn)` call surface is
-unchanged from E6. The internal data model is now `CypherQueryDefinition` (from T1).
+**What:** The first concrete backend bases. `build()` returns `(cypher_str, params_dict)`;
+`materialize()` maps a driver record dict to the declared `Output` NodeModel.
 
 **Actions:**
-1. Create `src/orthograph/catalogue/cypher.py`:
+1. Create `src/orthograph/extensions/cypher/typed_queries.py` (alongside `generator.py`,
+   `parser.py` — does not replace them):
    ```python
-   class StringKeyCypherCatalogue:
-       """Named-string Cypher query registry.
+   from orthograph.catalogue.typed import Backend, ReadQuery, WriteQuery
 
-       Use this when:
-       - queries come from YAML configuration
-       - you want schema validation at registration time
-       - the call site does not need Python-level type checking on the return type
+   class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
+       """build() returns (cypher: str, params: dict).
+       materialize() maps a graph record dict (keys like 's.sample_id') to Output NodeModel."""
+       backend = Backend.CYPHER
+       # subclasses implement build() and materialize()
 
-       For typed, domain-object-returning queries with IDE type safety, use
-       CypherReadQuery (extensions/cypher/typed_queries.py) with a TypedQueryCatalogue.
+   class CypherWriteQuery(WriteQuery[P, R], Generic[P, R]):
+       backend = Backend.CYPHER
+       # subclasses implement build() and interpret_result()
+   ```
+2. Tests (no driver — R1):
+   - A concrete `CypherReadQuery.build()` returns a `(str, dict)` tuple; no driver needed.
+   - `materialize()` with a hand-built fake record dict returns the declared `Output` NodeModel.
+   - Two `CypherReadQuery`s with the same `Output` type have identical `Output.model_json_schema()`
+     (port-swappability proof at the schema level).
+
+**Verification:** `from orthograph.extensions.cypher import CypherReadQuery, CypherWriteQuery` works.
+
+---
+
+### T4: `CypherExecutor`
+
+**What:** Concrete `Executor` for graph databases. The single graph-driver seam.
+
+**Actions:**
+1. Create `src/orthograph/extensions/cypher/executor.py`:
+   ```python
+   class CypherExecutor(Executor):
+       """Single I/O seam for graph DBs. Accepts any driver whose session supports
+       .run(cypher, **params) returning an iterable of records. Driver factory passed in
+       (Constraint 13 — never owned).
+
+       Example (neo4j): CypherExecutor(lambda: GraphDatabase.driver(URI).session())
+       Example (test):  CypherExecutor(lambda: FakeGraphSession(records))
        """
-       def __init__(self, model: GraphDataModel, auto_validate: bool = True) -> None: ...
+       def __init__(self, driver_factory: Callable) -> None:
+           self._driver_factory = driver_factory
 
-       @classmethod
-       def from_yaml(
-           cls, path: str | Path, model: GraphDataModel,
-           model_map: dict[str, type[NodeModel]] | None = None,
-       ) -> StringKeyCypherCatalogue:
-           """Load, validate, and construct from a YAML file."""
+       def read(self, query: CypherReadQuery[P, D], raw_params: Any) -> list[D]:
+           params = query.Params.model_validate(raw_params)     # R4
+           cypher, qparams = query.build(params)                # R1 — pure
+           with self._driver_factory() as session:              # only I/O seam
+               records = list(session.run(cypher, **qparams))
+           return [query.materialize(dict(rec)) for rec in records]   # R3
 
-       def register(
-           self,
-           definition: CypherQueryDefinition | None = None,
-           *,
-           name: str | None = None,
-           cypher: str | None = None,
-           params: list[ParamSpec] | None = None,
-           returns: ReturnSpec | None = None,
-       ) -> None:
-           """Register from a CypherQueryDefinition OR from keyword args (runtime convenience).
-           Validates against the GraphDataModel immediately."""
-
-       def execute(
-           self,
-           name: str,
-           params: dict,
-           connection: Any,
-           materializer: Callable[[dict], Any] | None = None,
-       ) -> list[Any]:
-           """Execute by name. Connection passed per-call (never stored).
-           If returns is NodeReturnSpec and materializer is None: auto-materialise via NodeModel.
-           If returns is FlatReturnSpec and materializer is None: return raw record dicts."""
-
-       def describe(self) -> list[QueryDescription]:
-           """Unified introspection — same surface as TypedQueryCatalogue."""
-
-       def query_names(self) -> list[str]: ...
-       def get_definition(self, name: str) -> CypherQueryDefinition: ...
+       def write(self, query: CypherWriteQuery[P, R], raw_params: Any) -> R:
+           params = query.Params.model_validate(raw_params)
+           cypher, qparams = query.build(params)
+           with self._driver_factory() as session:
+               result = session.run(cypher, **qparams)
+           return query.interpret_result(result)
    ```
+2. Tests with a `FakeGraphSession` (test-internal; no live DB):
+   - `read()` materialises fake records into the declared `Output` NodeModel instances.
+   - Bad params raise (R4) before `run()` is called.
+3. Live tests behind `--neo4j` / `--memgraph` flags.
 
-2. Auto-materialise for NodeModel returns:
-   ```python
-   # inside execute(), when returns.kind == "node":
-   def _auto_materialize(self, rec: dict, model: type[NodeModel]) -> NodeModel:
-       # strips driver-specific key prefixes (e.g. "s." from RETURN s.field)
-       # constructs model(**cleaned_fields)
-       # raises CatalogueMaterializeError with field list if construction fails
-   ```
-
-3. Tests:
-   - `from_yaml` loads flat-return query; `execute` returns list of raw dicts.
-   - `from_yaml` loads node-return query; `execute` auto-materialises → `list[NodeModel]`.
-   - `register` with bad Cypher (unknown label) raises `CatalogueValidationError`.
-   - `execute` with unknown name raises `KeyError`.
-   - `execute` with missing required param raises `ValueError` before any driver call.
-   - `describe()` returns `QueryDescription` with `params_schema` and `output_schema`.
-   - Connection is never stored; two `execute` calls can use different connections.
-
-**Verification:** `from orthograph.catalogue import StringKeyCypherCatalogue` works.
-Backward compatibility alias: `CypherQueryCatalogue = StringKeyCypherCatalogue` for existing code.
+**Verification:** `from orthograph.extensions.cypher import CypherExecutor` works.
 
 ---
 
-### T5: `TypedQueryCatalogue` and the typed contract (`catalogue/typed.py`)
+## STEP 3 — Catalogue + introspection
 
-**What:** E13's typed contract (ReadQuery/WriteQuery/Executor/QueryCatalogue/ReadPort), keeping
-everything from E13 but renamed to `TypedQueryCatalogue` to avoid the name collision with
-`StringKeyCypherCatalogue` and making the split explicit at the API level.
+### T5: `TypedQueryCatalogue` + `QueryDescription`
+
+**What:** The typed object registry. Registers `ReadQuery`/`WriteQuery` instances; introspects them.
 
 **Actions:**
-1. Create `src/orthograph/catalogue/typed.py` as described in E13 (tasks E13.1–E13.3 are
-   adopted verbatim). The class previously called `QueryCatalogue` becomes `TypedQueryCatalogue`:
-   ```python
-   class TypedQueryCatalogue:
-       """Typed object registry for ReadQuery/WriteQuery instances.
-
-       Use this when:
-       - queries are Python classes declaring Output type statically
-       - you want IDE go-to-definition and type-checker enforcement on the return type
-       - queries may span multiple backends (SQL + Cypher) and you want uniform introspection
-
-       For YAML-configured string-key queries, use StringKeyCypherCatalogue.
-       """
-   ```
-2. `TypedQueryCatalogue.describe()` returns the same `QueryDescription` shape as
-   `StringKeyCypherCatalogue.describe()`. This is the **one shared surface** between the two tiers.
-3. Export aliases for backward compat with E13 tasks already written:
-   `QueryCatalogue = TypedQueryCatalogue`.
-
-Tests: adopt all tests from E13.1–E13.3 verbatim.
-
-**Verification:** `from orthograph.catalogue.typed import ReadQuery, WriteQuery, TypedQueryCatalogue,
-ReadPort, Executor` works.
-
----
-
-### T6: `CypherReadQuery.to_definition()` — the bridge between typed and string-key
-
-**What:** Every `CypherReadQuery` subclass can produce a `CypherQueryDefinition` from itself.
-This resolves Tension 2/3: a typed class can participate in the string-key catalogue, or its
-definition can be round-tripped to YAML for documentation.
-
-**Actions:**
-1. In `extensions/cypher/typed_queries.py`, add to `CypherReadQuery`:
-   ```python
-   def to_definition(self, dummy_params: dict | None = None) -> CypherQueryDefinition:
-       """Synthesise a CypherQueryDefinition from this class.
-
-       Calls build() with dummy_params (or auto-generated dummy values from Params schema)
-       to extract the Cypher string. Derives params list from Params.model_json_schema().
-       Derives returns from Output type (NodeReturnSpec if Output is a NodeModel,
-       FlatReturnSpec otherwise).
-       """
-       params = dummy_params or _make_dummy_params(self.Params)
-       cypher, _ = self.build(self.Params.model_validate(params))
-       param_specs = _params_from_schema(self.Params.model_json_schema())
-       return_spec = (
-           NodeReturnSpec(model=self.Output)
-           if issubclass(self.Output, NodeModel)
-           else FlatReturnSpec(fields=_fields_from_schema(self.Output.model_json_schema()))
-       )
-       return CypherQueryDefinition(
-           name=self.name,
-           cypher=cypher,
-           params=param_specs,
-           returns=return_spec,
-           description=self.__doc__,
-       )
-   ```
-
-2. Tests:
-   - `GraphSamplesByProtocol().to_definition()` returns a `CypherQueryDefinition` with
-     `returns.kind == "node"` and `returns.model is Sample`.
-   - The definition can be registered into a `StringKeyCypherCatalogue` and executed.
-   - A query with `FlatReturnSpec` output produces `returns.kind == "flat"`.
-
-**Why this matters:** it makes the two tiers interoperable. A matterforge `CypherReadQuery`
-can be introspected as a `CypherQueryDefinition` by tooling (e.g. docs generators) that
-only speaks the string-key model, without needing to know about the typed tier.
-
----
-
-### T7: Typed Cypher backend (`extensions/cypher/typed_queries.py` + `executor.py`)
-
-**What:** E15's tasks E15.1–E15.4 adopted verbatim, but in the context of E16's unified
-data model. `CypherReadQuery` now additionally carries `to_definition()` from T6.
-
-**Actions:** Implement E15.1 (`CypherReadQuery`/`CypherWriteQuery`), E15.2 (`CypherExecutor`),
-E15.3 (integration proof test), E15.4 (notebook), exactly as specified in E15, plus the
-`to_definition()` method from T6.
-
-No changes to the E15 task content; just adding T6 to the class.
-
----
-
-### T8: Shared `describe()` surface and `QueryDescription` (`catalogue/base.py`)
-
-**What:** The one concrete thing both catalogues share: a `describe()` method returning a list of
-`QueryDescription` records with uniform JSON Schema for params and output. This is the real answer
-to what E12 was trying to extract.
-
-**Actions:**
-1. Create `src/orthograph/catalogue/base.py`:
+1. Create `src/orthograph/catalogue/registry.py`:
    ```python
    @dataclass
    class QueryDescription:
        name: str
        kind: Literal["read", "write"]
        backend: Backend
-       params_schema: dict      # JSON Schema of the Params type/spec
-       output_schema: dict | None   # JSON Schema of the return type; None for writes
+       params_schema: dict[str, Any]         # Params.model_json_schema()
+       output_schema: dict[str, Any] | None  # Output.model_json_schema(); None for writes
 
-   class DescribableCatalogue(Protocol):
-       """The one surface shared by both catalogue tiers.
-       Both StringKeyCypherCatalogue and TypedQueryCatalogue satisfy this."""
+   @dataclass
+   class TypedQueryCatalogue:
+       """Typed object registry. Register ReadQuery/WriteQuery instances; introspect via describe().
+       Queries reference their Output model by direct import — NO string-key model lookup."""
+       _reads: dict[str, ReadQuery] = field(default_factory=dict)
+       _writes: dict[str, WriteQuery] = field(default_factory=dict)
+
+       def register_read(self, q: ReadQuery[P, D]) -> ReadQuery[P, D]:
+           # reject duplicate name
+       def register_write(self, q: WriteQuery[P, R]) -> WriteQuery[P, R]:
+           # reject duplicate name
        def describe(self) -> list[QueryDescription]: ...
-       def query_names(self) -> list[str]: ...
+       def names(self) -> list[str]: ...
    ```
+2. Tests:
+   - Register a read and a write; `describe()` returns both with correct `kind`/`backend`.
+   - Duplicate name raises `ValueError`.
+   - `output_schema` is `None` for writes, non-None for reads.
+   - Two backends implementing the same logical read expose identical `output_schema`.
 
-2. Both `StringKeyCypherCatalogue` and `TypedQueryCatalogue` satisfy `DescribableCatalogue`.
-3. Tests:
-   - A function typed `(cat: DescribableCatalogue) -> list[str]` accepts both catalogue types
-     (structural subtyping check).
-   - `describe()` from both returns `QueryDescription` with identical schema for the same
-     logical query (e.g. a `CypherReadQuery` registered in a `TypedQueryCatalogue` and its
-     `to_definition()` registered in a `StringKeyCypherCatalogue` produce the same output schema).
-
-**Verification:** `from orthograph.catalogue import DescribableCatalogue` works. This is what
-E12 should have been.
+**Verification:** `from orthograph.catalogue.registry import TypedQueryCatalogue, QueryDescription`
+works.
 
 ---
 
-### T9: Public API and `__init__.py` (`catalogue/__init__.py`)
+### T6: Integration proof — same port, different executors
+
+**What:** The end-to-end proof of the swappable-read claim. (Full cross-backend test needs E14's
+`SqlExecutor`; until then, prove it with two different fake Cypher executors / record shapes.)
 
 **Actions:**
-1. Update `src/orthograph/catalogue/__init__.py` to export:
+1. `tests/catalogue/test_port_swap.py`:
    ```python
-   # Typed tier
-   from orthograph.catalogue.typed import (
-       ReadQuery, WriteQuery, Executor, TypedQueryCatalogue, ReadPort, QueryBackedReadPort,
-   )
-   # String-key tier
-   from orthograph.catalogue.cypher import StringKeyCypherCatalogue
-   CypherQueryCatalogue = StringKeyCypherCatalogue  # backward-compat alias
-
-   # Shared
-   from orthograph.catalogue.base import DescribableCatalogue, QueryDescription
-   from orthograph.catalogue.models import CypherQueryDefinition, ParamSpec, NodeReturnSpec, FlatReturnSpec
-
-   # Convenience re-export
-   from orthograph.catalogue.loader import load_catalogue
-   from orthograph.catalogue.validation import validate_catalogue
+   def test_same_port_different_record_shapes_identical_output():
+       """A ReadPort returns identical domain objects regardless of the raw record shape."""
+       q = SamplesByProtocolCypher()   # one CypherReadQuery
+       ex_a = CypherExecutor(lambda: FakeGraphSession(RECORDS_SHAPE_A))
+       ex_b = CypherExecutor(lambda: FakeGraphSession(RECORDS_SHAPE_B))  # same data, diff keys
+       port_a = QueryBackedReadPort(q, ex_a)
+       port_b = QueryBackedReadPort(q, ex_b)
+       assert port_a.fetch(P(protocol_id=1)) == port_b.fetch(P(protocol_id=1))
    ```
-2. Module docstring must contain the decision table:
-   ```
-   WHICH CATALOGUE TO USE:
-   ┌─────────────────────────────────┬──────────────────────────────────────────┐
-   │ StringKeyCypherCatalogue        │ TypedQueryCatalogue                      │
-   ├─────────────────────────────────┼──────────────────────────────────────────┤
-   │ Queries come from YAML          │ Queries are Python classes               │
-   │ String-key dispatch at call     │ Type-checked return type at call site    │
-   │ Schema-validated at registration│ Pure build(); no session needed          │
-   │ Auto-materialise for NodeModel  │ Query owns its materialize()             │
-   │ returns; raw dict for flat      │ Registered with typed register_read/write│
-   │ Suitable for external config    │ Suitable for matterforge, mp-backend     │
-   └─────────────────────────────────┴──────────────────────────────────────────┘
-   Both expose describe() → list[QueryDescription] for uniform introspection.
-   ```
-3. Notebook `04.01_query_catalogue.ipynb`: shows StringKeyCypherCatalogue from YAML.
-4. Notebook `04.02_typed_query_catalogue.ipynb`: shows TypedQueryCatalogue with CypherReadQuery.
+2. When E14 lands, extend this to a true SQL-vs-Cypher swap test (cross-reference E14).
 
 ---
 
-### T10: E8 alignment (GQLAlchemy catalogue)
+## STEP 4 — Public API
 
-**What:** E8 was blocked by E6 and planned to share E6's registry interface. Now that the
-interface is resolved in E16, E8 needs explicit alignment.
+### T7: `catalogue/__init__.py` + notebook
 
 **Actions:**
-1. E8 (`GqlAlchemyQueryCatalogue`) is a **third registration model** — Python-only builder
-   expressions (no YAML, no string Cypher, no typed generics on the return). It is neither the
-   string-key tier nor the typed tier.
-2. Add `GqlAlchemyQueryCatalogue.describe() -> list[QueryDescription]` so it satisfies
-   `DescribableCatalogue` (the one shared surface).
-3. Update E8's "Blocked by" to "E16" (instead of E6).
-4. No other changes to E8's task content.
+1. `src/orthograph/catalogue/__init__.py` exports:
+   `ReadQuery`, `WriteQuery`, `Executor`, `ReadPort`, `QueryBackedReadPort`, `Backend`,
+   `TypedQueryCatalogue`, `QueryDescription`.
+2. Module docstring: state plainly that this is the **typed query catalogue**; queries are Python
+   classes; the return type is statically known; no string-key dispatch; no YAML (see the epic's
+   OPEN DECISION).
+3. Notebook `04.01_typed_query_catalogue.ipynb`: define a NodeModel → a CypherReadQuery → register
+   in TypedQueryCatalogue → describe() → run against a FakeGraphSession → swap behind a ReadPort.
+
+**Verification:** `from orthograph.catalogue import ReadQuery, TypedQueryCatalogue, ReadPort` works.
 
 ---
 
-### T11: E11 alignment (CRUD auto-generation)
+## OPEN DECISION: YAML (do NOT build until resolved)
 
-**What:** E11 generates CRUD entries into `CypherQueryCatalogue` and `GqlAlchemyQueryCatalogue`.
-With E16 in place, clarify which catalogue tier auto-CRUD targets.
+The retired E6 offered a **YAML-configured, string-key Cypher catalogue**
+(`catalogue.execute("name", params, conn)`, queries loaded from a `.yaml` file). It is
+deliberately **excluded** from STEPs 1–4. Resolve this AFTER the typed core exists and is felt.
 
-**Actions:**
-1. Auto-generated Cypher CRUD entries are produced as `CypherQueryDefinition` records
-   (not as `CypherReadQuery` subclasses — they are data, not code). They register into
-   `StringKeyCypherCatalogue`.
-2. For `TypedQueryCatalogue` users who want CRUD, a factory function
-   `crud_read_queries_for(node_type) -> list[CypherReadQuery]` generates typed instances
-   (separate from the string-key path).
-3. Update E11's `generate_cypher_crud_catalogue()` signature to return
-   `StringKeyCypherCatalogue` (explicit).
-4. No other changes to E11's task content.
+### The conflict YAML creates with the typed architecture
+1. **YAML cannot carry `materialize()`.** A YAML query is `(name, cypher, params, returns)` — a
+   data structure. The typed contract's value is that `materialize()` is type-checked Python that
+   produces a declared `Output`. A YAML query has no such method.
+2. **Two registration models reappear.** A YAML/string-key catalogue is a *different class* with a
+   *different call surface* (`execute("name", ...)` vs `executor.read(query, params)`). That is the
+   exact Tension 1 we just resolved by choosing the typed model. Re-adding YAML re-opens it.
+3. **Loss of static typing at the call site** — `execute("samples", ...)` returns untyped records;
+   the type checker cannot know it is `list[Sample]`. This is the core property the typed track
+   protects (and the reason the original brief rejected string-key lookups).
 
----
+### The three options to choose between (later)
+- **(A) Drop YAML entirely.** Queries are always Python classes. Simplest; preserves the typed
+  architecture fully. Cost: no external/config-driven query authoring; ops/analysts must write
+  Python. Pilot A (hardcoded Cypher, no schema) would adopt classes instead of YAML.
+- **(B) YAML as a constrained, auto-materialising subset.** YAML may declare ONLY queries whose
+  `returns` is a NodeModel; the catalogue auto-materialises via `NodeModel(**fields)` by
+  convention. No custom `materialize()` allowed from YAML. Keeps YAML but boxes it so it cannot
+  express the projection/transform queries the typed track handles. Two catalogue types coexist;
+  both expose `describe()`.
+- **(C) YAML as a code-generator, not a runtime model.** A YAML file *generates* `CypherReadQuery`
+  Python classes (codegen at build time). Runtime stays 100% typed; YAML is just an authoring
+  convenience that disappears after generation. No second runtime catalogue; preserves typing.
+  Cost: a generation step and the round-trip questions that come with codegen.
 
-## Task Execution Order
+### Decision criteria
+Choose the option that (1) does not reintroduce string-key dispatch into application code,
+(2) keeps `materialize()` type-checked, and (3) is justified by a real consumer who genuinely
+needs config-driven queries. If no such consumer exists, prefer (A).
 
-```
-T1 (models.py)          ← no dependencies; do first
-T8 (base.py)            ← depends on T1 (QueryDescription references models)
-T2 (loader.py)          ← depends on T1
-T3 (validation.py)      ← depends on T1; reuses existing cypher/parser.py
-T4 (StringKeyCypher)    ← depends on T1, T2, T3, T8
-T5 (TypedCatalogue)     ← depends on T8; independent of T1-T4
-T6 (to_definition)      ← depends on T1 + T5
-T7 (CypherReadQuery)    ← depends on T5 + T6
-T9 (public API)         ← depends on T4, T5, T7, T8
-T10 (E8 alignment)      ← depends on T8
-T11 (E11 alignment)     ← depends on T4
-```
-
-Earliest parallelism:
-- T1 → T2 and T8 in parallel
-- T4 and T5 in parallel (after T1+T2+T3 / T8 respectively)
-- T6 and T7 together after T5
+**Record the decision** in this section and in `idea_db/query-catalog-spike/docs/` before building
+any YAML support.
 
 ---
 
 ## Relationship to Other Epics
 
-- **E8 (GQLAlchemy)** — unblocked by this epic; uses T8's `DescribableCatalogue` to expose `describe()`.
-- **E11 (CRUD)** — targets `StringKeyCypherCatalogue` (T11 alignment).
-- **E14 (SQLAlchemy backend)** — implements `ReadQuery`/`WriteQuery` from T5; unchanged by E16.
-- **matterforge E9** — imports `TypedQueryCatalogue`, `ReadQuery`, `CypherReadQuery` from T5/T7.
-- **E6, E12, E13, E15** — **retired**; see header. Their tasks are wholly superseded by this epic.
+- **E8 (GQLAlchemy)** — unblocked by this epic; its catalogue should also expose `describe()`
+  (a `QueryDescription` surface) for uniform introspection.
+- **E11 (CRUD)** — generates typed `CypherReadQuery`/`CypherWriteQuery` instances (Python classes),
+  registered into a `TypedQueryCatalogue`. (If YAML option C is later chosen, CRUD could also emit
+  YAML — but not until the YAML decision is made.)
+- **E14 (SQLAlchemy backend)** — implements `ReadQuery`/`WriteQuery`/`Executor` from STEP 1 for
+  SQLAlchemy; completes the cross-backend port-swap proof in T6.
+- **matterforge E9/E10** — import `ReadQuery`, `WriteQuery`, `TypedQueryCatalogue`, `ReadPort`,
+  `CypherReadQuery`, `CypherExecutor` from here once landed.
+- **E6, E12, E13, E15** — retired; superseded by this epic.

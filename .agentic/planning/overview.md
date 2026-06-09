@@ -43,7 +43,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E13 | Typed Query Catalogue Contract | — | **RETIRED → E16** |
 | E14 | SQLAlchemy Backend Extension | High | planned (blocked by E16) |
 | E15 | Typed Cypher Catalogue Backend | — | **RETIRED → E16** |
-| E16 | Query Catalogue — Unified Interface, Cypher Model, Typed Backends | High | **active** |
+| E16 | Query Catalogue — Typed Contract, Cypher Backend, Registry | High | **active** |
 
 ---
 
@@ -67,9 +67,9 @@ AFTER E10:
   E4   Extension Robustness (connection patterns settled)
 
 AFTER E16:
-  E8   GQLAlchemy Query Catalogue (uses DescribableCatalogue from E16 T8)
-  E11  Auto-Generated CRUD (targets StringKeyCypherCatalogue from E16 T4)
-  E14  SQLAlchemy Backend Extension (implements ReadQuery from E16 T5)
+  E8   GQLAlchemy Query Catalogue (exposes describe() for uniform introspection)
+  E11  Auto-Generated CRUD (emits typed CypherReadQuery/WriteQuery instances)
+  E14  SQLAlchemy Backend Extension (implements ReadQuery/WriteQuery/Executor from E16 STEP 1)
 
 GATE — requires E1, E2, E3, E4, E8, E9, E10, E11, E16 substantially complete:
   E7   Pilot Readiness
@@ -161,19 +161,26 @@ Items explicitly out of scope for the current phase.
 
 ---
 
-## Architecture Note: The Two Catalogue Types (resolved in E16)
+## Architecture Note: The Typed Query Catalogue (E16)
 
-After E16 there are exactly **two catalogue types**, with a clear decision rule for each:
+E16 builds a **single, typed query catalogue** in strict order:
+**(1) Read/Write generics + Executor → (2) Cypher backend → (3) TypedQueryCatalogue**.
 
-| | `StringKeyCypherCatalogue` | `TypedQueryCatalogue` |
-|---|---|---|
-| **Register** | `register(name, cypher, params, returns)` or `from_yaml()` | `register_read(MyQuery())` |
-| **Call site** | `catalogue.execute("name", params, conn)` | `executor.read(query, params)` → `list[D]` |
-| **Return type** | untyped records (or auto-materialised if NodeModel declared) | statically typed `list[D]` |
-| **Schema validation** | at registration, against GraphDataModel | at build time (pure, no DB) |
-| **YAML support** | yes | no (Python-only) |
-| **Use when** | queries come from config; external tooling; CRUD auto-gen | domain-typed reads/writes; matterforge; IDE safety |
-| **Shared surface** | `describe() → list[QueryDescription]` | same |
+| | `TypedQueryCatalogue` (built in E16) |
+|---|---|
+| **Register** | `register_read(MyQuery())` — a typed `ReadQuery`/`WriteQuery` instance |
+| **Call site** | `executor.read(query, params)` → statically typed `list[D]` |
+| **Return type** | statically known domain type (NodeModel or projection) |
+| **Validation** | params at the boundary (R4); build() pure, no DB (R1) |
+| **Materialise** | each query owns a type-checked `materialize()` (R3) |
+| **Introspection** | `describe() → list[QueryDescription]` |
+| **Swappable reads** | `ReadPort` + composition-root binding |
 
-`GqlAlchemyQueryCatalogue` (E8) is a third independent type (builder expressions, Python-only)
-that also satisfies `DescribableCatalogue`.
+**YAML is NOT built in E16.** The retired E6 offered a YAML/string-key catalogue; whether YAML
+returns (and in which of three forms) is an explicit **OPEN DECISION** documented in the E16 epic.
+The typed core is built first; the YAML decision is made afterwards, on evidence, only if a real
+consumer needs config-driven queries — and only in a form that does not reintroduce string-key
+dispatch or untyped returns into application code.
+
+`GqlAlchemyQueryCatalogue` (E8) is an independent backend catalogue (builder expressions,
+Python-only) that should also expose `describe()` for uniform introspection.

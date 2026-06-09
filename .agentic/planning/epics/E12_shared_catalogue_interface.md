@@ -1,9 +1,8 @@
 # Epic E12: Shared Catalogue Interface Extraction
 
 > **STATUS: RETIRED — superseded by [E16](E16_query_catalogue_unified.md)**
-> The shared `DescribableCatalogue` Protocol and `QueryDescription` dataclass are defined in E16
-> as T8. The "extract from E6+E8" framing is replaced: E16 defines the shared surface up front.
-> Do not pick up new work from this file.
+> The shared introspection surface (`QueryDescription` + `describe()`) is defined directly in E16
+> (T5), not "extracted from E6+E8 later". Do not pick up new work from this file.
 
 ---
 
