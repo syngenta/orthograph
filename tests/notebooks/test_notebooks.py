@@ -37,6 +37,8 @@ ALL_NOTEBOOKS = [
     NOTEBOOKS_DIR / "03.02_neo4j_end_to_end.ipynb",
     NOTEBOOKS_DIR / "03.03_gqlalchemy_integration.ipynb",
     NOTEBOOKS_DIR / "03.04_gqlalchemy_database_interaction.ipynb",
+    # 04 -- Query Catalogue
+    NOTEBOOKS_DIR / "04.01_typed_cypher_queries.ipynb",
 ]
 
 

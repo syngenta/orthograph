@@ -44,6 +44,8 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E14 | SQLAlchemy Backend Extension | High | planned (blocked by E16) |
 | E15 | Typed Cypher Catalogue Backend | — | **RETIRED → E16** |
 | E16 | Query Catalogue — Typed Contract, Cypher Backend, Registry | High | **active** |
+| E17 | CypherGenerator — Injection Hardening & Typed-Query Realignment | High | planned (blocked by E16) |
+| E18 | Validation Correctness | High | planned |
 
 ---
 
@@ -70,6 +72,7 @@ AFTER E16:
   E8   GQLAlchemy Query Catalogue (exposes describe() for uniform introspection)
   E11  Auto-Generated CRUD (emits typed CypherReadQuery/WriteQuery instances)
   E14  SQLAlchemy Backend Extension (implements ReadQuery/WriteQuery/Executor from E16 STEP 1)
+  E17  CypherGenerator hardening (closes identifier-injection risk; aligns generator to E16; unblocks E11)
 
 GATE — requires E1, E2, E3, E4, E8, E9, E10, E11, E16 substantially complete:
   E7   Pilot Readiness
@@ -90,7 +93,8 @@ E9 [HITL] ──► E10 ──┘                               │
                                                      │
 E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
                 ├──► E11 (CRUD auto-generation)      │
-                └──► E14 (SQLAlchemy backend)        │
+                ├──► E14 (SQLAlchemy backend)        │
+                └──► E17 (generator hardening) ──► E11
                                                      ▼
                                                     E7 (gate)
 ```
@@ -110,8 +114,9 @@ E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
 - **E8** — GQLAlchemy Query Catalogue (after E16)
 - **E10** — Connection Ownership Audit (after E9)
 - **E4** — Extension Robustness (after E2 + E10)
-- **E11** — Auto-Generated CRUD Operations (after E16)
+- **E11** — Auto-Generated CRUD Operations (after E16 + E17)
 - **E14** — SQLAlchemy Backend Extension (after E16)
+- **E17** — CypherGenerator Hardening (after E16; unblocks E11)
 
 ### Wave 3 (after Wave 2)
 - **E7** — Pilot Readiness gate (after all others)
@@ -133,6 +138,8 @@ E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
 - [E11 — Auto-Generated CRUD Operations](epics/E11_auto_generated_crud.md)
 - [E14 — SQLAlchemy Backend Extension](epics/E14_sqlalchemy_backend_extension.md)
 - **[E16 — Query Catalogue Unified](epics/E16_query_catalogue_unified.md)** ← start here
+- [E17 — CypherGenerator Hardening](epics/E17_cypher_generator_hardening.md)
+- [E18 — Validation Correctness](epics/E18_validation_correctness.md)
 
 ### Retired (do not pick up work from these)
 - [E6 — Cypher Query Catalogue](epics/E6_query_catalogue.md) *(superseded by E16)*

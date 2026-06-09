@@ -3,7 +3,7 @@
 > **Priority:** Medium
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Goal:** Derive standard CRUD and janitor queries automatically from a GraphDataModel, pre-populating catalogues
-> **Blocked by:** E6 (Cypher catalogue must exist), E8 (GQLAlchemy catalogue must exist)
+> **Blocked by:** E6 (Cypher catalogue must exist), E8 (GQLAlchemy catalogue must exist), E17 (CypherGenerator must be hardened and emit typed query objects)
 > **User stories:** 9
 
 ---
