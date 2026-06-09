@@ -1,5 +1,11 @@
 # Epic E15: Typed Cypher Catalogue Backend
 
+> **STATUS: RETIRED — superseded by [E16](E16_query_catalogue_unified.md)**
+> E15 tasks E15.1–E15.4 are adopted verbatim into E16 as T7. The `to_definition()` bridge
+> method (E16 T6) is added to `CypherReadQuery`. Do not pick up new work from this file.
+
+---
+
 > **Priority:** High
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Goal:** Add typed `CypherReadQuery` / `CypherExecutor` base classes implementing the E13

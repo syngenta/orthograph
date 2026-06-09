@@ -1,5 +1,12 @@
 # Epic E12: Shared Catalogue Interface Extraction
 
+> **STATUS: RETIRED — superseded by [E16](E16_query_catalogue_unified.md)**
+> The shared `DescribableCatalogue` Protocol and `QueryDescription` dataclass are defined in E16
+> as T8. The "extract from E6+E8" framing is replaced: E16 defines the shared surface up front.
+> Do not pick up new work from this file.
+
+---
+
 > **Priority:** Medium
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Goal:** Extract a common QueryCatalogue ABC/Protocol from the Cypher and GQLAlchemy implementations to ensure future backends plug in via the same contract

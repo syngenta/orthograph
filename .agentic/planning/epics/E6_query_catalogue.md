@@ -1,5 +1,10 @@
 # Epic E6: Cypher Query Catalogue
 
+> **STATUS: RETIRED — superseded by [E16](E16_query_catalogue_unified.md)**
+> Tasks E6.1–E6.4 are reformulated in E16 as T1, T2, T3, T4. Do not pick up new work from this file.
+
+---
+
 > **Priority:** High
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Goal:** Provide a schema-validated, named-query registry for Cypher that eliminates inline query strings from consuming applications

@@ -1,5 +1,12 @@
 # Epic E13: Typed Query Catalogue Contract
 
+> **STATUS: RETIRED — superseded by [E16](E16_query_catalogue_unified.md)**
+> E13 tasks E13.1–E13.4 are adopted verbatim into E16 as T5 (TypedQueryCatalogue + typed
+> contract). The rename `QueryCatalogue` → `TypedQueryCatalogue` is resolved in E16 to avoid
+> collision with the string-key catalogue. Do not pick up new work from this file.
+
+---
+
 > **Priority:** High
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Goal:** Define the abstract, statically-typed `ReadQuery`/`WriteQuery`/`QueryCatalogue`/
