@@ -1,7 +1,7 @@
 # ADR-010: Declared Identifier Parameters in Typed Queries
 
 **Date:** 2026-06-10
-**Status:** Proposed
+**Status:** Accepted
 **Category:** extensions / query catalogue
 
 ## Context
@@ -75,12 +75,25 @@ labels (`:Movie`) remain legal and idiomatic — the mechanism is only for *dyna
   CypherGenerator (label fixed by model at synthesis).
 - Identifier safety becomes structural: every dynamic identifier passes `validate_identifier`
   before reaching the query string.
-- **Open / to confirm:** the `Identifiers`/`Params` split is intended to be *backend-neutral*
-  at the declaration level so the base query classes stay viable for a future GraphORM
-  (GQLAlchemy) backend, where identifiers are consumed via builder calls rather than template
-  placeholders. This has **not** been validated against GQLAlchemy yet; this ADR is `Proposed`
-  until that investigation confirms the split survives the GraphORM case. The
-  template-placeholder handling is explicitly Cypher-only.
+- **Resolved (2026-06-10):** the `Identifiers`/`Params` split is *backend-neutral* at the
+  declaration level. Validated against the GQLAlchemy (GraphORM) builder surface — see
+  `.agentic/reviews/2026-06-10-graphorm-adr-validation-report.md`. In a builder-based backend
+  the same two groups are consumed by `build()` as builder arguments (`Identifiers` →
+  `node(labels=...)`, validated via `validate_identifier`) and value bindings (`Params` →
+  `.where(...)`); the `<<placeholder>>` template substitution is the **Cypher-specific
+  rendering** of the neutral split, not part of the split itself. The generic base
+  (`orthograph.catalogue.typed.ReadQuery[P, D]`) bakes in no Cypher assumption and is
+  unchanged (`build() -> Any` already permits a builder return).
+- **Implementation note (no empty-key tax):** `Identifiers` carries an empty default at the
+  **Cypher base layer** (`CypherReadQuery.Identifiers = _NoIdentifiers`); the generic
+  signature stays `ReadQuery[P, D]` / `WriteQuery[P, R]` (two type params, unchanged). A
+  value-only query declares no `Identifiers` and is byte-for-byte the E16 query of today. The
+  grilling log's "Sketch C" 3-generic-param form (`CypherReadQuery[Identifiers, Params,
+  Output]`) is illustrative only and is **rejected** as the implementation shape. This is an
+  E17 implementation detail and does not affect the backend-neutrality verdict.
+- **Confirm in code at E8:** the GQLAlchemy query catalogue (E8.1) instantiates a
+  `GqlAlchemyReadQuery` with these two groups and a builder-returning `build()`, exercising
+  the split in code (tracked as an E8 acceptance criterion).
 
 ## Relates to
 

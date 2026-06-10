@@ -1,7 +1,7 @@
 # ADR-009: Inspector Query Alignment and GraphProfile Completeness Parity
 
 **Date:** 2026-06-10
-**Status:** Proposed
+**Status:** Accepted
 **Category:** extensions / inspection
 
 ## Context
@@ -69,7 +69,9 @@ live Memgraph database with the same interface I use for Neo4j").
   (max_degree, Mermaid `<br>`, stacklevel, deprecation shim). This work is the substance of
   E17 STEP 5 (T7/T8), widened to include Memgraph parity.
 - **Depends on ADR-010** (declared identifier parameters) and **ADR-008** (`validate_identifier`).
-  `Proposed` until ADR-010 is accepted.
+  ADR-010 was accepted 2026-06-10 (the GraphORM backend-neutrality gate closed — see
+  `.agentic/reviews/2026-06-10-graphorm-adr-validation-report.md`), so this dependency is
+  satisfied and this ADR is `Accepted`.
 
 ## Relates to
 

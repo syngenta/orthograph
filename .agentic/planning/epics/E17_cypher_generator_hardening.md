@@ -70,6 +70,7 @@ class-definition time. The generator predates this and returns bare `tuple[str, 
 
 ```
 STEP 1 — Identifier safety core              (T1, T2)   pure, no behaviour change to valid queries
+STEP 1b — Declared-identifier mechanism      (T2.5)     adds Identifiers + <<placeholder>> (ADR-010)
 STEP 2 — Model-bound generation              (T3)       every identifier resolved through the model
 STEP 3 — Typed-query emission (generator)   (T4, T5)   generator emits E16 query objects
 STEP 4 — Audit, docs, decision record        (T6)       prove the risk is closed; record the decision
@@ -81,6 +82,7 @@ Files touched:
 ```
 src/orthograph/extensions/cypher/generator.py          hardened + typed emission (T1–T5)
 src/orthograph/extensions/cypher/identifiers.py        NEW — identifier validation/escaping (T1)
+src/orthograph/extensions/cypher/base_models.py        Identifiers group + <<placeholder>> (T2.5)
 src/orthograph/core/errors.py                          reuse ValidationIssue codes (T3)
 src/orthograph/extensions/neo4j/queries.py             replaced or wrapped by typed queries (T7)
 src/orthograph/extensions/memgraph/queries.py          replaced or wrapped by typed queries (T7)
@@ -88,10 +90,12 @@ src/orthograph/extensions/neo4j/inspector.py           consume typed queries + i
 src/orthograph/extensions/memgraph/inspector.py        consume typed queries + internal catalogue (T8)
 tests/extensions/cypher/test_generator.py              extended (every step)
 tests/extensions/cypher/test_identifiers.py            NEW (T1)
+tests/extensions/cypher/test_base_models.py            extended — Identifiers/<<placeholder>> (T2.5)
 tests/extensions/neo4j/test_inspector_queries.py       NEW (T7, T8)
 tests/extensions/memgraph/test_inspector_queries.py    NEW (T7, T8)
 .agentic/decisions/008-cypher-identifier-safety.md     NEW (T6)
-.agentic/decisions/009-inspector-query-alignment.md    NEW (T8)
+.agentic/decisions/009-inspector-query-alignment.md    Accepted (ADR-010 gate closed)
+.agentic/decisions/010-declared-identifier-parameters.md  Accepted — mechanism realised by T2.5
 ```
 
 ---
@@ -167,6 +171,84 @@ generated strings in existing assertions).
 
 ---
 
+## STEP 1b — Declared-identifier mechanism (ADR-010)
+
+### T2.5: Add the `Identifiers` group + `<<placeholder>>` to the Cypher query bases
+
+**What:** Realise ADR-010 (Accepted 2026-06-10) in `cypher/base_models.py`. A typed Cypher query
+gains a second declared parameter group, `Identifiers`, whose fields are *validated safe
+identifiers* (labels / relationship types) spliced into the `cypher_template` via a distinct
+`<<name>>` placeholder — solving the "Cypher cannot parameterise identifiers" problem inside the
+typed contract instead of via raw f-strings. This is the prerequisite that lets generated CRUD
+queries (T4) and inspector queries (T8) carry a *dynamic* label while staying declarative.
+
+**Decision constraints (from ADR-010 + the GraphORM validation report):**
+- **The generic base `orthograph.catalogue.typed.ReadQuery[P, D]` / `WriteQuery[P, R]` is NOT
+  modified.** No third generic parameter. `Identifiers` is added only at the Cypher layer.
+- `Identifiers` has an **empty default** at the Cypher base
+  (`Identifiers: ClassVar[type[BaseModel]] = _NoIdentifiers`, where `_NoIdentifiers` is an empty
+  `BaseModel`). A query that declares no `Identifiers` and uses no `<<placeholder>>` is
+  byte-for-byte the E16 query of today — no new boilerplate, no behaviour change.
+- The grilling-log "Sketch C" 3-generic-param form is **rejected** — do not implement it.
+
+**Actions (in `src/orthograph/extensions/cypher/base_models.py`):**
+1. Define `_NoIdentifiers(BaseModel)` (empty) and add
+   `Identifiers: ClassVar[type[BaseModel]] = _NoIdentifiers` to **both** `CypherReadQuery` and
+   `CypherWriteQuery`.
+2. Add `extract_cypher_identifiers(cypher) -> set[str]` mirroring `extract_cypher_params` but for
+   the `<<name>>` delimiter (regex e.g. `re.compile(r"<<(\w+)>>")`). Keep it separate from
+   `_PARAM_PATTERN` so `$value` and `<<name>>` never collide.
+3. Extend `_validate_declarative_cypher` (the class-definition-time validator) with an
+   `Identifiers` ↔ `<<name>>` 1:1 check, exactly parallel to the existing `Params` ↔ `$param`
+   check (`base_models.py:135-156`): every `<<name>>` must map to an `Identifiers` field and every
+   `Identifiers` field to a `<<name>>`; mismatches raise `CypherQueryDefinitionError`.
+4. Extend the default declarative `build()` on both bases: for each `Identifiers` field, call
+   `validate_identifier(value, kind=...)` (from T1) and substitute the validated value into the
+   matching `<<name>>` slot in `cypher_template`; then return
+   `(rendered_cypher, params.model_dump())`. The `kind` is derived from the field (label vs
+   relationship type) — document the convention (e.g. a field named `rel_type`/`*_rel_type` →
+   `"relationship type"`, otherwise `"label"`; or carry the kind via a Pydantic field annotation).
+   Decide and document the kind-resolution rule in this task.
+5. `build()` signature stays `build(self, params: P) -> CypherQuery`. The `Identifiers` values are
+   carried on the same `params` object? **No** — `Identifiers` and `Params` are separate models.
+   Decide the call shape and document it: the executor passes both groups. Two options to pick from
+   in this task and record:
+   - **(a)** `build(self, params: P)` keeps a single argument and the *identifiers* are bound onto
+     the query instance at construction (model-fixed case, e.g. generator); **or**
+   - **(b)** extend the Cypher base `build` to `build(self, identifiers, params)` and have
+     `CypherExecutor.read/write` pass the identifier model through. Note: option (b) touches
+     `CypherExecutor` and the `Executor` seam — confirm against `typed.py` `Executor.read/write`
+     signatures and update them consistently if chosen. Prefer the option that keeps the generic
+     `Executor` seam stable; if (b) is needed, treat the `Executor` signature change as part of
+     this task's scope and update all implementers + `QueryBackedReadPort`.
+6. Update the `base_models.py` module docstring to document the `Identifiers`/`<<placeholder>>`
+   authoring style alongside the existing declarative/imperative description.
+
+**Tests (extend `tests/extensions/cypher/test_base_models.py`):**
+- A query with empty default `Identifiers` and only `$value` placeholders is unchanged from E16
+  (existing tests still pass; add one asserting `Identifiers is _NoIdentifiers` by default).
+- A query declaring `Identifiers = {label: str}` and `cypher_template` with `` `<<label>>` ``
+  builds: `build(...)` returns the cypher with the validated label spliced in and the `$value`
+  dict for `Params`.
+- A `<<name>>` with no matching `Identifiers` field raises `CypherQueryDefinitionError`; an
+  `Identifiers` field with no matching `<<name>>` raises (1:1, mirroring the `$param` checks at
+  lines 253-307 of the existing test file).
+- An injected identifier (`"x`) DETACH DELETE (n //"`) passed as an `Identifiers` value raises via
+  `validate_identifier` before any cypher string is produced.
+- `$value` and `<<name>>` in the same template are both validated independently and do not
+  collide.
+
+**Verification:** `from orthograph.extensions.cypher.base_models import CypherReadQuery` and a
+subclass with `Identifiers` + `<<placeholder>>` constructs and builds. The generic `typed.py` file
+is untouched (diff shows no change). `mypy src/` clean; `tests/extensions/cypher/` green.
+
+**Relates to:** ADR-010 (the mechanism), ADR-008 / T1 (`validate_identifier`),
+`.agentic/reviews/2026-06-10-graphorm-adr-validation-report.md` (backend-neutrality + no-empty-key
+constraints this task implements). Unblocks T4 (typed CRUD with model-fixed labels) and T8 (typed
+inspector queries with per-call labels).
+
+---
+
 ## STEP 2 — Model-bound generation
 
 ### T3: Property keys resolved against the model, not the input dict
@@ -223,6 +305,12 @@ but are now hardened by T1–T3.
    - `create_query(node_type) -> CypherWriteQuery`
    - `delete_by_uid_query(node_type) -> CypherWriteQuery`
 4. Keep these PURE (R1) — they build classes/instances, touch no session.
+
+> **Note on labels (ADR-010 / T2.5):** because the label is *fixed by the model at synthesis
+> time*, the generator may bake it directly into `cypher_template` as a literal (`:Person`) — it
+> does NOT need the `Identifiers`/`<<placeholder>>` mechanism. (Each interpolated literal still
+> passes `validate_identifier` per T2.) The `Identifiers` mechanism from T2.5 is for queries whose
+> label varies *per call* — that is the inspector case in T8, not the generator case here.
 
 **Tests (extend `test_generator.py`):**
 - `match_by_uid_query(Person)` returns a `CypherReadQuery`; its `backend is Backend.CYPHER`; its
@@ -383,16 +471,36 @@ surface. No production code written yet.
 `CypherReadQuery` subclasses. Instantiate an internal `QueryCatalogue` inside each inspector.
 Replace `self._run(str)` with `self._executor.read(query, params)`.
 
-**Blocked by:** T7 (design must be decided first), T1 (identifier safety must exist).
+**Blocked by:** T7 (design must be decided first), T1 (identifier safety must exist), **T2.5**
+(the `Identifiers`/`<<placeholder>>` mechanism — inspector queries carry a per-call label/rel-type
+via the declared `Identifiers` group, not a hand-rolled `build()` f-string).
 
 **Actions:**
-1. Per the T7 decision: implement the `CypherReadQuery` subclasses for each inspector query
-   (APOC set, pure-Cypher set, Memgraph set). Each subclass:
-   - declares `Params` (empty `BaseModel` for no-arg queries; `class LabelParams(BaseModel):
-     label: str` for parametric ones),
+1. Per the T7 decision: implement the `CypherReadQuery` subclasses for each inspector query.
+   The concrete inspector-query surface to convert (read directly from source):
+   - **Neo4j `ApocQueryStrategy`** (`neo4j/queries.py`): `node_labels`, `rel_types`,
+     `node_properties(label)`, `rel_properties(rel_type)`, `cardinality(label, rel_type)`,
+     `constraints`.
+   - **Neo4j `CypherQueryStrategy`** (pure-Cypher fallback, same six method names) — the second
+     subclass set, registered under the same names in a separate catalogue or selected at
+     construction.
+   - **`MemgraphQueries`** (`memgraph/queries.py`): `node_properties`, `rel_properties`,
+     `constraints`, `cardinality(label, rel_type)`.
+   - **NEW endpoint query (reassigned E18.1):** `source_labels`/`target_labels` for a relationship
+     type — a typed `CypherReadQuery` with `Identifiers = {rel_type}`, born here (NOT bolted onto
+     the retired `QueryStrategy`). Required for Neo4j and Memgraph to populate the
+     `source_labels`/`target_labels` `GraphProfile` fields and fire `INVALID_ENDPOINT`.
+
+   Each subclass:
+   - declares `Params` (empty `BaseModel` for no-value queries) and, where the label/rel-type
+     varies per call, an `Identifiers` model (`class LabelIdentifiers(BaseModel): label: str`,
+     `class RelTypeIdentifiers(BaseModel): rel_type: str`, or both) — per T2.5 / ADR-010,
    - declares `Output` pointing at the relevant `NodeTypeProfile` / `PropertyProfile` / etc.
      Pydantic model (or a new projection if needed),
-   - implements `build()` using `escape_identifier` from T1 for any label/rel-type interpolation,
+   - carries the label/rel-type through the `Identifiers` group + `<<placeholder>>` in
+     `cypher_template` (the T2.5 base validates + splices via `validate_identifier`); only fall
+     back to an imperative `build()` + `escape_identifier` where the query *shape* genuinely
+     varies (e.g. APOC procedure calls that can't be expressed declaratively),
    - implements `materialize()` doing what the inspector's inline field mapping does today.
 2. Instantiate a `QueryCatalogue` at the inspector or extension-package level; register the
    queries. The inspector's `_run()` private method is replaced by `CypherExecutor.read()`.
@@ -401,18 +509,28 @@ Replace `self._run(str)` with `self._executor.read(query, params)`.
    of the query subclasses' `build()`.
 4. Update `neo4j/inspector.py` and `memgraph/inspector.py` to use the typed queries via the
    executor. The public `inspect() → GraphProfile` contract is unchanged.
+5. **Memgraph completeness parity (D8 / ADR-009):** add typed introspection queries so Memgraph
+   populates node/rel `count`, `cardinality_stats` (the Neo4j `MATCH ... count(r)` pattern already
+   works on Memgraph — see `MemgraphQueries.cardinality`), and `source_labels`/`target_labels`
+   (the new endpoint query). Where a metric is genuinely unavailable from Memgraph procedures,
+   **document the gap explicitly** in the inspector so it is known, not silently skipped.
 
 **Tests (`tests/extensions/neo4j/test_inspector_queries.py`,
 `tests/extensions/memgraph/test_inspector_queries.py`):**
-- Each typed query's `build(params)` returns the expected Cypher string (pure, no session).
+- Each typed query's `build(params)` (and `Identifiers` where present) returns the expected Cypher
+  string (pure, no session).
 - `materialize(fake_row)` returns the expected `NodeTypeProfile` / `PropertyProfile` instance.
-- An injected label string (`"Person) DETACH DELETE (n"`) raises before Cypher is produced
-  (identifier safety via T1 + `escape_identifier`).
+- An injected label string (`"Person) DETACH DELETE (n"`) passed as an `Identifiers` value raises
+  before Cypher is produced (identifier safety via T1 + T2.5).
+- The new endpoint query yields `source_labels`/`target_labels`; assert the Neo4j and Memgraph
+  inspectors now populate those `GraphProfile` fields (the E18.1 fix).
 - The inspector's `inspect()` output is byte-for-byte identical to the current output for the
-  same fake session records (no regression).
+  same fake session records, except for the newly-populated parity fields (no regression on
+  previously-populated fields).
 
 **Verification:** `inspect()` contract unchanged. Internal catalogue populated. `QueryStrategy`
-Protocol retired or demoted. Full suite green. `mypy src/` clean.
+Protocol retired or demoted. Neo4j + Memgraph populate `source_labels`/`target_labels` and (where
+supported) cardinality/counts. Full suite green. `mypy src/` clean.
 
 ---
 

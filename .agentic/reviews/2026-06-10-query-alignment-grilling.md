@@ -82,6 +82,22 @@ class MoviesByYear(CypherReadQuery[NoIdentifiers, ReleasedYearValues, Movie]):
   signature? (Backward-compat: empty `Identifiers` default so existing queries don't change.)
 - GraphORM viability of the `Identifiers` split — investigate before finalising the ADR.
 
+### OUTCOME (2026-06-10) — D4 sub-questions closed
+- **Delimiter:** `<<name>>` chosen and recorded in ADR-010.
+- **3rd generic param: RESOLVED — rejected.** The empty-default `Identifiers` lives at the
+  **Cypher base layer** (`CypherReadQuery.Identifiers = _NoIdentifiers`); the generic signature
+  stays `ReadQuery[P, D]` (two params, unchanged). Sketch C's
+  `CypherReadQuery[Identifiers, Params, Output]` is illustrative only and is NOT the
+  implementation shape. Value-only queries declare no `Identifiers` and are byte-for-byte the E16
+  query. This is an E17 implementation detail; it does not affect the decision.
+- **GraphORM viability: RESOLVED — split survives.** Validated against the GQLAlchemy builder
+  surface — see `.agentic/reviews/2026-06-10-graphorm-adr-validation-report.md`. `Identifiers` →
+  builder args (`node(labels=...)`, validated via `validate_identifier`); `Params` → value
+  bindings; `<<placeholder>>` is the Cypher-only rendering of the neutral split. The generic base
+  (`build() -> Any`) already permits a builder return and bakes in no Cypher assumption.
+- **Result:** ADR-010 → **Accepted**; ADR-009 (its dependant) → **Accepted**. Confirm in code at
+  E8.1 (`GqlAlchemyReadQuery` instantiates both groups + builder `build()`).
+
 ## Decision: E18 decomposition (D5) — RESOLVED
 
 - **D5.** Split E18.

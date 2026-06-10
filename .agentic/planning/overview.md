@@ -35,7 +35,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E5 | Visualization Package | High | **done** (2026-04-15) |
 | E6 | Cypher Query Catalogue | — | **RETIRED → E16** |
 | E7 | Pilot Readiness (gate) | High | planned |
-| E8 | GQLAlchemy Query Catalogue | High | planned (blocked by E16) |
+| E8 | GQLAlchemy Query Catalogue | High | planned (blocked by E16, E17 T2.5) |
 | E9 | GQLAlchemy Client Review | High | planned |
 | E10 | Connection Ownership Audit | High | planned |
 | E11 | Auto-Generated CRUD Operations | Medium | planned (blocked by E16) |
@@ -233,3 +233,18 @@ dispatch or untyped returns into application code.
 
 `GqlAlchemyQueryCatalogue` (E8) is an independent backend catalogue (builder expressions,
 Python-only) that should also expose `describe()` for uniform introspection.
+
+---
+
+## Decision Note: Declared identifier parameters (ADR-009 / ADR-010) — Accepted 2026-06-10
+
+ADR-010 (declared `Identifiers`/`Params` split for typed queries) and its dependant ADR-009
+(inspector query alignment) are **Accepted**. The backend-neutrality gate that blocked them closed
+after validating the split against the GQLAlchemy builder surface — see
+`.agentic/reviews/2026-06-10-graphorm-adr-validation-report.md`.
+
+Execution order this implies:
+1. **E17 T1** (`validate_identifier`) → **E17 T2.5** (adds `Identifiers` + `<<placeholder>>` to the
+   Cypher bases; generic `typed.py` untouched) → **E17 T4/T8** (generator + inspector use it).
+2. **E8** implements the same split in the GQLAlchemy builder dialect (`Identifiers` → builder
+   args; `Params` → `.where()` bindings), confirming ADR-010 in code.
