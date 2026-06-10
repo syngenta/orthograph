@@ -13,9 +13,11 @@
 > **SCOPE NOTE:** This epic reviews and hardens the EXISTING `CypherGenerator`
 > (`src/orthograph/extensions/cypher/generator.py`). It does NOT add new query kinds beyond what the
 > PRD's "Auto-Generated Operations" list already names (get-by-uid, merge, create, delete,
-> match-by-label, constraint DDL). The two goals are: **(1) close the identifier-injection risk**,
-> and **(2) realign the generator's output with the typed query contract from E16** so that
-> generated queries flow into the catalogue instead of being loose `(str, dict)` tuples.
+> match-by-label, constraint DDL). The three goals are: **(1) close the identifier-injection risk**,
+> **(2) realign the generator's output with the typed query contract from E16** so that generated
+> queries flow into the catalogue instead of being loose `(str, dict)` tuples, and **(3) realign the
+> inspector query strategies** (`neo4j/queries.py`, `memgraph/queries.py`) with the same typed
+> contract so the library uses its own catalogue internally — not just proposes it to consumers.
 
 ---
 
@@ -55,7 +57,7 @@ whose `build()` returns `(cypher, params)` and which validate `$param` ↔ `Para
 class-definition time. The generator predates this and returns bare `tuple[str, dict]` /
 `list[str]`. As a result:
 
-- Generated queries **cannot be registered** in the `TypedQueryCatalogue` or introspected via
+- Generated queries **cannot be registered** in the `QueryCatalogue` or introspected via
   `describe()`.
 - Generated queries get **none of E16's definition-time guarantees** (param alignment, dialect
   parse).
@@ -67,21 +69,29 @@ class-definition time. The generator predates this and returns bare `tuple[str, 
 ## Implementation Order (build in this sequence)
 
 ```
-STEP 1 — Identifier safety core         (T1, T2)   pure, no behaviour change to valid queries
-STEP 2 — Model-bound generation         (T3)       every identifier resolved through the model
-STEP 3 — Typed-query emission           (T4, T5)   generator emits E16 query objects
-STEP 4 — Audit, docs, decision record   (T6)       prove the risk is closed; record the decision
+STEP 1 — Identifier safety core              (T1, T2)   pure, no behaviour change to valid queries
+STEP 2 — Model-bound generation              (T3)       every identifier resolved through the model
+STEP 3 — Typed-query emission (generator)   (T4, T5)   generator emits E16 query objects
+STEP 4 — Audit, docs, decision record        (T6)       prove the risk is closed; record the decision
+STEP 5 — Inspector query realignment         (T7, T8)   inspector strategies → typed query objects
 ─────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 Files touched:
 ```
-src/orthograph/extensions/cypher/generator.py     hardened + typed emission (T1–T5)
-src/orthograph/extensions/cypher/identifiers.py    NEW — identifier validation/escaping (T1)
-src/orthograph/core/errors.py                      reuse ValidationIssue codes (T3)
-tests/extensions/cypher/test_generator.py          extended (every step)
-tests/extensions/cypher/test_identifiers.py        NEW (T1)
-.agentic/decisions/008-cypher-identifier-safety.md NEW (T6)
+src/orthograph/extensions/cypher/generator.py          hardened + typed emission (T1–T5)
+src/orthograph/extensions/cypher/identifiers.py        NEW — identifier validation/escaping (T1)
+src/orthograph/core/errors.py                          reuse ValidationIssue codes (T3)
+src/orthograph/extensions/neo4j/queries.py             replaced or wrapped by typed queries (T7)
+src/orthograph/extensions/memgraph/queries.py          replaced or wrapped by typed queries (T7)
+src/orthograph/extensions/neo4j/inspector.py           consume typed queries + internal catalogue (T8)
+src/orthograph/extensions/memgraph/inspector.py        consume typed queries + internal catalogue (T8)
+tests/extensions/cypher/test_generator.py              extended (every step)
+tests/extensions/cypher/test_identifiers.py            NEW (T1)
+tests/extensions/neo4j/test_inspector_queries.py       NEW (T7, T8)
+tests/extensions/memgraph/test_inspector_queries.py    NEW (T7, T8)
+.agentic/decisions/008-cypher-identifier-safety.md     NEW (T6)
+.agentic/decisions/009-inspector-query-alignment.md    NEW (T8)
 ```
 
 ---
@@ -193,7 +203,7 @@ values. `tests/extensions/cypher/` green.
 
 **What:** Add generator methods that return E16 `CypherReadQuery`/`CypherWriteQuery` **instances**
 (or instantiable classes) instead of bare strings, so generated queries register in the
-`TypedQueryCatalogue`, gain definition-time `$param`↔`Params` checks, and carry an `Output` model.
+`QueryCatalogue`, gain definition-time `$param`↔`Params` checks, and carry an `Output` model.
 The existing string-returning methods remain (used internally and by callers that want raw Cypher)
 but are now hardened by T1–T3.
 
@@ -228,14 +238,14 @@ return E16 query objects. `tests/extensions/cypher/` + `tests/catalogue/` green.
 
 ---
 
-### T5: Register generated queries in a `TypedQueryCatalogue`
+### T5: Register generated queries in a `QueryCatalogue`
 
 **What:** Prove the realignment end-to-end: generated typed queries register and introspect like
 hand-written ones.
 
 **Actions:**
 1. In a test (no new src needed beyond T4), build a `GraphDataModel`, generate the four CRUD typed
-   queries for `Person`, register them in a `TypedQueryCatalogue`, and call `describe()`.
+   queries for `Person`, register them in a `QueryCatalogue`, and call `describe()`.
 2. Assert each `QueryDescription` carries the correct `kind` (read for match-by-uid; write for
    merge/create/delete), `backend = CYPHER`, and a non-None `output_schema` for the read.
 
@@ -279,16 +289,137 @@ ADR-008 exists and is linked. `mypy src/` and full `pytest` green.
 
 ---
 
+## STEP 5 — Inspector query realignment
+
+> **The contradiction this step closes:** the library proposes `CypherReadQuery` +
+> `QueryCatalogue` to third-party consumers, then runs its own inspector queries as raw f-string
+> Cypher strings with no `Params`, no `Output`, no `materialize()`, and no registration. The library
+> does not eat its own cooking.
+>
+> **Why the inspector queries are not catalogue-ready today:**
+> 1. **Identifier interpolation** — `strategy.node_properties(label)` inlines the label via an
+>    f-string. Cypher cannot parameterise identifiers, so `$params` cannot replace this. The same
+>    blocker the generator has. STEP 1's `validate_identifier` / `escape_identifier` is the
+>    pre-requisite that makes it safe.
+> 2. **No `Params` / `Output` model** — the strategy methods take raw `str` / produce `list[dict]`.
+>    Mapping the results to typed Pydantic models (`NodeTypeProfile`, `PropertyProfile`, etc.) is
+>    done inline in the inspector methods today.
+> 3. **`QueryStrategy` Protocol is a competing swappability mechanism** — it provides the same
+>    backend-swap property that `CypherReadQuery` + `Executor` + `ReadPort` provides. The two
+>    mechanisms serve the same goal and should be unified.
+>
+> **The path forward (to scope and decide in T7):**
+> - Inspector queries use **imperative build()-style** `CypherReadQuery` subclasses. The label
+>   argument is handled in `build()` via `validate_identifier` / `escape_identifier` (safe, explicit)
+>   — not a `$param` placeholder (Cypher language limitation). The `Params` model carries the label
+>   as a typed field; `build()` escapes it before embedding.
+> - `Output` types are the existing `NodeTypeProfile`, `PropertyProfile`, etc. — they are already
+>   Pydantic models. `materialize()` does what the inspector methods do inline today.
+> - An **internal `QueryCatalogue`** is instantiated inside each inspector (or at the extension
+>   package level) and populated with the inspection queries. The inspector's `_run()` method is
+>   replaced by `executor.read(query, params)`.
+> - The `QueryStrategy` Protocol is retired: swappability is now provided by the catalogue +
+>   executor path (APOC vs pure-Cypher becomes two `CypherReadQuery` subclass sets, registered
+>   under the same names in two catalogues or selected at construction time).
+
+---
+
+### T7: Design and scope the inspector query typed wrappers
+
+**What:** A scoping task — no production code. Analyse the exact shape of each inspector query,
+decide the `Params`/`Output` models, confirm the identifier-escaping approach from T1 is
+sufficient, and write the ADR.
+
+**Why a separate scoping step:** the inspector queries have three variants (APOC, pure-Cypher,
+Memgraph) with different result shapes and different structural identifier needs. Rushing the
+typed-wrapper design without mapping the full surface risks a design that fits the simple cases
+and breaks on the complex ones (multi-label rows in Memgraph, APOC procedure returns, etc.).
+
+**Actions:**
+1. For each inspector query in `neo4j/queries.py` and `memgraph/queries.py`, document:
+   - the Cypher text,
+   - which identifiers are interpolated (label, rel type — none are property keys here),
+   - the result row shape (`dict` keys and Python types),
+   - the target `Params` Pydantic model,
+   - the target `Output` Pydantic model (mapping to existing `NodeTypeProfile` etc. or a new
+     projection type if needed),
+   - whether the query is stateless (no label arg → `Params` is empty) or parametric
+     (label/rel-type arg → `Params` carries it as a validated `str` field).
+2. Decide one of two implementation options and record the decision in
+   `.agentic/decisions/009-inspector-query-alignment.md`:
+   - **(A) Direct typed subclasses** — each strategy method becomes a `CypherReadQuery` subclass.
+     `QueryStrategy` Protocol is retired. The APOC / pure-Cypher split becomes two sets of
+     subclasses selected at construction.
+   - **(B) Typed wrappers over the existing strategy** — the strategy stays for the raw string
+     logic; thin `CypherReadQuery` subclasses delegate `build()` to the strategy and add
+     `Params`/`Output`/`materialize()`. Keeps the strategies as an internal implementation detail.
+     Lower risk; less clean.
+   - **Criterion:** choose the option that removes the `QueryStrategy`-vs-catalogue duplication
+     most cleanly without introducing more complexity than it removes.
+3. The ADR must explicitly record:
+   - the "library does not eat its own cooking" contradiction and how this step closes it,
+   - the chosen option and the rejected alternative,
+   - the decision on `QueryStrategy` Protocol (retired or demoted to internal detail),
+   - how identifier safety for label params is handled (via `build()` + `escape_identifier`).
+
+**Verification:** ADR-009 exists. The scoping document lists every query's `Params`/`Output`
+surface. No production code written yet.
+
+---
+
+### T8: Implement typed inspector queries and internal catalogue
+
+**What:** Execute the design from T7. Replace (or wrap) the strategy-based queries with
+`CypherReadQuery` subclasses. Instantiate an internal `QueryCatalogue` inside each inspector.
+Replace `self._run(str)` with `self._executor.read(query, params)`.
+
+**Blocked by:** T7 (design must be decided first), T1 (identifier safety must exist).
+
+**Actions:**
+1. Per the T7 decision: implement the `CypherReadQuery` subclasses for each inspector query
+   (APOC set, pure-Cypher set, Memgraph set). Each subclass:
+   - declares `Params` (empty `BaseModel` for no-arg queries; `class LabelParams(BaseModel):
+     label: str` for parametric ones),
+   - declares `Output` pointing at the relevant `NodeTypeProfile` / `PropertyProfile` / etc.
+     Pydantic model (or a new projection if needed),
+   - implements `build()` using `escape_identifier` from T1 for any label/rel-type interpolation,
+   - implements `materialize()` doing what the inspector's inline field mapping does today.
+2. Instantiate a `QueryCatalogue` at the inspector or extension-package level; register the
+   queries. The inspector's `_run()` private method is replaced by `CypherExecutor.read()`.
+3. Remove `QueryStrategy` Protocol and the two strategy classes (or demote to internal, per T7
+   decision). If option B was chosen in T7, the strategies become private implementation details
+   of the query subclasses' `build()`.
+4. Update `neo4j/inspector.py` and `memgraph/inspector.py` to use the typed queries via the
+   executor. The public `inspect() → GraphProfile` contract is unchanged.
+
+**Tests (`tests/extensions/neo4j/test_inspector_queries.py`,
+`tests/extensions/memgraph/test_inspector_queries.py`):**
+- Each typed query's `build(params)` returns the expected Cypher string (pure, no session).
+- `materialize(fake_row)` returns the expected `NodeTypeProfile` / `PropertyProfile` instance.
+- An injected label string (`"Person) DETACH DELETE (n"`) raises before Cypher is produced
+  (identifier safety via T1 + `escape_identifier`).
+- The inspector's `inspect()` output is byte-for-byte identical to the current output for the
+  same fake session records (no regression).
+
+**Verification:** `inspect()` contract unchanged. Internal catalogue populated. `QueryStrategy`
+Protocol retired or demoted. Full suite green. `mypy src/` clean.
+
+---
+
 ## Success Criteria (epic-level)
 
 - [ ] No generator code path embeds an unvalidated identifier into a Cypher string (T1, T2, audit in T6).
 - [ ] Property keys are model-bound; unknown keys raise a structured error (T3).
 - [ ] Generator can emit E16 `CypherReadQuery`/`CypherWriteQuery` objects that register in
-      `TypedQueryCatalogue` and pass definition-time `$param`↔`Params` validation (T4, T5).
+      `QueryCatalogue` and pass definition-time `$param`↔`Params` validation (T4, T5).
 - [ ] Every currently-valid generated query is byte-for-byte unchanged (no regression for good input).
 - [ ] ADR-008 records the identifier-safety decision; PRD links it (T6).
-- [ ] `mypy src/` clean; `ruff check` clean; full `pytest` green (PRD Constraint 12 — tests are the
-      specification).
+- [ ] Inspector queries are `CypherReadQuery` subclasses registered in an internal `QueryCatalogue`;
+      `inspect()` contract is unchanged (T7, T8).
+- [ ] `QueryStrategy` Protocol is retired or explicitly demoted to an internal detail; the library
+      uses the same catalogue pattern internally that it proposes to consumers (T7, T8).
+- [ ] ADR-009 records the inspector-query alignment decision (T7).
+- [ ] `mypy src/` clean; `ruff check` clean; full `pytest` green.
 
 ---
 
@@ -300,3 +431,4 @@ ADR-008 exists and is linked. `mypy src/` and full `pytest` green.
 - Query optimisation or execution planning (PRD Constraint 5 — not a query optimizer).
 - Changing the `validate_cypher` parser (separate concern; the generator now produces strings the
   parser already accepts).
+- GQLAlchemy inspector realignment (different driver pattern; tracked separately under E8).

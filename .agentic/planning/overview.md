@@ -43,9 +43,10 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E13 | Typed Query Catalogue Contract | — | **RETIRED → E16** |
 | E14 | SQLAlchemy Backend Extension | High | planned (blocked by E16) |
 | E15 | Typed Cypher Catalogue Backend | — | **RETIRED → E16** |
-| E16 | Query Catalogue — Typed Contract, Cypher Backend, Registry | High | **active** |
-| E17 | CypherGenerator — Injection Hardening & Typed-Query Realignment | High | planned (blocked by E16) |
+| E16 | Query Catalogue — Typed Contract, Cypher Backend, Registry | High | **done** (2026-06-10) |
+| E17 | CypherGenerator — Injection Hardening, Typed-Query Realignment & Inspector Alignment | High | planned (blocked by E16) |
 | E18 | Validation Correctness | High | planned |
+| E19 | YAML Query Authoring — Scoping and Decision | Medium | planned (blocked by E16; needs team scoping session) |
 
 ---
 
@@ -72,7 +73,10 @@ AFTER E16:
   E8   GQLAlchemy Query Catalogue (exposes describe() for uniform introspection)
   E11  Auto-Generated CRUD (emits typed CypherReadQuery/WriteQuery instances)
   E14  SQLAlchemy Backend Extension (implements ReadQuery/WriteQuery/Executor from E16 STEP 1)
-  E17  CypherGenerator hardening (closes identifier-injection risk; aligns generator to E16; unblocks E11)
+  E17  CypherGenerator hardening (closes identifier-injection risk; aligns generator + inspector
+       queries to E16 typed contract; unblocks E11; closes "library does not eat its own cooking")
+  E19  YAML Query Authoring scoping (real consumers exist; needs team session → ADR-009 → optional
+       follow-on build epic)
 
 GATE — requires E1, E2, E3, E4, E8, E9, E10, E11, E16 substantially complete:
   E7   Pilot Readiness
@@ -137,9 +141,10 @@ E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
 - [E10 — Connection Ownership Audit](epics/E10_connection_ownership_audit.md)
 - [E11 — Auto-Generated CRUD Operations](epics/E11_auto_generated_crud.md)
 - [E14 — SQLAlchemy Backend Extension](epics/E14_sqlalchemy_backend_extension.md)
-- **[E16 — Query Catalogue Unified](epics/E16_query_catalogue_unified.md)** ← start here
+- **[E16 — Query Catalogue Unified](epics/E16_query_catalogue_unified.md)** *(done 2026-06-10)*
 - [E17 — CypherGenerator Hardening](epics/E17_cypher_generator_hardening.md)
 - [E18 — Validation Correctness](epics/E18_validation_correctness.md)
+- [E19 — YAML Query Authoring — Scoping and Decision](epics/E19_yaml_query_authoring.md)
 
 ### Retired (do not pick up work from these)
 - [E6 — Cypher Query Catalogue](epics/E6_query_catalogue.md) *(superseded by E16)*
@@ -164,16 +169,53 @@ Items explicitly out of scope for the current phase.
 | Async driver support | Deferred |
 | Historical profile storage / trend analysis | Monitoring platform concern |
 | Rich output models (nested, computed projections) | Post-pilot, after flat types validated |
-| Mixed catalogue (all three backends in one registry) | Requires scoping session |
+| Mixed catalogue (all three backends in one registry) + Catalogue-vs-Repository boundary | Requires scoping session → ADR. See "Scoping task" below. |
+
+---
+
+## Scoping task: Catalogue-vs-Repository boundary + mixed-backend catalogue
+
+> **Type:** Architecture decision (produces an ADR in `.agentic/decisions/`)
+> **Origin:** E16 scoping session 2026-06-10
+> **Status:** not started — do NOT implement until the ADR is recorded
+
+**Two related, unresolved questions surfaced while building the typed catalogue:**
+
+1. **Catalogue vs Repository.** The `QueryCatalogue` is a flat, introspectable
+   registry keyed by query name. Applications adopting this library are expected to
+   also have **repositories** that group operations around an aggregate
+   (`SampleRepository.by_protocol()`, `.create()`). These are different layers, and the
+   working hypothesis (to be confirmed in the ADR) is:
+   - The catalogue is a **build-time registry + introspection** surface, not a runtime
+     dispatch table.
+   - Repositories hold **`ReadPort`s** (bound at the composition root), never call the
+     catalogue by string name (that would re-introduce the string-key dispatch E16
+     deliberately removed).
+   - The two meet only at the composition root: register queries → bind to ports →
+     inject ports into repositories.
+   - *Rejected alternative to record:* repository-calls-catalogue-by-name.
+
+2. **Mixed-backend catalogue.** One `QueryCatalogue` can already hold queries from
+   different backends (proven by `tests/catalogue/test_port_swap.py` and the
+   backend-filtered `describe()`/`names()`). Confirm whether a single mixed registry is
+   the intended end state, or whether per-backend catalogues are preferred, and why.
+
+**Acceptance criteria:**
+- [ ] An ADR in `.agentic/decisions/` records the catalogue-vs-repository layering and
+      the rejected "repository-calls-catalogue-by-name" alternative.
+- [ ] The ADR states the mixed-backend-catalogue decision (single mixed registry vs
+      per-backend) with rationale.
+- [ ] CONTEXT.md / PRD cross-link the ADR if it changes a documented boundary.
+- [ ] No production code is written under this task — it is decision-only.
 
 ---
 
 ## Architecture Note: The Typed Query Catalogue (E16)
 
 E16 builds a **single, typed query catalogue** in strict order:
-**(1) Read/Write generics + Executor → (2) Cypher backend → (3) TypedQueryCatalogue**.
+**(1) Read/Write generics + Executor → (2) Cypher backend → (3) QueryCatalogue**.
 
-| | `TypedQueryCatalogue` (built in E16) |
+| | `QueryCatalogue` (built in E16) |
 |---|---|
 | **Register** | `register_read(MyQuery())` — a typed `ReadQuery`/`WriteQuery` instance |
 | **Call site** | `executor.read(query, params)` → statically typed `list[D]` |

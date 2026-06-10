@@ -38,8 +38,13 @@ E12's `execute(name: str, ...)` Protocol describes the string-key catalogue only
 describe the typed catalogue (which has no string-key dispatch).
 
 ### Resolution adopted by this epic
-- There is **one typed catalogue** (`TypedQueryCatalogue`) and **one typed query contract**
+- There is **one typed catalogue** (`QueryCatalogue`) and **one typed query contract**
   (`ReadQuery`/`WriteQuery`). Built here, cleanly.
+
+  > **Naming note (2026-06-10):** the registry class was implemented as `TypedQueryCatalogue`
+  > and later renamed to **`QueryCatalogue`**. With the untyped string-key catalogue (retired E6)
+  > gone, the "Typed" prefix disambiguated nothing. If a string-key/YAML variant is ever
+  > introduced, the naming split will be decided at that point.
 - The Cypher query is a **Python class** (`CypherReadQuery`) — the typed model wins for the core.
 - The shared surface is `describe() → list[QueryDescription]`, defined up front (not "extracted
   later"). This is what E12 should have been.
@@ -53,7 +58,7 @@ describe the typed catalogue (which has no string-key dispatch).
 ```
 STEP 1 — Typed query generics + Executor   (T1, T2)   no backend, no catalogue, no YAML
 STEP 2 — Cypher concrete backend           (T3, T4)   first real backend; needs STEP 1
-STEP 3 — TypedQueryCatalogue + describe()   (T5, T6)   registry + introspection; needs STEP 1+2
+STEP 3 — QueryCatalogue + describe()   (T5, T6)   registry + introspection; needs STEP 1+2
 STEP 4 — Public API + notebook             (T7)        wire-up; needs STEP 1-3
 ─────────────────────────────────────────────────────────────────────────────────────
 THEN STOP. Decide YAML separately (see OPEN DECISION). Do not build YAML in this epic.
@@ -64,7 +69,7 @@ Package structure produced by STEPs 1–4:
 src/orthograph/catalogue/
   __init__.py        exports the typed contract + catalogue (T7)
   typed.py           ReadQuery, WriteQuery, Executor, ReadPort, QueryBackedReadPort (T1, T2)
-  registry.py        TypedQueryCatalogue, QueryDescription, Backend (T5, T6)
+  registry.py        QueryCatalogue, QueryDescription, Backend (T5, T6)
 src/orthograph/extensions/cypher/
   typed_queries.py   CypherReadQuery, CypherWriteQuery (T3)
   executor.py        CypherExecutor (T4)
@@ -270,7 +275,7 @@ works.
 
 ## STEP 3 — Catalogue + introspection
 
-### T5: `TypedQueryCatalogue` + `QueryDescription`
+### T5: `QueryCatalogue` + `QueryDescription`
 
 **What:** The typed object registry. Registers `ReadQuery`/`WriteQuery` instances; introspects them.
 
@@ -286,7 +291,7 @@ works.
        output_schema: dict[str, Any] | None  # Output.model_json_schema(); None for writes
 
    @dataclass
-   class TypedQueryCatalogue:
+   class QueryCatalogue:
        """Typed object registry. Register ReadQuery/WriteQuery instances; introspect via describe().
        Queries reference their Output model by direct import — NO string-key model lookup."""
        _reads: dict[str, ReadQuery] = field(default_factory=dict)
@@ -305,7 +310,7 @@ works.
    - `output_schema` is `None` for writes, non-None for reads.
    - Two backends implementing the same logical read expose identical `output_schema`.
 
-**Verification:** `from orthograph.catalogue.registry import TypedQueryCatalogue, QueryDescription`
+**Verification:** `from orthograph.catalogue.registry import QueryCatalogue, QueryDescription`
 works.
 
 ---
@@ -338,18 +343,27 @@ works.
 **Actions:**
 1. `src/orthograph/catalogue/__init__.py` exports:
    `ReadQuery`, `WriteQuery`, `Executor`, `ReadPort`, `QueryBackedReadPort`, `Backend`,
-   `TypedQueryCatalogue`, `QueryDescription`.
+   `QueryCatalogue`, `QueryDescription`.
 2. Module docstring: state plainly that this is the **typed query catalogue**; queries are Python
    classes; the return type is statically known; no string-key dispatch; no YAML (see the epic's
    OPEN DECISION).
 3. Notebook `04.01_typed_query_catalogue.ipynb`: define a NodeModel → a CypherReadQuery → register
-   in TypedQueryCatalogue → describe() → run against a FakeGraphSession → swap behind a ReadPort.
+   in QueryCatalogue → describe() → run against a FakeGraphSession → swap behind a ReadPort.
 
-**Verification:** `from orthograph.catalogue import ReadQuery, TypedQueryCatalogue, ReadPort` works.
+**Verification:** `from orthograph.catalogue import ReadQuery, QueryCatalogue, ReadPort` works.
 
 ---
 
-## OPEN DECISION: YAML (do NOT build until resolved)
+## OPEN DECISION: YAML — still open, scoping moved to dedicated epic
+
+> **Status (2026-06-10):** This decision remains open. It was briefly marked closed as option A
+> but that was premature — other projects in the organisation build parameterised Cypher queries
+> from YAML files, so real consumers exist. The decision requires a dedicated scoping session
+> with the team.
+>
+> **Action:** A dedicated epic (E19) has been created to scope the YAML query authoring question
+> against the real consumer requirements. **Do not build any YAML support until E19 produces a
+> decision and records it in an ADR.**
 
 The retired E6 offered a **YAML-configured, string-key Cypher catalogue**
 (`catalogue.execute("name", params, conn)`, queries loaded from a `.yaml` file). It is
@@ -395,10 +409,10 @@ any YAML support.
 - **E8 (GQLAlchemy)** — unblocked by this epic; its catalogue should also expose `describe()`
   (a `QueryDescription` surface) for uniform introspection.
 - **E11 (CRUD)** — generates typed `CypherReadQuery`/`CypherWriteQuery` instances (Python classes),
-  registered into a `TypedQueryCatalogue`. (If YAML option C is later chosen, CRUD could also emit
+  registered into a `QueryCatalogue`. (If YAML option C is later chosen, CRUD could also emit
   YAML — but not until the YAML decision is made.)
 - **E14 (SQLAlchemy backend)** — implements `ReadQuery`/`WriteQuery`/`Executor` from STEP 1 for
   SQLAlchemy; completes the cross-backend port-swap proof in T6.
-- **matterforge E9/E10** — import `ReadQuery`, `WriteQuery`, `TypedQueryCatalogue`, `ReadPort`,
+- **matterforge E9/E10** — import `ReadQuery`, `WriteQuery`, `QueryCatalogue`, `ReadPort`,
   `CypherReadQuery`, `CypherExecutor` from here once landed.
 - **E6, E12, E13, E15** — retired; superseded by this epic.

@@ -78,6 +78,7 @@ class EntityType(Enum):
 
     NODE = "node"
     RELATIONSHIP = "relationship"
+    QUERY = "query"
 
 
 class Severity(Enum):

@@ -18,6 +18,10 @@ from orthograph.extensions.cypher.query_executor import (
     CypherExecutor,
     CypherSyntaxError,
 )
+from orthograph.extensions.cypher.validate_catalogue import (
+    validate_catalogue,
+    validate_catalogue_against_profile,
+)
 
 
 __all__ = [
@@ -34,5 +38,7 @@ __all__ = [
     "PatternInfo",
     "extract_cypher_params",
     "parse_cypher",
+    "validate_catalogue",
+    "validate_catalogue_against_profile",
     "validate_cypher",
 ]
