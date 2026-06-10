@@ -5,7 +5,7 @@ from typing import Optional
 
 import pytest
 
-from orthograph.core.errors import ValidationIssue, ValidationResult
+from orthograph.core.exceptions import ValidationIssue, ValidationResult
 from orthograph.core.graph_data_model import GraphDataModel
 from orthograph.core.node_model import NodeModel
 from orthograph.core.relationship_model import RelationshipModel

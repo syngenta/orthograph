@@ -17,7 +17,7 @@ Or use direct imports::
     from orthograph.visualization.text import profile_to_text, result_to_text
 """
 
-from orthograph.core.errors import ValidationResult
+from orthograph.core.exceptions import ValidationResult
 from orthograph.core.graph_data_model import GraphDataModel
 from orthograph.extensions.models import GraphProfile
 from orthograph.visualization.mermaid import display_mermaid, model_to_mermaid

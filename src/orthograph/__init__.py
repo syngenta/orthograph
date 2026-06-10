@@ -5,8 +5,11 @@ Like Pandera for DataFrames, but for graph data structures.
 
 import importlib.metadata
 
-from orthograph.core.errors import (
+from orthograph.core.exceptions import (
     GraphValidationError,
+    MissingClassVarError,
+    MissingUidFieldError,
+    ModelDefinitionError,
     ValidationIssue,
     ValidationResult,
 )
@@ -44,6 +47,9 @@ __all__ = [
     "ValidationResult",
     "ValidationIssue",
     "GraphValidationError",
+    "ModelDefinitionError",
+    "MissingClassVarError",
+    "MissingUidFieldError",
     # Version
     "__version__",
 ]

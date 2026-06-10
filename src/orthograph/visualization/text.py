@@ -1,6 +1,6 @@
 """Plain text table renderers for GraphDataModel, GraphProfile, ValidationResult."""
 
-from orthograph.core.errors import ValidationIssue, ValidationResult
+from orthograph.core.exceptions import ValidationIssue, ValidationResult
 from orthograph.core.graph_data_model import GraphDataModel
 from orthograph.core.types import CardinalitySpec
 from orthograph.extensions.models import GraphProfile

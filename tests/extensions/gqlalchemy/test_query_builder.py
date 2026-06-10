@@ -137,7 +137,7 @@ class TestValidatedQueryBuilder:
     def test_execute_validated_invalid_query_raises(
         self, model: GraphDataModel, mock_db: MagicMock
     ) -> None:
-        from orthograph.core.errors import GraphValidationError
+        from orthograph.core.exceptions import GraphValidationError
         from orthograph.extensions.gqlalchemy.query_builder import (
             ValidatedQueryBuilder,
         )

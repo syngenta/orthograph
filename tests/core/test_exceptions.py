@@ -1,8 +1,8 @@
-"""Tests for orthograph.core.errors -- structured validation error reporting."""
+"""Tests for orthograph.core.exceptions -- validation value-objects and errors."""
 
 import pytest
 
-from orthograph.core.errors import (
+from orthograph.core.exceptions import (
     GraphValidationError,
     ValidationIssue,
     ValidationResult,

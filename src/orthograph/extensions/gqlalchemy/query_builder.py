@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from orthograph.core.errors import ValidationResult
+from orthograph.core.exceptions import ValidationResult
 from orthograph.core.graph_data_model import GraphDataModel
 from orthograph.extensions.gqlalchemy.result_adapter import (
     validate_gqa_result,

@@ -29,7 +29,10 @@ from orthograph.extensions.cypher.bindings import (
     NoIdentifiers,
     NoParams,
 )
-from orthograph.extensions.cypher.exceptions import CypherQueryDefinitionError
+from orthograph.extensions.cypher.exceptions import (
+    CypherIdentifierError,
+    CypherQueryDefinitionError,
+)
 
 
 class ReleasedYearParams(BaseModel):
@@ -527,7 +530,7 @@ def test_injected_identifier_value_raises_before_cypher_produced() -> None:
     build(), before any Cypher string is produced.
     """
     query = NodesByLabel(identifiers={"label": "x`) DETACH DELETE (n //"})
-    with pytest.raises(ValueError, match="label"):
+    with pytest.raises(CypherIdentifierError, match="label"):
         query.build(NoParams())
 
 
@@ -549,5 +552,5 @@ def test_rel_type_field_resolves_to_relationship_type_kind() -> None:
         def materialize(self, raw: dict[str, Any]) -> Movie:
             return Movie(title=raw["n.title"], released=raw["n.released"])
 
-    with pytest.raises(ValueError, match="relationship type"):
+    with pytest.raises(CypherIdentifierError, match="relationship type"):
         RelByType(identifiers={"rel_type": "ACTED IN"}).build(NoParams())

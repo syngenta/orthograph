@@ -11,8 +11,12 @@ from orthograph.extensions.cypher.bindings import (
 )
 from orthograph.extensions.cypher.exceptions import (
     CypherError,
+    CypherIdentifierError,
+    CypherModelValidationError,
     CypherQueryDefinitionError,
     CypherSyntaxError,
+    CypherUnknownLabelError,
+    CypherUnknownPropertyError,
 )
 from orthograph.extensions.cypher.generator import CypherGenerator
 from orthograph.extensions.cypher.identifiers import (
@@ -39,12 +43,16 @@ __all__ = [
     "CypherError",
     "CypherExecutor",
     "CypherGenerator",
+    "CypherIdentifierError",
+    "CypherModelValidationError",
     "CypherParserStrategy",
     "CypherQuery",
     "CypherQueryDefinitionError",
     "CypherQueryInfo",
     "CypherReadQuery",
     "CypherSyntaxError",
+    "CypherUnknownLabelError",
+    "CypherUnknownPropertyError",
     "CypherWriteQuery",
     "GraphglotParser",
     "NoIdentifiers",

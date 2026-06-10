@@ -10,7 +10,7 @@ from graphglot.dialect import Dialect
 from graphglot.lineage import LineageAnalyzer
 from graphglot.lineage.models import BindingKind, LineageGraph
 
-from orthograph.core.errors import ValidationIssue, ValidationResult
+from orthograph.core.exceptions import ValidationIssue, ValidationResult
 from orthograph.core.graph_data_model import GraphDataModel
 from orthograph.core.types import EntityType, Severity
 

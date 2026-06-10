@@ -5,6 +5,7 @@ Pure string rules; no model, no generator, no session.
 
 import pytest
 
+from orthograph.extensions.cypher.exceptions import CypherIdentifierError
 from orthograph.extensions.cypher.identifiers import (
     escape_identifier,
     is_safe_identifier,
@@ -39,12 +40,12 @@ def test_validate_identifier_returns_safe_name() -> None:
 
 
 def test_validate_identifier_raises_on_unsafe_mentioning_kind() -> None:
-    with pytest.raises(ValueError, match="property key"):
+    with pytest.raises(CypherIdentifierError, match="property key"):
         validate_identifier("x`y", kind="property key")
 
 
 def test_validate_identifier_rejects_injection() -> None:
-    with pytest.raises(ValueError, match="label"):
+    with pytest.raises(CypherIdentifierError, match="label"):
         validate_identifier("x) DETACH DELETE (n //", kind="label")
 
 

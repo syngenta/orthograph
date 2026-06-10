@@ -104,6 +104,8 @@ tests/extensions/memgraph/test_inspector_queries.py    NEW (T7, T8)
 
 ### T1: `identifiers.py` — validate and escape Cypher identifiers
 
+> **STATUS: Implemented.**
+
 **What:** A small, pure module that is the single authority on whether a string is a safe Cypher
 identifier, and on how to render one. No generator logic, no model — just string rules. This is the
 seam every interpolation must pass through.
@@ -140,6 +142,8 @@ seam every interpolation must pass through.
 ---
 
 ### T2: Route every generator interpolation through `validate_identifier`
+
+> **STATUS: Implemented.**
 
 **What:** Make identifier safety total in the generator without changing the output for any
 currently-valid query. Every f-string that embeds a label, relationship type, or property key must
@@ -269,6 +273,25 @@ inspector queries with per-call labels).
 
 ### T3: Property keys resolved against the model, not the input dict
 
+> **STATUS: Done (2026-06-10).** Resolved decisions:
+> - **Error type: dedicated `CypherError` subclasses** in
+>   `src/orthograph/extensions/cypher/exceptions.py` —
+>   `CypherUnknownPropertyError` (undeclared property key),
+>   `CypherUnknownLabelError` (unknown node/relationship label), and
+>   `CypherIdentifierError` (unsafe-identifier grammar guard, raised by
+>   `validate_identifier`). All derive from `CypherError`, so a caller can catch the
+>   whole family or a specific subclass. This supersedes the earlier interim
+>   `ValueError` decision; the subclasses are **not** `ValueError` subclasses (clean
+>   hierarchy — callers catch `CypherError`). The `ValidationResult`/`GraphValidationError`
+>   value-object path was not used (those are validator value-objects, not raised
+>   exceptions). The T6 ADR records the final identifier-safety/error policy.
+> - A single private helper `CypherGenerator._check_model_properties(props, entity_cls, label)`
+>   intersects incoming keys with `entity_cls.get_all_property_names()` and raises naming the
+>   offending key and the label/type. Wired into `merge_node`, `create_node`, and `_rel_query`.
+> - `create_node` only checks when the label resolves to a known node type (it accepts arbitrary
+>   labels today via the no-UID `merge_node` fallback); unknown labels still fail loudly via the
+>   `validate_identifier` guard. The T2 `validate_identifier` guard is retained as defence-in-depth.
+
 **What:** Today property keys come from arbitrary `dict` keys. Per PRD Constraint 2 (models are the
 single source of truth), the set of writable properties must be derived from the model, and unknown
 keys must be a structured error — not silently embedded.
@@ -298,6 +321,39 @@ values. `tests/extensions/cypher/` green.
 ## STEP 3 — Typed-query emission
 
 ### T4: `generate_match_by_uid` / `generate_merge` / `generate_create` / `generate_delete` return typed query objects
+
+> **STATUS: Done (2026-06-10).** Resolved decisions:
+> - Methods are named `match_by_uid_query`, `merge_query`, `create_query`,
+>   `delete_by_uid_query` (per the epic's method list at "Methods to add"). They
+>   return E16 `CypherReadQuery` / `CypherWriteQuery` **instances** synthesised
+>   at runtime via `type(...)` with a declarative `cypher_template`, so each
+>   passes E16's class-definition-time `$param` ↔ `Params` alignment check on
+>   construction.
+> - The model-fixed label is baked into `cypher_template` as a `validate_identifier`-checked
+>   literal (`:Person`); the `Identifiers`/`<<placeholder>>` mechanism is NOT used (that is the
+>   per-call-varying inspector case, T8).
+> - `Params` is synthesised with `pydantic.create_model` from the node type's
+>   `get_property_specs()`: UID field only for match/delete, all declared properties for
+>   merge/create. Optional properties stay optional (default carried through); required stay
+>   required. `$param` names equal `Params` field names by construction.
+> - **No-UID node types:** match/merge/delete-by-uid raise `MissingUidFieldError`
+>   (message names `__uid_field__`); `create_query` works without a UID. The
+>   error lives in the new `src/orthograph/core/exceptions.py` (a node having no
+>   UID field is a backend-neutral *model-definition* fault, not a Cypher fault)
+>   and derives from `ModelDefinitionError(TypeError)`. Chosen over the interim
+>   generic `CypherError` and over a silent fallback.
+> - **Error-module rename:** `core/errors.py` merged into `core/exceptions.py`
+>   for symmetry with `extensions/cypher/exceptions.py`; the module now holds
+>   both the validation value-objects (`ValidationResult` family) and the raised
+>   model-definition exceptions (`ModelDefinitionError`, `MissingClassVarError`,
+>   `MissingUidFieldError`). The ad-hoc `TypeError`s in `node_model.py` /
+>   `relationship_model.py` now raise `MissingClassVarError` (still a `TypeError`
+>   subclass, so existing `except TypeError` keeps working).
+> - Write `interpret_result` returns a driver-reported `count` when present, else `1`.
+> - Synthesised read `materialize()` maps `raw["n"]` (the `RETURN n` record) to the `Output`
+>   NodeModel via `model_validate`. T5 (catalogue registration) is already exercised by
+>   `test_generated_queries_register_in_catalogue`.
+
 
 **What:** Add generator methods that return E16 `CypherReadQuery`/`CypherWriteQuery` **instances**
 (or instantiable classes) instead of bare strings, so generated queries register in the

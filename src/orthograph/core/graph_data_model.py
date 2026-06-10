@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Any
 
-from orthograph.core.errors import (
+from orthograph.core.exceptions import (
     GraphValidationError,
     ValidationIssue,
     ValidationResult,

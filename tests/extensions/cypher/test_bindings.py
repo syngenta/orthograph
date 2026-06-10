@@ -21,7 +21,10 @@ from orthograph.extensions.cypher.bindings import (
     render_with_identifiers,
     substitute_identifier_placeholders,
 )
-from orthograph.extensions.cypher.exceptions import CypherQueryDefinitionError
+from orthograph.extensions.cypher.exceptions import (
+    CypherIdentifierError,
+    CypherQueryDefinitionError,
+)
 
 
 def test_empty_models_have_no_fields() -> None:
@@ -110,7 +113,7 @@ def test_render_with_identifiers_rejects_injection() -> None:
     class Ids(BaseModel):
         label: str
 
-    with pytest.raises(ValueError, match="label"):
+    with pytest.raises(CypherIdentifierError, match="label"):
         render_with_identifiers(
             "MATCH (n:`<<label>>`) RETURN n", Ids(label="x) DETACH DELETE (n //")
         )

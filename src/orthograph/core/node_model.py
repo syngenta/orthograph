@@ -4,6 +4,7 @@ from typing import Any, ClassVar, get_type_hints
 
 from pydantic import BaseModel
 
+from orthograph.core.exceptions import MissingClassVarError
 from orthograph.core.types import TypeInfo, resolve_type_info
 
 
@@ -28,7 +29,9 @@ class NodeModel(BaseModel):
             for base in cls.__mro__[1:]
             if base is not NodeModel
         ):
-            raise TypeError(f"{cls.__name__} must define __label__ class variable")
+            raise MissingClassVarError(
+                f"{cls.__name__} must define __label__ class variable"
+            )
 
     @classmethod
     def get_property_specs(cls) -> dict[str, TypeInfo]:

@@ -4,6 +4,7 @@ from typing import Any, ClassVar, get_type_hints
 
 from pydantic import BaseModel
 
+from orthograph.core.exceptions import MissingClassVarError
 from orthograph.core.node_model import NodeModel
 from orthograph.core.types import (
     Cardinality,
@@ -80,4 +81,4 @@ def _check_classvar(cls: type, name: str, expected_type: type) -> None:
         for base in cls.__mro__[1:]
         if base is not RelationshipModel
     ):
-        raise TypeError(f"{cls.__name__} must define {name} class variable")
+        raise MissingClassVarError(f"{cls.__name__} must define {name} class variable")

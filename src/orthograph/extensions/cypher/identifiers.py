@@ -17,6 +17,8 @@ one.
 
 import re
 
+from orthograph.extensions.cypher.exceptions import CypherIdentifierError
+
 
 # Cypher unescaped identifier grammar: letters, digits, underscore; must not
 # start with a digit. Anchored with ``\Z`` (not ``$``) so a trailing newline is
@@ -31,7 +33,7 @@ def is_safe_identifier(name: str) -> bool:
 
 
 def validate_identifier(name: str, *, kind: str) -> str:
-    """Return ``name`` unchanged if safe, else raise ``ValueError``.
+    """Return ``name`` unchanged if safe, else raise ``CypherIdentifierError``.
 
     ``kind`` is one of ``"label"``, ``"relationship type"``, ``"property key"``
     and is used only for the error message. This is the function that
@@ -40,7 +42,7 @@ def validate_identifier(name: str, *, kind: str) -> str:
     """
     if is_safe_identifier(name):
         return name
-    raise ValueError(f"Unsafe Cypher {kind}: {name!r}")
+    raise CypherIdentifierError(f"Unsafe Cypher {kind}: {name!r}")
 
 
 def escape_identifier(name: str) -> str:

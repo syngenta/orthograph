@@ -21,7 +21,7 @@ catalogue invalid — they tell the caller *why* a query could not be checked.
 
 from orthograph.catalogue.registry import QueryCatalogue
 from orthograph.catalogue.typed import Backend
-from orthograph.core.errors import ValidationIssue, ValidationResult
+from orthograph.core.exceptions import ValidationIssue, ValidationResult
 from orthograph.core.graph_data_model import GraphDataModel
 from orthograph.core.types import EntityType, Severity
 from orthograph.extensions.cypher.parser import validate_cypher
