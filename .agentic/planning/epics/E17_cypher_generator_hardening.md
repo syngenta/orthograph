@@ -291,6 +291,16 @@ ADR-008 exists and is linked. `mypy src/` and full `pytest` green.
 
 ## STEP 5 — Inspector query realignment
 
+> **2026-06-10 — scope update (grilling session).** STEP 5 now also absorbs **E18.1** (populate
+> `source_labels`/`target_labels` for Neo4j — delivered as a typed introspection query, not a
+> `QueryStrategy` method) and **Memgraph completeness parity** (counts, cardinality, endpoint
+> labels to Neo4j-equivalent coverage where Memgraph procedures allow; document the rest).
+> The identifier-parameter mechanism this step relies on is recorded in **ADR-010** (declared
+> `Identifiers` group + `<<placeholder>>`); the alignment + parity decision is **ADR-009**.
+> Working notes: `.agentic/reviews/2026-06-10-query-alignment-grilling.md`. T7 may now be partly
+> pre-decided by ADR-009 — reconcile before implementing T8.
+
+
 > **The contradiction this step closes:** the library proposes `CypherReadQuery` +
 > `QueryCatalogue` to third-party consumers, then runs its own inspector queries as raw f-string
 > Cypher strings with no `Params`, no `Output`, no `materialize()`, and no registration. The library

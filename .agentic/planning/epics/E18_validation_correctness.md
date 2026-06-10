@@ -4,7 +4,7 @@
 > **Origin:** Code review 2026-06-09 (review of current branch changes)
 > **Goal:** Fix silent validation failures and API breakage identified in code review
 > **Blocked by:** none
-> **User stories:** 5
+> **User stories:** 4 (was 5 — E18.1 reassigned, see note)
 
 ---
 
@@ -16,29 +16,17 @@ bugs that cause validation checks to silently produce no output; one is a minor
 warning-plumbing issue; one is a breaking public-API removal without a deprecation
 path.
 
+> **2026-06-10 — E18.1 reassigned.** A grilling session (see
+> `.agentic/reviews/2026-06-10-query-alignment-grilling.md`) found that the original
+> E18.1 fix ("add a query method to both `QueryStrategy` implementations") builds on the
+> `QueryStrategy` Protocol that ADR-009 retires. The endpoint-label fix is now delivered as a
+> typed introspection query under the inspector-query alignment work (E17 STEP 5 / ADR-009),
+> alongside Memgraph completeness parity. E18 retains only the four independent cheap fixes
+> below.
+
 ---
 
 ## Tasks
-
-### E18.1: Populate `source_labels` / `target_labels` in `Neo4jInspector._build_rel_profile`
-
-`_build_rel_profile` (`src/orthograph/extensions/neo4j/inspector.py:124-170`) returns
-a `RelationshipTypeProfile` with both `source_labels` and `target_labels` as empty
-sets. This causes `_check_rel_endpoints` (`validation.py:268,288`) to iterate over
-nothing and never emit `INVALID_ENDPOINT` errors for any Neo4j-sourced profile.
-
-The `NetworkxInspector` collects these correctly from graph edges (`inspector.py:84-92`).
-A new query method must be added to both `ApocQueryStrategy` and `CypherQueryStrategy`
-to retrieve start/end node labels for a given relationship type, and the results must
-be stored in the profile.
-
-**Acceptance criteria:**
-- [ ] `_build_rel_profile` sets `source_labels` and `target_labels` from a live Neo4j query
-- [ ] Both `ApocQueryStrategy` and `CypherQueryStrategy` expose the new method
-- [ ] `INVALID_ENDPOINT` violations are emitted when a relationship connects unexpected node labels
-- [ ] Existing validation tests continue to pass
-
----
 
 ### E18.2: Validate `max_degree` in cardinality check
 
