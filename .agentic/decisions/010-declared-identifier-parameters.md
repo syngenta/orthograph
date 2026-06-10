@@ -85,12 +85,26 @@ labels (`:Movie`) remain legal and idiomatic — the mechanism is only for *dyna
   (`orthograph.catalogue.typed.ReadQuery[P, D]`) bakes in no Cypher assumption and is
   unchanged (`build() -> Any` already permits a builder return).
 - **Implementation note (no empty-key tax):** `Identifiers` carries an empty default at the
-  **Cypher base layer** (`CypherReadQuery.Identifiers = _NoIdentifiers`); the generic
+  **Cypher base layer** (`CypherReadQuery.Identifiers = NoIdentifiers`); the generic
   signature stays `ReadQuery[P, D]` / `WriteQuery[P, R]` (two type params, unchanged). A
   value-only query declares no `Identifiers` and is byte-for-byte the E16 query of today. The
   grilling log's "Sketch C" 3-generic-param form (`CypherReadQuery[Identifiers, Params,
   Output]`) is illustrative only and is **rejected** as the implementation shape. This is an
   E17 implementation detail and does not affect the backend-neutrality verdict.
+- **Amendment (2026-06-10, E17 T2.5 implementation):** the two empty defaults are realised as
+  **public** models — `NoParams` and `NoIdentifiers` (exported from
+  `orthograph.extensions.cypher`) — not a private `_NoIdentifiers`. `Identifiers` defaults to
+  `NoIdentifiers` and may be omitted; `Params` is **always declared** (e.g. `Params = NoParams`
+  for a value-only query) because it is the generic type parameter `P` of `ReadQuery[P, D]` and
+  must stay bound for `build(self, params: P)` to remain precisely typed. This is the one
+  honest asymmetry between the groups: `Identifiers` is omittable, `Params` is named. Auto-
+  defaulting `Params` to an empty model (mirroring `Identifiers` fully) was considered and
+  **rejected** — it would leave `P` unbound and reopen E16's accepted "`Params` is mandatory"
+  contract. The call shape is **(a)**: identifier values are bound on the query instance at
+  construction (`MyQuery(identifiers={...})`); `build(self, params)` keeps its single argument
+  and the generic `Executor.read/write` seam in `catalogue/typed.py` is untouched. Kind
+  resolution: an `Identifiers` field named `rel_type` or ending in `_rel_type` validates as a
+  `"relationship type"`, every other field as a `"label"`.
 - **Confirm in code at E8:** the GQLAlchemy query catalogue (E8.1) instantiates a
   `GqlAlchemyReadQuery` with these two groups and a builder-returning `build()`, exercising
   the split in code (tracked as an E8 acceptance criterion).

@@ -29,7 +29,7 @@ from orthograph.extensions.cypher import (
     CypherWriteQuery,
     validate_catalogue,
 )
-from orthograph.extensions.cypher.base_models import CypherQuery
+from orthograph.extensions.cypher.bindings import CypherQuery
 
 
 class Movie(NodeModel):

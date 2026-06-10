@@ -18,11 +18,8 @@ only syntax check and ensures no malformed Cypher reaches the database.
 from typing import Any, Callable, cast
 
 from orthograph.catalogue.typed import D, Executor, P, R, ReadQuery, WriteQuery
+from orthograph.extensions.cypher.exceptions import CypherSyntaxError
 from orthograph.extensions.cypher.parser import parse_cypher
-
-
-class CypherSyntaxError(Exception):
-    """Raised when a Cypher string produced by build() does not parse."""
 
 
 class CypherExecutor(Executor):

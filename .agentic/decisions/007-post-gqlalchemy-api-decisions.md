@@ -64,4 +64,4 @@ per-label when Memgraph gives all-at-once) or break the protocol contract
 ## Actions
 
 - Epic/task breakdown: see `planning/overview.md`
-- Detailed specs: see `planning/epics/E1–E4`
+- Detailed specs: see `planning/active_epics/E1–E4`

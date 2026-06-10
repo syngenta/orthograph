@@ -79,4 +79,4 @@ Functions follow `{input_type}_to_{format}`:
 ### Implementation
 
 Implemented on branch `CAST-1224-change-architecture-of-visualization-module`.
-See `planning/epics/E5_visualization.md` for the full implementation record.
+See `planning/archived_epics/E5_visualization.md` for the full implementation record.

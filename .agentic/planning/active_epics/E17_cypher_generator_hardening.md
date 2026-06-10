@@ -175,6 +175,22 @@ generated strings in existing assertions).
 
 ### T2.5: Add the `Identifiers` group + `<<placeholder>>` to the Cypher query bases
 
+> **STATUS: Implemented (2026-06-10).** Resolved decisions:
+> - **Call shape: (a)** — identifier values are bound on the query instance at construction
+>   (`MyQuery(identifiers={...})`); `build(self, params)` keeps its single argument and the
+>   generic `Executor.read/write` seam in `catalogue/typed.py` is untouched. Option (b)
+>   (threading `identifiers` through `build()`/executor) was rejected.
+> - **Kind resolution:** an `Identifiers` field named `rel_type` or ending in `_rel_type`
+>   validates as a `"relationship type"`; every other field as a `"label"`.
+> - **Empty defaults are public:** `NoParams` and `NoIdentifiers` (exported from
+>   `orthograph.extensions.cypher`), not a private `_NoIdentifiers`. `Identifiers` defaults to
+>   `NoIdentifiers` and may be omitted; `Params` is **always declared** (`Params = NoParams`
+>   for a value-only query) because it is the generic `P` and must stay bound. Auto-defaulting
+>   `Params` was rejected (would unbind `P`, reopen E16's "Params mandatory" contract). See the
+>   ADR-010 amendment (2026-06-10).
+> - Dependency `cypher/identifiers.py` (T1: `validate_identifier`) was implemented as part of
+>   this work (it did not yet exist).
+
 **What:** Realise ADR-010 (Accepted 2026-06-10) in `cypher/base_models.py`. A typed Cypher query
 gains a second declared parameter group, `Identifiers`, whose fields are *validated safe
 identifiers* (labels / relationship types) spliced into the `cypher_template` via a distinct
@@ -186,15 +202,15 @@ queries (T4) and inspector queries (T8) carry a *dynamic* label while staying de
 - **The generic base `orthograph.catalogue.typed.ReadQuery[P, D]` / `WriteQuery[P, R]` is NOT
   modified.** No third generic parameter. `Identifiers` is added only at the Cypher layer.
 - `Identifiers` has an **empty default** at the Cypher base
-  (`Identifiers: ClassVar[type[BaseModel]] = _NoIdentifiers`, where `_NoIdentifiers` is an empty
-  `BaseModel`). A query that declares no `Identifiers` and uses no `<<placeholder>>` is
+  (`Identifiers: ClassVar[type[BaseModel]] = NoIdentifiers`, where `NoIdentifiers` is a public
+  empty `BaseModel`). A query that declares no `Identifiers` and uses no `<<placeholder>>` is
   byte-for-byte the E16 query of today — no new boilerplate, no behaviour change.
 - The grilling-log "Sketch C" 3-generic-param form is **rejected** — do not implement it.
 
 **Actions (in `src/orthograph/extensions/cypher/base_models.py`):**
-1. Define `_NoIdentifiers(BaseModel)` (empty) and add
-   `Identifiers: ClassVar[type[BaseModel]] = _NoIdentifiers` to **both** `CypherReadQuery` and
-   `CypherWriteQuery`.
+1. Define public `NoParams(BaseModel)` and `NoIdentifiers(BaseModel)` (both empty) and add
+   `Identifiers: ClassVar[type[BaseModel]] = NoIdentifiers` to **both** `CypherReadQuery` and
+   `CypherWriteQuery`. (`NoParams` is the canonical empty `Params` a value-only query declares.)
 2. Add `extract_cypher_identifiers(cypher) -> set[str]` mirroring `extract_cypher_params` but for
    the `<<name>>` delimiter (regex e.g. `re.compile(r"<<(\w+)>>")`). Keep it separate from
    `_PARAM_PATTERN` so `$value` and `<<name>>` never collide.
@@ -226,7 +242,7 @@ queries (T4) and inspector queries (T8) carry a *dynamic* label while staying de
 
 **Tests (extend `tests/extensions/cypher/test_base_models.py`):**
 - A query with empty default `Identifiers` and only `$value` placeholders is unchanged from E16
-  (existing tests still pass; add one asserting `Identifiers is _NoIdentifiers` by default).
+  (existing tests still pass; add one asserting `Identifiers is NoIdentifiers` by default).
 - A query declaring `Identifiers = {label: str}` and `cypher_template` with `` `<<label>>` ``
   builds: `build(...)` returns the cypher with the validated label spliced in and the `$value`
   dict for `Params`.

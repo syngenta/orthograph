@@ -47,6 +47,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E17 | CypherGenerator — Injection Hardening, Typed-Query Realignment & Inspector Alignment | High | planned (blocked by E16) |
 | E18 | Validation Correctness | High | planned |
 | E19 | YAML Query Authoring — Scoping and Decision | Medium | planned (blocked by E16; needs team scoping session) |
+| E20 | Technical Debt — Error Hierarchy & Library Logging | Medium | planned (independent; cross-cutting) |
 
 ---
 
@@ -59,6 +60,7 @@ INDEPENDENT — can start immediately:
   E3   Documentation & Onboarding
   E9   GQLAlchemy Client Review [HITL]
   E16  Query Catalogue (unified — replaces E6/E12/E13/E15; unblocks E8/E11/E14/matterforge)
+  E20  Tech Debt: error hierarchy + library logging (cross-cutting; coordinate edits)
 
 AFTER E2:
   E4   Extension Robustness
@@ -113,6 +115,8 @@ E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
 - **E2** — Code Deduplication (unblocks E4)
 - **E3** — Documentation (no dependencies)
 - **E1** — API Ergonomics (independent)
+- **E20** — Tech Debt: error hierarchy + library logging (independent; cross-cutting — coordinate
+  with epics editing the same modules)
 
 ### Wave 2 (after Wave 1)
 - **E8** — GQLAlchemy Query Catalogue (after E16)
@@ -129,28 +133,37 @@ E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
 
 ## Epic Files
 
-### Active
-- [E1 — API Ergonomics](epics/E1_api_ergonomics.md)
-- [E2 — Code Deduplication](epics/E2_code_deduplication.md)
-- [E3 — Documentation](epics/E3_documentation.md)
-- [E4 — Extension Robustics](epics/E4_extension_robustness.md)
-- [E5 — Visualization](epics/E5_visualization.md) *(done)*
-- [E7 — Pilot Readiness](epics/E7_pilot_readiness.md)
-- [E8 — GQLAlchemy Query Catalogue](epics/E8_gqlalchemy_query_catalogue.md)
-- [E9 — GQLAlchemy Client Review](epics/E9_gqlalchemy_client_review.md)
-- [E10 — Connection Ownership Audit](epics/E10_connection_ownership_audit.md)
-- [E11 — Auto-Generated CRUD Operations](epics/E11_auto_generated_crud.md)
-- [E14 — SQLAlchemy Backend Extension](epics/E14_sqlalchemy_backend_extension.md)
-- **[E16 — Query Catalogue Unified](epics/E16_query_catalogue_unified.md)** *(done 2026-06-10)*
-- [E17 — CypherGenerator Hardening](epics/E17_cypher_generator_hardening.md)
-- [E18 — Validation Correctness](epics/E18_validation_correctness.md)
-- [E19 — YAML Query Authoring — Scoping and Decision](epics/E19_yaml_query_authoring.md)
+Active epics live in [`active_epics/`](active_epics/); completed and retired epics are moved to
+[`archived_epics/`](archived_epics/) (do not pick up work from archived epics).
 
-### Retired (do not pick up work from these)
-- [E6 — Cypher Query Catalogue](epics/E6_query_catalogue.md) *(superseded by E16)*
-- [E12 — Shared Catalogue Interface](epics/E12_shared_catalogue_interface.md) *(superseded by E16)*
-- [E13 — Typed Query Catalogue Contract](epics/E13_typed_query_catalogue_contract.md) *(superseded by E16)*
-- [E15 — Typed Cypher Catalogue Backend](epics/E15_typed_cypher_backend.md) *(superseded by E16)*
+### Active — [`active_epics/`](active_epics/)
+- [E1 — API Ergonomics](active_epics/E1_api_ergonomics.md)
+- [E2 — Code Deduplication](active_epics/E2_code_deduplication.md)
+- [E3 — Documentation](active_epics/E3_documentation.md)
+- [E4 — Extension Robustness](active_epics/E4_extension_robustness.md)
+- [E7 — Pilot Readiness](active_epics/E7_pilot_readiness.md)
+- [E8 — GQLAlchemy Query Catalogue](active_epics/E8_gqlalchemy_query_catalogue.md)
+- [E9 — GQLAlchemy Client Review](active_epics/E9_gqlalchemy_client_review.md)
+- [E10 — Connection Ownership Audit](active_epics/E10_connection_ownership_audit.md)
+- [E11 — Auto-Generated CRUD Operations](active_epics/E11_auto_generated_crud.md)
+- [E14 — SQLAlchemy Backend Extension](active_epics/E14_sqlalchemy_backend_extension.md)
+- [E17 — CypherGenerator Hardening](active_epics/E17_cypher_generator_hardening.md)
+- [E18 — Validation Correctness](active_epics/E18_validation_correctness.md)
+- [E19 — YAML Query Authoring — Scoping and Decision](active_epics/E19_yaml_query_authoring.md)
+- [E20 — Technical Debt: Error Hierarchy & Library Logging](active_epics/E20_tech_debt_errors_logging.md)
+
+### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
+
+**Done:**
+- [E5 — Visualization](archived_epics/E5_visualization.md) *(done 2026-04-15)*
+- [E16 — Query Catalogue Unified](archived_epics/E16_query_catalogue_unified.md) *(done 2026-06-10)*
+
+**Retired (superseded by E16):**
+- [E6 — Cypher Query Catalogue](archived_epics/E6_query_catalogue.md)
+- [E12 — Shared Catalogue Interface](archived_epics/E12_shared_catalogue_interface.md)
+- [E13 — Typed Query Catalogue Contract](archived_epics/E13_typed_query_catalogue_contract.md)
+- [E15 — Typed Cypher Catalogue Backend](archived_epics/E15_typed_cypher_backend.md)
+
 
 ---
 

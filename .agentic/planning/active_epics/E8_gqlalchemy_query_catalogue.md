@@ -59,8 +59,10 @@ builder calls. **This task confirms ADR-010's split in code.**
 **Actions (new file `src/orthograph/extensions/gqlalchemy/base_models.py`):**
 1. `GqlAlchemyReadQuery(ReadQuery[P, D])` and `GqlAlchemyWriteQuery(WriteQuery[P, R])` with
    `backend = Backend.GQLALCHEMY` and an empty-default `Identifiers: ClassVar[type[BaseModel]] =
-   _NoIdentifiers` (mirroring the Cypher base; the generic `typed.py` signature stays `[P, D]` —
-   do NOT add a third generic param).
+   NoIdentifiers` (the public empty model from `orthograph.extensions.cypher`, mirroring the
+   Cypher base; the generic `typed.py` signature stays `[P, D]` — do NOT add a third generic
+   param). A value-only query declares `Params = NoParams` (also public, reused from the Cypher
+   layer); `Params` stays mandatory because it is the generic `P`.
 2. `build(self, params: P) -> Any` is **abstract / author-implemented** here (unlike the Cypher
    declarative default): the author writes the builder expression. Document the convention that
    `build()` must call `validate_identifier(value, kind=...)` on every `Identifiers` field before

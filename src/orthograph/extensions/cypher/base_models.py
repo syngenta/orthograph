@@ -41,49 +41,84 @@ Two authoring styles are supported:
     - A ``UserWarning`` is emitted at class-definition time to surface these
       trade-offs. Suppress with ``warnings.filterwarnings`` if intentional.
 
+Two declared parameter groups
+------------------------------
+
+A typed Cypher query declares **two** parameter groups, both Pydantic models:
+
+  * ``Params`` — values. Each field maps 1:1 to a ``$value`` placeholder and is
+    substituted *by the driver*.
+  * ``Identifiers`` — labels / relationship types. Cypher cannot parameterise
+    identifiers, so each ``Identifiers`` field maps 1:1 to a distinct,
+    collision-proof ``<<name>>`` placeholder which is *validated and spliced
+    into the query text* by ``build()`` via ``validate_identifier`` (the
+    safe-identifier grammar). ``$value`` and ``<<name>>`` never collide — they
+    use independent patterns and independent models.
+
+``Identifiers`` is **opt-in with an empty default** (``NoIdentifiers``). A
+query that declares no ``Identifiers`` and uses no ``<<placeholder>>`` is
+byte-for-byte a plain value-only query — no boilerplate, no behaviour change.
+
+For symmetry, ``NoParams`` is the canonical empty *value* model: a query that
+takes no ``$value`` parameters declares ``Params = NoParams`` rather than
+hand-rolling an empty ``BaseModel``. ``Params`` is always declared (it is the
+generic type parameter ``P``), whereas ``Identifiers`` may be omitted — the
+only honest difference between the two groups.
+
+**Call shape (identifiers bound at construction).** ``Identifiers`` values are
+passed to the query *constructor* and validated/stored on the instance;
+``build(self, params)`` keeps its single-argument signature and the generic
+``Executor.read/write`` seam in ``orthograph.catalogue.typed`` is unchanged
+(``CypherExecutor`` is not touched). The alternative — threading an
+``identifiers`` argument through ``build()`` and the executor — was rejected to
+keep that seam stable::
+
+    class NodesByLabel(CypherReadQuery[NoParams, NodeRow]):
+        class Identifiers(BaseModel):
+            label: str
+        Params = NoParams
+        Output = NodeRow
+        name = "nodes_by_label"
+        cypher_template = "MATCH (n:`<<label>>`) RETURN n"
+        def materialize(self, raw): ...
+
+    query = NodesByLabel(identifiers={"label": "Person"})
+    cypher, params = query.build(NoParams())
+    # -> ("MATCH (n:`Person`) RETURN n", {})
+
+**Kind resolution.** Each ``Identifiers`` field is validated with a ``kind``
+derived from its name: a field named ``rel_type`` or ending in ``_rel_type`` is
+a ``"relationship type"``; every other field is a ``"label"``.
+
 Lives alongside ``generator.py`` and ``parser.py`` — it does not replace them.
 
 No database driver is imported here: ``build()`` and ``materialize()`` stay
 pure. The only I/O seam is ``CypherExecutor`` (see ``query_executor.py``).
 """
 
-import re
 import warnings
 from abc import abstractmethod
 from typing import Any, ClassVar, Generic, cast
 
+from graphglot.error import GraphGlotError
 from pydantic import BaseModel
 
 from orthograph.catalogue.typed import Backend, D, P, R, ReadQuery, WriteQuery
+from orthograph.extensions.cypher.bindings import (
+    CypherQuery,
+    NoIdentifiers,
+    check_placeholder_alignment,
+    render_with_identifiers,
+    substitute_identifier_placeholders,
+)
+from orthograph.extensions.cypher.exceptions import CypherQueryDefinitionError
 from orthograph.extensions.cypher.parser import parse_cypher
 
 
-CypherQuery = tuple[str, dict[str, Any]]
-"""A built Cypher query: the Cypher string and its parameter dict."""
-
-
-class CypherQueryDefinitionError(TypeError):
-    """Raised at class-definition time when a declarative query's contract is violated.
-
-    Possible causes:
-
-    - ``cypher_template`` is empty or not a string.
-    - ``cypher_template`` does not parse under the Cypher dialect.
-    - ``cypher_template`` uses ``$param`` placeholders not declared on ``Params``.
-    - ``Params`` declares a field with no matching ``$param`` placeholder.
-
-    Inherits ``TypeError`` for backward compatibility with code that catches
-    definition-time type errors generically.
-    """
-
-
-# A Cypher named parameter: ``$name`` where name is an identifier.
-_PARAM_PATTERN = re.compile(r"\$(\w+)")
-
-
-def extract_cypher_params(cypher: str) -> set[str]:
-    """Return the set of ``$name`` parameter placeholders used in a Cypher string."""
-    return set(_PARAM_PATTERN.findall(cypher))
+# Dummy identifier swapped in for ``<<name>>`` placeholders before the dialect
+# parse (``<<name>>`` is not valid Cypher); a legal identifier so the rest of
+# the template is still dialect-checked.
+_PARSE_PLACEHOLDER = "__IDENT__"
 
 
 def _validate_declarative_cypher(cls: type) -> None:
@@ -94,9 +129,12 @@ def _validate_declarative_cypher(cls: type) -> None:
 
       1. ``cypher_template`` must be a non-empty string.
       2. The Cypher must parse under the dialect (syntax / dialect compliance).
-      3. Every ``$param`` placeholder must correspond to a field on ``Params``,
-         and every ``Params`` field must correspond to a ``$param`` placeholder
-         (a strict 1:1 mapping).
+         ``<<name>>`` identifier placeholders are substituted with a safe dummy
+         identifier before parsing, so the rest of the template is still
+         dialect-checked. (This is the only step that needs the parser.)
+      3. Every ``$param`` ↔ a ``Params`` field and every ``<<name>>`` ↔ an
+         ``Identifiers`` field, both strict 1:1 (delegated to the parser-free
+         ``check_placeholder_alignment`` in ``bindings``).
 
     Raises ``CypherQueryDefinitionError`` listing every problem found.
     """
@@ -120,40 +158,24 @@ def _validate_declarative_cypher(cls: type) -> None:
         )
         return
 
-    problems: list[str] = []
-
     if not isinstance(cypher, str) or not cypher.strip():
         raise CypherQueryDefinitionError(
             f"{cls.__name__}: cypher_template must be a non-empty string"
         )
 
+    problems: list[str] = []
+
+    parseable = substitute_identifier_placeholders(cypher, _PARSE_PLACEHOLDER)
     try:
-        parse_cypher(cypher)
-    except Exception as exc:  # graphglot raises various parse errors
+        parse_cypher(parseable)
+    except (GraphGlotError, ValueError) as exc:
+        # graphglot raises GraphGlotError subclasses (ParseError, TokenError,
+        # ...) for malformed Cypher; parse_cypher itself raises ValueError on
+        # empty input. Anything else (e.g. a programming error in the parser) is
+        # a bug here, not "cypher does not parse", so it is left to propagate.
         problems.append(f"cypher does not parse: {exc}")
 
-    params_model = getattr(cls, "Params", None)
-    if isinstance(params_model, type) and issubclass(params_model, BaseModel):
-        declared = set(params_model.model_fields.keys())
-        used = extract_cypher_params(cypher)
-        missing = used - declared
-        if missing:
-            problems.append(
-                f"cypher_template uses parameter(s) "
-                f"{sorted('$' + m for m in missing)} not declared on "
-                f"{params_model.__name__}"
-            )
-        # Params fields map 1:1 to $placeholders. A declared field with no
-        # matching placeholder is dead input — usually a rename/typo where the
-        # placeholder changed but the field did not — and is silently ignored
-        # at runtime. Fail fast.
-        unused = declared - used
-        if unused:
-            problems.append(
-                f"{params_model.__name__} declares field(s) "
-                f"{sorted('$' + u for u in unused)} with no matching placeholder "
-                f"in cypher_template"
-            )
+    problems.extend(check_placeholder_alignment(cls, cypher))
 
     if problems:
         raise CypherQueryDefinitionError(f"{cls.__name__}: " + "; ".join(problems))
@@ -174,6 +196,13 @@ class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
 
     Imperative style — leave ``cypher_template`` unset and implement ``build()``.
 
+    A query may declare an ``Identifiers`` model and reference its fields as
+    ``<<name>>`` placeholders; the identifier values are bound at construction
+    (``MyQuery(identifiers={"label": "Person"})``) and spliced — after
+    ``validate_identifier`` — into the template by ``build()``. ``Identifiers``
+    defaults to the empty ``NoIdentifiers``; a query that declares none and
+    uses no ``<<placeholder>>`` renders byte-for-byte unchanged.
+
     ``build()`` returns ``(cypher, params)`` — a Cypher string and the parameter
     dict the driver substitutes. ``materialize()`` maps a single graph record
     dict (keys like ``"m.title"``) to the declared ``Output`` model.
@@ -183,17 +212,31 @@ class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
 
     backend = Backend.CYPHER
     cypher_template: ClassVar[str]
+    Identifiers: ClassVar[type[BaseModel]] = NoIdentifiers
+
+    def __init__(self, identifiers: BaseModel | dict[str, Any] | None = None) -> None:
+        """Bind and validate this query's ``Identifiers`` values.
+
+        ``identifiers`` accepts an ``Identifiers`` instance, a mapping, or
+        ``None`` (the empty default). Per the chosen call shape, the values live
+        on the instance; ``build(self, params)`` keeps its single-argument
+        signature and the generic ``Executor`` seam is unchanged.
+        """
+        identifiers = {} if identifiers is None else identifiers
+        self._identifiers = type(self).Identifiers.model_validate(identifiers)
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         _validate_declarative_cypher(cls)
 
     def build(self, params: P) -> CypherQuery:
-        """Default declarative build: ``(cls.cypher_template, params.model_dump())``.
+        """Default declarative build: ``(rendered_cypher, params.model_dump())``.
 
-        Subclasses that set ``cypher_template`` get this for free. Subclasses
-        that build the query conditionally override this method (and need not
-        set ``cypher_template``).
+        Subclasses that set ``cypher_template`` get this for free. Each
+        ``Identifiers`` field bound at construction is validated and spliced into
+        its ``<<name>>`` slot before the string is returned; with no identifiers
+        the string is returned unchanged. Subclasses that build the query
+        conditionally override this method (and need not set ``cypher_template``).
         """
         cypher = getattr(type(self), "cypher_template", None)
         if cypher is None:
@@ -201,7 +244,8 @@ class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
                 f"{type(self).__name__} sets no 'cypher_template' and does not "
                 "override build()"
             )
-        return cast(str, cypher), params.model_dump()
+        rendered = render_with_identifiers(cast(str, cypher), self._identifiers)
+        return rendered, params.model_dump()
 
     @abstractmethod
     def materialize(self, raw: Any) -> D:
@@ -212,7 +256,9 @@ class CypherWriteQuery(WriteQuery[P, R], Generic[P, R]):
     """Abstract base for typed Cypher write queries.
 
     Supports the same declarative (``cypher_template`` ClassVar) and imperative
-    (override ``build()``) styles as ``CypherReadQuery``.
+    (override ``build()``) styles as ``CypherReadQuery``, and the same
+    ``Identifiers``/``<<placeholder>>`` mechanism (bound at construction,
+    validated and spliced by ``build()``).
 
     ``build()`` returns ``(cypher, params)``. ``interpret_result()`` maps the
     driver's write result into the declared result type ``R``.
@@ -222,20 +268,33 @@ class CypherWriteQuery(WriteQuery[P, R], Generic[P, R]):
 
     backend = Backend.CYPHER
     cypher_template: ClassVar[str]
+    Identifiers: ClassVar[type[BaseModel]] = NoIdentifiers
+
+    def __init__(self, identifiers: BaseModel | dict[str, Any] | None = None) -> None:
+        """Bind and validate this query's ``Identifiers`` values (see
+        ``CypherReadQuery.__init__``).
+        """
+        identifiers = {} if identifiers is None else identifiers
+        self._identifiers = type(self).Identifiers.model_validate(identifiers)
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         _validate_declarative_cypher(cls)
 
     def build(self, params: P) -> CypherQuery:
-        """Default declarative build: ``(cls.cypher_template, params.model_dump())``."""
+        """Default declarative build: ``(rendered_cypher, params.model_dump())``.
+
+        Identifier values bound at construction are validated and spliced into
+        their ``<<name>>`` slots; with no identifiers the string is unchanged.
+        """
         cypher = getattr(type(self), "cypher_template", None)
         if cypher is None:
             raise NotImplementedError(
                 f"{type(self).__name__} sets no 'cypher_template' and does not "
                 "override build()"
             )
-        return cast(str, cypher), params.model_dump()
+        rendered = render_with_identifiers(cast(str, cypher), self._identifiers)
+        return rendered, params.model_dump()
 
     @abstractmethod
     def interpret_result(self, raw: Any) -> R:

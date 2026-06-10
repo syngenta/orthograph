@@ -200,8 +200,8 @@ def test_read_unparseable_cypher_raises_before_session_run() -> None:
     """Unparseable Cypher from build() raises CypherSyntaxError before run()."""
     import warnings
 
-    from orthograph.extensions.cypher import CypherSyntaxError
-    from orthograph.extensions.cypher.base_models import CypherQuery
+    from orthograph.extensions.cypher.bindings import CypherQuery
+    from orthograph.extensions.cypher.exceptions import CypherSyntaxError
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
@@ -230,8 +230,8 @@ def test_write_unparseable_cypher_raises_before_session_run() -> None:
     """If build() produces unparseable Cypher on write, CypherSyntaxError is raised."""
     import warnings
 
-    from orthograph.extensions.cypher import CypherSyntaxError
-    from orthograph.extensions.cypher.base_models import CypherQuery
+    from orthograph.extensions.cypher.bindings import CypherQuery
+    from orthograph.extensions.cypher.exceptions import CypherSyntaxError
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)

@@ -17,18 +17,19 @@ import warnings
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from orthograph.core.node_model import NodeModel
-from orthograph.extensions.cypher import (
-    CypherQueryDefinitionError,
+from orthograph.extensions.cypher.base_models import (
     CypherReadQuery,
     CypherWriteQuery,
 )
-from orthograph.extensions.cypher.base_models import (
+from orthograph.extensions.cypher.bindings import (
     CypherQuery,
-    extract_cypher_params,
+    NoIdentifiers,
+    NoParams,
 )
+from orthograph.extensions.cypher.exceptions import CypherQueryDefinitionError
 
 
 class ReleasedYearParams(BaseModel):
@@ -170,23 +171,6 @@ def test_write_interpret_result() -> None:
     """interpret_result() maps the raw driver result to the declared type."""
     query = CreateMovieCypher()
     assert query.interpret_result(object()) == 1
-
-
-# --- extract_cypher_params helper ---
-
-
-def test_extract_cypher_params_finds_placeholders() -> None:
-    """extract_cypher_params returns the set of $name placeholders in a query."""
-    cypher = (
-        "MATCH (m:Movie {released: $released})<-[:ACTED_IN]-(p:Person) "
-        "WHERE p.name = $name RETURN m"
-    )
-    assert extract_cypher_params(cypher) == {"released", "name"}
-
-
-def test_extract_cypher_params_empty_when_no_params() -> None:
-    """extract_cypher_params returns an empty set when no placeholders are present."""
-    assert extract_cypher_params("MATCH (m:Movie) RETURN m") == set()
 
 
 # --- definition-time validation of declarative cypher_template ---
@@ -395,3 +379,175 @@ def test_imperative_warning_points_to_caller_not_framework() -> None:
     # The warning must originate from THIS test file (the caller), not from
     # base_models.py (the framework) nor abc internals.
     assert caught[0].filename == __file__
+
+
+# --- Declared Identifiers + <<placeholder>> (ADR-010 / E17 T2.5) ------------
+
+
+class LabelIdentifiers(BaseModel):
+    label: str
+
+
+class NodesByLabel(CypherReadQuery[NoParams, Movie]):
+    """Identifier-only read — ``<<label>>`` spliced, no ``$value``."""
+
+    Identifiers = LabelIdentifiers
+    Params = NoParams
+    Output = Movie
+    name = "nodes_by_label"
+    cypher_template = "MATCH (n:`<<label>>`) RETURN n.title, n.released"
+
+    def materialize(self, raw: dict[str, Any]) -> Movie:
+        return Movie(title=raw["n.title"], released=raw["n.released"])
+
+
+def test_value_only_query_has_no_identifiers_by_default() -> None:
+    """A query declaring no Identifiers defaults to the empty NoIdentifiers.
+
+    This is the no-empty-key-tax guarantee: an E16-style value-only query is
+    unchanged.
+    """
+    assert MoviesByYearCypher.Identifiers is NoIdentifiers
+    assert CreateMovieCypher.Identifiers is NoIdentifiers
+
+
+def test_no_params_and_no_identifiers_are_empty_models() -> None:
+    """The canonical empties carry no fields (Params/Identifiers symmetry)."""
+    assert NoParams.model_fields == {}
+    assert NoIdentifiers.model_fields == {}
+
+
+def test_value_only_default_build_is_byte_for_byte_e16() -> None:
+    """With no Identifiers and no <<placeholder>>, build() is exactly E16:
+    ``(cypher_template, model_dump())`` — the splice path is a no-op.
+    """
+    query = MoviesByYearCypher()
+    cypher, params = query.build(ReleasedYearParams(released=1999))
+    assert cypher == MoviesByYearCypher.cypher_template
+    assert params == {"released": 1999}
+
+
+def test_identifier_query_build_splices_validated_label() -> None:
+    """An Identifiers={label} query splices the validated label and returns the
+    $value dict (empty here).
+    """
+    query = NodesByLabel(identifiers={"label": "Person"})
+    cypher, params = query.build(NoParams())
+    assert cypher == "MATCH (n:`Person`) RETURN n.title, n.released"
+    assert params == {}
+
+
+def test_identifier_query_accepts_a_basemodel_instance() -> None:
+    """Construction accepts an Identifiers *instance*, not only a dict."""
+    query = NodesByLabel(identifiers=LabelIdentifiers(label="Person"))
+    cypher, _ = query.build(NoParams())
+    assert cypher == "MATCH (n:`Person`) RETURN n.title, n.released"
+
+
+def test_identifier_query_missing_required_field_raises_at_construction() -> None:
+    """Omitting a required Identifiers field fails validation at construction
+    (the model is validated in __init__, not deferred to build()).
+    """
+    with pytest.raises(ValidationError):
+        NodesByLabel(identifiers={})
+
+
+def test_value_only_query_constructs_with_default_none_identifiers() -> None:
+    """A value-only query constructs with no identifiers argument (None default)
+    and builds unchanged — exercises the ``None`` branch of __init__.
+    """
+    query = MoviesByYearCypher()  # identifiers defaults to None
+    cypher, params = query.build(ReleasedYearParams(released=1999))
+    assert cypher == MoviesByYearCypher.cypher_template
+    assert params == {"released": 1999}
+
+
+def test_identifier_and_value_in_same_template_do_not_collide() -> None:
+    """$value and <<name>> are validated independently and both render."""
+
+    class ReleasedValues(BaseModel):
+        released: int
+
+    class MoviesByLabelAndYear(CypherReadQuery[ReleasedValues, Movie]):
+        Identifiers = LabelIdentifiers
+        Params = ReleasedValues
+        Output = Movie
+        name = "movies_by_label_and_year"
+        cypher_template = (
+            "MATCH (n:`<<label>>` {released: $released}) RETURN n.title, n.released"
+        )
+
+        def materialize(self, raw: dict[str, Any]) -> Movie:
+            return Movie(title=raw["n.title"], released=raw["n.released"])
+
+    query = MoviesByLabelAndYear(identifiers={"label": "Movie"})
+    cypher, params = query.build(ReleasedValues(released=2003))
+    assert cypher == (
+        "MATCH (n:`Movie` {released: $released}) RETURN n.title, n.released"
+    )
+    assert params == {"released": 2003}
+
+
+def test_identifier_placeholder_without_field_raises() -> None:
+    """A <<name>> with no matching Identifiers field raises at definition time."""
+    with pytest.raises(CypherQueryDefinitionError, match=r"<<missing>>.*not declared"):
+
+        class BadIdentRead(CypherReadQuery[NoParams, Movie]):
+            Identifiers = LabelIdentifiers  # declares 'label', not 'missing'
+            Params = NoParams
+            Output = Movie
+            name = "bad_ident_placeholder"
+            cypher_template = "MATCH (n:`<<missing>>`) RETURN n"
+
+            def materialize(self, raw: dict[str, Any]) -> Movie:
+                return Movie(title=raw["t"], released=raw["y"])
+
+
+def test_identifier_field_without_placeholder_raises() -> None:
+    """An Identifiers field with no matching <<name>> raises (1:1, mirroring
+    the unused-$param check).
+    """
+    with pytest.raises(
+        CypherQueryDefinitionError, match=r"<<label>>.*no matching placeholder"
+    ):
+
+        class BadIdentRead(CypherReadQuery[NoParams, Movie]):
+            Identifiers = LabelIdentifiers  # 'label' never referenced
+            Params = NoParams
+            Output = Movie
+            name = "bad_ident_unused"
+            cypher_template = "MATCH (n:Movie) RETURN n"
+
+            def materialize(self, raw: dict[str, Any]) -> Movie:
+                return Movie(title=raw["t"], released=raw["y"])
+
+
+def test_injected_identifier_value_raises_before_cypher_produced() -> None:
+    """An unsafe identifier value is rejected by validate_identifier during
+    build(), before any Cypher string is produced.
+    """
+    query = NodesByLabel(identifiers={"label": "x`) DETACH DELETE (n //"})
+    with pytest.raises(ValueError, match="label"):
+        query.build(NoParams())
+
+
+def test_rel_type_field_resolves_to_relationship_type_kind() -> None:
+    """A field named rel_type is validated as a relationship type; an unsafe
+    value mentions 'relationship type'.
+    """
+
+    class RelTypeIdentifiers(BaseModel):
+        rel_type: str
+
+    class RelByType(CypherReadQuery[NoParams, Movie]):
+        Identifiers = RelTypeIdentifiers
+        Params = NoParams
+        Output = Movie
+        name = "rel_by_type"
+        cypher_template = "MATCH (n)-[r:`<<rel_type>>`]->(m) RETURN n.title, n.released"
+
+        def materialize(self, raw: dict[str, Any]) -> Movie:
+            return Movie(title=raw["n.title"], released=raw["n.released"])
+
+    with pytest.raises(ValueError, match="relationship type"):
+        RelByType(identifiers={"rel_type": "ACTED IN"}).build(NoParams())

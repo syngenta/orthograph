@@ -12,7 +12,7 @@ Routing table. No content lives here — each link points to the single canonica
 | What is the extension contract (inspector ABC, GraphProfile)? | [knowledge/extension-contract.md](knowledge/extension-contract.md) |
 | Why was a specific architectural decision made? | [decisions/](decisions/) — search by title or category |
 | What work is planned and in what order? | [planning/overview.md](planning/overview.md) |
-| What are the tasks for a specific epic? | [planning/epics/](planning/epics/) |
+| What are the tasks for a specific epic? | [planning/active_epics/](planning/active_epics/) (archived: [planning/archived_epics/](planning/archived_epics/)) |
 
 ---
 
@@ -27,7 +27,8 @@ Routing table. No content lives here — each link points to the single canonica
 ├── decisions/                  ← architectural decisions (ADR format, flat numbered)
 ├── planning/                   ← work to do (temporary — migrates to Jira)
 │   ├── overview.md             ← epic index with status and dependency order
-│   └── epics/                  ← one file per epic with tasks
+│   ├── active_epics/           ← one file per in-progress/planned epic with tasks
+│   └── archived_epics/         ← completed and retired epics (do not pick up work)
 └── reviews/                    ← transient session records (do not read unless prompted)
 ```
 
