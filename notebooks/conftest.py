@@ -5,7 +5,8 @@ Controls which notebooks are collected when running:
 
 Notebooks that require a live database are excluded from collection
 unless the corresponding CLI flag is passed (--neo4j, --memgraph).
-The flags are defined in the root conftest.py.
+Those flags are registered in the root ``conftest.py``, which pytest
+loads for every invocation regardless of the target directory.
 
 Usage:
     pytest notebooks/ --nbval-lax              # CI-safe notebooks only

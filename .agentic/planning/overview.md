@@ -35,19 +35,23 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E5 | Visualization Package | High | **done** (2026-04-15) |
 | E6 | Cypher Query Catalogue | — | **RETIRED → E16** |
 | E7 | Pilot Readiness (gate) | High | planned |
-| E8 | GQLAlchemy Query Catalogue | High | planned (blocked by E16, E17 T2.5) |
+| E8 | GQLAlchemy Query Catalogue | High | planned (blocked by E16) |
 | E9 | GQLAlchemy Client Review | High | planned |
 | E10 | Connection Ownership Audit | High | planned |
-| E11 | Auto-Generated CRUD Operations | Medium | planned (blocked by E16) |
+| E11 | Auto-Generated CRUD Operations | Medium | planned (E16 + E17 done — unblocked) |
 | E12 | Shared Catalogue Interface Extraction | — | **RETIRED → E16** |
 | E13 | Typed Query Catalogue Contract | — | **RETIRED → E16** |
 | E14 | SQLAlchemy Backend Extension | Low | planned (not blocking — see E14 note) |
 | E15 | Typed Cypher Catalogue Backend | — | **RETIRED → E16** |
 | E16 | Query Catalogue — Typed Contract, Cypher Backend, Registry | High | **done** (2026-06-10) |
-| E17 | CypherGenerator — Injection Hardening, Typed-Query Realignment & Inspector Alignment | High | planned (blocked by E16) |
+| E17 | CypherGenerator — Injection Hardening, Typed-Query Realignment & Inspector Alignment | High | **done** (2026-06-10) |
 | E18 | Validation Correctness | High | planned |
 | E19 | YAML Query Authoring — Scoping and Decision | Medium | planned (blocked by E16; needs team scoping session) |
 | E20 | Technical Debt — Error Hierarchy & Library Logging | Medium | planned (independent; cross-cutting) |
+| E21 | Technical Debt — E2E Test Activation & Configuration | Medium | finding recorded; needs scoping session (independent) |
+| E22 | E2E Test Coverage Audit & Shared-Contract Test Layer | Medium | requirements recorded; blocked by E21 for live-DB paths; NetworkX path independent |
+| E23 | Inspector Backend-Behaviour Injection Interface | Medium | finding recorded; needs scoping session → ADR (independent; coordinate with E4) |
+| E24 | Synthetic Graph Data Generation | Medium | planned (blocked by E23) |
 
 ---
 
@@ -61,24 +65,33 @@ INDEPENDENT — can start immediately:
   E9   GQLAlchemy Client Review [HITL]
   E16  Query Catalogue (unified — replaces E6/E12/E13/E15; unblocks E8/E11/E14/matterforge)
   E20  Tech Debt: error hierarchy + library logging (cross-cutting; coordinate edits)
+  E21  Tech Debt: e2e test activation & configuration (needs scoping session)
+  E23  Inspector backend-behaviour injection interface (needs scoping session → ADR; coordinate
+       with E4)
+
+AFTER E23:
+  E24  Synthetic Graph Data Generation (profile-driven mode requires consistent GraphProfile
+       statistics contract across backends)
 
 AFTER E2:
   E4   Extension Robustness
 
-AFTER E9:
-  E10  Connection Ownership Audit
+AFTER E21:
+  E22  E2E test coverage audit + shared-contract layer (live-DB paths; NetworkX path independent)
 
 AFTER E10:
   E4   Extension Robustness (connection patterns settled)
 
 AFTER E16:
   E8   GQLAlchemy Query Catalogue (exposes describe() for uniform introspection)
-  E11  Auto-Generated CRUD (emits typed CypherReadQuery/WriteQuery instances)
+  E11  Auto-Generated CRUD (emits typed CypherReadQuery/WriteQuery instances) — also needed E17 (done)
   E14  SQLAlchemy Backend Extension (implements ReadQuery/WriteQuery/Executor from E16 STEP 1)
-  E17  CypherGenerator hardening (closes identifier-injection risk; aligns generator + inspector
-       queries to E16 typed contract; unblocks E11; closes "library does not eat its own cooking")
   E19  YAML Query Authoring scoping (real consumers exist; needs team session → ADR-009 → optional
        follow-on build epic)
+
+DONE:
+  E17  CypherGenerator hardening (closed identifier-injection risk; aligned generator + inspector
+       queries to E16 typed contract; unblocked E11; closed "library does not eat its own cooking")
 
 GATE — requires E1, E2, E3, E4, E8, E9, E10, E11, E16 substantially complete:
   E7   Pilot Readiness
@@ -100,7 +113,7 @@ E9 [HITL] ──► E10 ──┘                               │
 E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
                 ├──► E11 (CRUD auto-generation)      │
                 ├──► E14 (SQLAlchemy backend)        │
-                └──► E17 (generator hardening) ──► E11
+                └──► E17 ✓ (generator hardening) ──► E11
                                                      ▼
                                                     E7 (gate)
 ```
@@ -122,9 +135,9 @@ E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
 - **E8** — GQLAlchemy Query Catalogue (after E16)
 - **E10** — Connection Ownership Audit (after E9)
 - **E4** — Extension Robustness (after E2 + E10)
-- **E11** — Auto-Generated CRUD Operations (after E16 + E17)
+- **E11** — Auto-Generated CRUD Operations (after E16 + E17 — both done)
 - **E14** — SQLAlchemy Backend Extension (after E16, only when a second project needs it)
-- **E17** — CypherGenerator Hardening (after E16; unblocks E11)
+- **E17** — CypherGenerator Hardening — **done** (2026-06-10)
 
 ### Wave 3 (after Wave 2)
 - **E7** — Pilot Readiness gate (after all others)
@@ -147,16 +160,20 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E10 — Connection Ownership Audit](active_epics/E10_connection_ownership_audit.md)
 - [E11 — Auto-Generated CRUD Operations](active_epics/E11_auto_generated_crud.md)
 - [E14 — SQLAlchemy Backend Extension](active_epics/E14_sqlalchemy_backend_extension.md)
-- [E17 — CypherGenerator Hardening](active_epics/E17_cypher_generator_hardening.md)
 - [E18 — Validation Correctness](active_epics/E18_validation_correctness.md)
 - [E19 — YAML Query Authoring — Scoping and Decision](active_epics/E19_yaml_query_authoring.md)
 - [E20 — Technical Debt: Error Hierarchy & Library Logging](active_epics/E20_tech_debt_errors_logging.md)
+- [E21 — Technical Debt: E2E Test Activation & Configuration](active_epics/E21_tech_debt_e2e_test_config.md)
+- [E22 — E2E Test Coverage Audit & Shared-Contract Test Layer](active_epics/E22_e2e_test_coverage_audit.md)
+- [E23 — Inspector Backend-Behaviour Injection Interface](active_epics/E23_inspector_backend_interface.md)
+- [E24 — Synthetic Graph Data Generation](active_epics/E24_synthetic_graph_data_generation.md)
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 
 **Done:**
 - [E5 — Visualization](archived_epics/E5_visualization.md) *(done 2026-04-15)*
 - [E16 — Query Catalogue Unified](archived_epics/E16_query_catalogue_unified.md) *(done 2026-06-10)*
+- [E17 — CypherGenerator Hardening](archived_epics/E17_cypher_generator_hardening.md) *(done 2026-06-10)*
 
 **Retired (superseded by E16):**
 - [E6 — Cypher Query Catalogue](archived_epics/E6_query_catalogue.md)
@@ -259,5 +276,6 @@ after validating the split against the GQLAlchemy builder surface — see
 Execution order this implies:
 1. **E17 T1** (`validate_identifier`) → **E17 T2.5** (adds `Identifiers` + `<<placeholder>>` to the
    Cypher bases; generic `typed.py` untouched) → **E17 T4/T8** (generator + inspector use it).
+   **— E17 complete (2026-06-10); ADR-008/009/010 Accepted.**
 2. **E8** implements the same split in the GQLAlchemy builder dialect (`Identifiers` → builder
    args; `Params` → `.where()` bindings), confirming ADR-010 in code.

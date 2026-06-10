@@ -92,6 +92,21 @@ def test_memgraph_inspect_produces_profile() -> None:
                 },
             ],
         ),
+        # endpoint_labels for ACTED_IN (E18.1 parity — called before constraints)
+        mock_execute_query(
+            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
+        ),
+        # cardinality for ACTED_IN against Person
+        mock_execute_query(
+            [
+                {
+                    "min_degree": 1,
+                    "max_degree": 3,
+                    "avg_degree": 2.0,
+                    "sample_size": 10,
+                },
+            ],
+        ),
         # constraints
         mock_execute_query(
             [
@@ -132,6 +147,12 @@ def test_memgraph_inspect_produces_profile() -> None:
     # Check rel profile
     acted_in = profile.rel_type_profiles["ACTED_IN"]
     assert "role" in acted_in.property_profiles
+
+    # E17 parity: source/target labels now populated
+    assert acted_in.source_labels == {"Person"}
+    assert acted_in.target_labels == {"Movie"}
+    assert acted_in.cardinality_stats is not None
+    assert acted_in.cardinality_stats.sample_size == 10
 
     # Constraints
     assert len(profile.constraints) == 1
@@ -195,6 +216,21 @@ def test_memgraph_validate_database(model: GraphDataModel) -> None:
                     "mandatory": True,
                     "propertyName": "role",
                     "propertyTypes": ["String"],
+                },
+            ],
+        ),
+        # endpoint_labels for ACTED_IN (parity query — before constraints)
+        mock_execute_query(
+            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
+        ),
+        # cardinality for ACTED_IN against Person
+        mock_execute_query(
+            [
+                {
+                    "min_degree": 0,
+                    "max_degree": 5,
+                    "avg_degree": 2.0,
+                    "sample_size": 50,
                 },
             ],
         ),

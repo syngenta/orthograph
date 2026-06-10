@@ -1,26 +1,39 @@
 """Root pytest configuration: DB integration markers and CLI options.
 
-This conftest registers custom markers for tests that require a live
-database connection and provides CLI flags to opt in to running them:
+Must live at the project root (not inside ``tests/``) because
+``notebooks/conftest.py`` depends on the ``--neo4j`` and ``--memgraph`` flags
+registered here.  Pytest determines the rootdir from ``pyproject.toml`` and
+loads this file for every invocation — including ``pytest notebooks/`` — so
+flags and skip-logic defined here are always available.
 
-    pytest                        # unit tests only (default)
+Usage:
+
+    pytest                        # unit tests only (default, CI)
     pytest --neo4j                # also run tests that need Neo4j
     pytest --memgraph             # also run tests that need Memgraph
     pytest --neo4j --memgraph     # run all DB-dependent tests
 
-Tests are marked with ``@pytest.mark.neo4j`` or ``@pytest.mark.memgraph``.
-Without the corresponding CLI flag, marked tests are automatically skipped.
+Connection options (all have defaults that match a stock local install):
 
-For notebook execution via nbval, the same flags are respected by
-``notebooks/conftest.py`` which controls collection of DB-requiring
-notebooks.
+    --neo4j-uri         bolt://localhost:7687
+    --neo4j-user        neo4j
+    --neo4j-password    password
+    --memgraph-uri      bolt://localhost:7688
+    --memgraph-user     (empty)
+    --memgraph-password (empty)
+
+Markers are declared in ``pyproject.toml`` under
+``[tool.pytest.ini_options] markers``; they are not re-registered here to
+avoid duplication.
 """
+
+from typing import Any, Generator
 
 import pytest
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Add --neo4j and --memgraph CLI flags."""
+    """Register --neo4j / --memgraph flags and their connection-detail options."""
     parser.addoption(
         "--neo4j",
         action="store_true",
@@ -33,13 +46,35 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run tests that require a live Memgraph instance.",
     )
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    """Register custom markers."""
-    config.addinivalue_line("markers", "neo4j: test requires a live Neo4j database")
-    config.addinivalue_line(
-        "markers", "memgraph: test requires a live Memgraph database"
+    parser.addoption(
+        "--neo4j-uri",
+        default="bolt://localhost:7687",
+        help="Bolt URI for the Neo4j instance (default: bolt://localhost:7687).",
+    )
+    parser.addoption(
+        "--neo4j-user",
+        default="neo4j",
+        help="Neo4j username (default: neo4j).",
+    )
+    parser.addoption(
+        "--neo4j-password",
+        default="password",
+        help="Neo4j password (default: password).",
+    )
+    parser.addoption(
+        "--memgraph-uri",
+        default="bolt://localhost:7688",
+        help="Bolt URI for the Memgraph instance (default: bolt://localhost:7688).",
+    )
+    parser.addoption(
+        "--memgraph-user",
+        default="",
+        help="Memgraph username (default: empty).",
+    )
+    parser.addoption(
+        "--memgraph-password",
+        default="",
+        help="Memgraph password (default: empty).",
     )
 
 
@@ -54,7 +89,70 @@ def pytest_collection_modifyitems(
     skip_memgraph = pytest.mark.skip(reason="needs --memgraph flag to run")
 
     for item in items:
-        if "neo4j" in item.keywords and not run_neo4j:
+        # Gate on the *applied marker*, not ``item.keywords``.  ``item.keywords``
+        # also contains the names of the test's parent directories, so matching
+        # "neo4j"/"memgraph" there would skip every pure unit test living under
+        # ``tests/extensions/{neo4j,memgraph}/`` even when it carries no marker.
+        markers = {marker.name for marker in item.iter_markers()}
+        if "neo4j" in markers and not run_neo4j:
             item.add_marker(skip_neo4j)
-        if "memgraph" in item.keywords and not run_memgraph:
+        if "memgraph" in markers and not run_memgraph:
             item.add_marker(skip_memgraph)
+
+
+@pytest.fixture(scope="session")
+def neo4j_driver(request: pytest.FixtureRequest) -> Generator[Any, None, None]:
+    """Session-scoped Neo4j driver.
+
+    Opened once per test session; closed at teardown.  Reads connection
+    details from the CLI options registered above.
+    """
+    from neo4j import GraphDatabase
+
+    uri = request.config.getoption("--neo4j-uri")
+    user = request.config.getoption("--neo4j-user")
+    password = request.config.getoption("--neo4j-password")
+    driver = GraphDatabase.driver(uri, auth=(user, password))
+    try:
+        yield driver
+    finally:
+        driver.close()
+
+
+@pytest.fixture()
+def neo4j_clean(neo4j_driver: Any) -> Generator[None, None, None]:
+    """Wipe all nodes and relationships before and after each test.
+
+    Ensures every test starts from a clean slate and leaves no residue,
+    regardless of test execution order.
+    """
+    neo4j_driver.execute_query("MATCH (n) DETACH DELETE n")
+    yield
+    neo4j_driver.execute_query("MATCH (n) DETACH DELETE n")
+
+
+@pytest.fixture(scope="session")
+def memgraph_driver(request: pytest.FixtureRequest) -> Generator[Any, None, None]:
+    """Session-scoped Memgraph driver.
+
+    Opened once per test session; closed at teardown.
+    """
+    from neo4j import GraphDatabase
+
+    uri = request.config.getoption("--memgraph-uri")
+    user = request.config.getoption("--memgraph-user")
+    password = request.config.getoption("--memgraph-password")
+    auth = (user, password) if user else ("", "")
+    driver = GraphDatabase.driver(uri, auth=auth)
+    try:
+        yield driver
+    finally:
+        driver.close()
+
+
+@pytest.fixture()
+def memgraph_clean(memgraph_driver: Any) -> Generator[None, None, None]:
+    """Wipe all nodes and relationships before and after each test."""
+    memgraph_driver.execute_query("MATCH (n) DETACH DELETE n")
+    yield
+    memgraph_driver.execute_query("MATCH (n) DETACH DELETE n")

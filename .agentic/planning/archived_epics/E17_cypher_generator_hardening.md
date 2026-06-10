@@ -1,5 +1,14 @@
 # Epic E17: CypherGenerator — Injection Hardening and Typed-Query Realignment
 
+> **STATUS: DONE (2026-06-10).** All nine tasks (T1, T2, T2.5, T3, T4, T5, T6, T7, T8) are
+> implemented and verified against the source. Identifier injection is closed (validate-and-reject,
+> model-bound keys — ADR-008); the generator emits E16 typed `CypherReadQuery`/`CypherWriteQuery`
+> objects that register in a `QueryCatalogue`; the Neo4j and Memgraph inspectors are realigned to
+> typed queries via an internal catalogue (the `QueryStrategy` Protocol is retired) and now populate
+> `source_labels`/`target_labels` (absorbed E18.1) with Memgraph cardinality/endpoint parity.
+> Decisions: ADR-008 (identifier safety), ADR-009 (inspector alignment), ADR-010 (declared
+> identifiers) — all Accepted. This file is archived; do not pick up work from it.
+
 > **Priority:** High
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Blocked by:** E16 (provides the typed `CypherReadQuery`/`CypherWriteQuery` contract this epic
@@ -422,7 +431,18 @@ hand-written ones.
 
 ### T6: Injection audit, generator docstrings, and ADR-008
 
-**What:** Make the security posture explicit and durable.
+> **STATUS: Done (2026-06-10).** Resolved decisions:
+> - Injection audit test added as a dedicated `# Injection audit (T6)` block in
+>   `tests/extensions/cypher/test_generator.py`. Covers every string-returning
+>   and typed-query-returning method across label, relationship type, and
+>   property key injection positions. This block is the durable regression guard.
+> - `generator.py` module docstring was already updated in T4 to state the safety
+>   policy plainly (values parameterised; identifiers validate-and-reject).
+> - ADR-008 written: `.agentic/decisions/008-cypher-identifier-safety.md`.
+>   Records the conditional risk, the chosen policy, and the rejected alternative
+>   (backtick-escaping by default).
+> - Cross-linked from PRD's "Query Governance — Cypher" capability bullet and
+>   from the PRD's Key Architectural References section.
 
 **Actions:**
 1. Add a focused **injection audit test** (`test_generator.py`) that asserts: for every

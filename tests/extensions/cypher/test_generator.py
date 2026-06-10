@@ -852,3 +852,263 @@ def test_model_validation_error_message_lists_issues(model: GraphDataModel):
         gen._assert_valid(bad)
     msg = str(exc_info.value)
     assert "NoSuchLabel" in msg
+
+
+# --- Injection audit (T6) --------------------------------------------------
+#
+# Regression guard: every string-returning and typed-query-returning generator
+# method must raise before producing any Cypher when given an injection attempt
+# in a label, relationship type, or property key position.
+#
+# The policy (documented in ADR-008 and in generator.py):
+#   * Values are always parameterised ($name) — values are never injection risks.
+#   * Identifiers (labels, relationship types, property keys) are validated
+#     against the model AND the Cypher identifier grammar.  Unsafe identifiers
+#     are rejected loudly; they are never escaped-and-embedded.
+#   * Two defence layers fire in order:
+#     1. Model-property guard (CypherUnknownPropertyError) — key not declared.
+#     2. Identifier-grammar guard (CypherIdentifierError) — unsafe characters.
+#   Both layers reject before any Cypher string is assembled.
+#
+# This test block is the authoritative proof that the risk is closed.  It must
+# be kept green; any regression here is a security regression.
+
+
+_INJECTION_LABEL = "Person) DETACH DELETE (n"
+_INJECTION_REL_TYPE = "ACTED_IN) DELETE n //"
+_INJECTION_PROP_KEY = "x} ) DETACH DELETE n //"
+
+
+class _AuditNode(NodeModel):
+    """Minimal node type for the injection-audit parametric tests."""
+
+    __label__ = "AuditNode"
+    __uid_field__ = "uid"
+
+    uid: str
+    safe_prop: str
+
+
+class _AuditRel(RelationshipModel):
+    __label__ = "AUDIT_REL"
+    __source_type__ = _AuditNode
+    __target_type__ = _AuditNode
+
+    weight: int
+
+
+@pytest.fixture()
+def audit_model() -> GraphDataModel:
+    return GraphDataModel(
+        name="Audit",
+        node_types=[_AuditNode],
+        relationship_types=[_AuditRel],
+    )
+
+
+# ---- merge_node: label and property key injection ----
+
+
+def test_audit_merge_node_rejects_injected_label(audit_model: GraphDataModel):
+    """merge_node: injected label raises before any Cypher is produced."""
+    gen = CypherGenerator(audit_model)
+    # Unknown label → CypherUnknownLabelError (model guard fires first).
+    with pytest.raises((CypherUnknownLabelError, CypherIdentifierError)):
+        gen.merge_node({"__label__": _INJECTION_LABEL, "uid": "x", "safe_prop": "y"})
+
+
+def test_audit_merge_node_rejects_injected_property_key(audit_model: GraphDataModel):
+    """merge_node: injected property key raises before any Cypher is produced."""
+    gen = CypherGenerator(audit_model)
+    with pytest.raises((CypherUnknownPropertyError, CypherIdentifierError)):
+        gen.merge_node({"__label__": "AuditNode", "uid": "x", _INJECTION_PROP_KEY: "y"})
+
+
+# ---- create_node: label and property key injection ----
+
+
+def test_audit_create_node_rejects_injected_label(audit_model: GraphDataModel):
+    """create_node: injected label raises before any Cypher is produced."""
+    gen = CypherGenerator(audit_model)
+    with pytest.raises((CypherUnknownPropertyError, CypherIdentifierError)):
+        gen.create_node({"__label__": _INJECTION_LABEL, "uid": "x"})
+
+
+def test_audit_create_node_rejects_injected_property_key(audit_model: GraphDataModel):
+    """create_node: injected property key raises before any Cypher is produced."""
+    gen = CypherGenerator(audit_model)
+    with pytest.raises((CypherUnknownPropertyError, CypherIdentifierError)):
+        gen.create_node(
+            {"__label__": "AuditNode", "uid": "x", _INJECTION_PROP_KEY: "y"}
+        )
+
+
+# ---- create_relationship / merge_relationship: label and property key ----
+
+
+def test_audit_create_relationship_rejects_injected_rel_type(
+    audit_model: GraphDataModel,
+):
+    """create_relationship: injected relationship type raises before any Cypher."""
+    gen = CypherGenerator(audit_model)
+    with pytest.raises((CypherUnknownLabelError, CypherIdentifierError)):
+        gen.create_relationship(
+            {
+                "__label__": _INJECTION_REL_TYPE,
+                "__source_uid__": "x",
+                "__target_uid__": "y",
+            }
+        )
+
+
+def test_audit_create_relationship_rejects_injected_property_key(
+    audit_model: GraphDataModel,
+):
+    """create_relationship: injected property key raises before any Cypher."""
+    gen = CypherGenerator(audit_model)
+    with pytest.raises((CypherUnknownPropertyError, CypherIdentifierError)):
+        gen.create_relationship(
+            {
+                "__label__": "AUDIT_REL",
+                "__source_uid__": "x",
+                "__target_uid__": "y",
+                _INJECTION_PROP_KEY: 1,
+            }
+        )
+
+
+def test_audit_merge_relationship_rejects_injected_rel_type(
+    audit_model: GraphDataModel,
+):
+    """merge_relationship: injected relationship type raises before any Cypher."""
+    gen = CypherGenerator(audit_model)
+    with pytest.raises((CypherUnknownLabelError, CypherIdentifierError)):
+        gen.merge_relationship(
+            {
+                "__label__": _INJECTION_REL_TYPE,
+                "__source_uid__": "x",
+                "__target_uid__": "y",
+            }
+        )
+
+
+def test_audit_merge_relationship_rejects_injected_property_key(
+    audit_model: GraphDataModel,
+):
+    """merge_relationship: injected property key raises before any Cypher."""
+    gen = CypherGenerator(audit_model)
+    with pytest.raises((CypherUnknownPropertyError, CypherIdentifierError)):
+        gen.merge_relationship(
+            {
+                "__label__": "AUDIT_REL",
+                "__source_uid__": "x",
+                "__target_uid__": "y",
+                _INJECTION_PROP_KEY: 1,
+            }
+        )
+
+
+# ---- match_node / match_relationship: injected model-level identifiers ----
+
+
+class _InjectedAuditLabel(NodeModel):
+    __label__ = "AuditNode) DETACH DELETE (n"
+    __uid_field__ = "uid"
+
+    uid: str
+
+
+class _InjectedAuditRelType(RelationshipModel):
+    __label__ = "AUDIT_REL) DELETE n //"
+    __source_type__ = _AuditNode
+    __target_type__ = _AuditNode
+
+
+def test_audit_match_node_rejects_injected_label():
+    """match_node: malicious __label__ raises via identifier guard."""
+    m = GraphDataModel(
+        name="a", node_types=[_InjectedAuditLabel], relationship_types=[]
+    )
+    gen = CypherGenerator(m)
+    with pytest.raises(CypherIdentifierError, match="label"):
+        gen.match_node(_InjectedAuditLabel)
+
+
+def test_audit_match_relationship_rejects_injected_rel_type():
+    """match_relationship: injected rel-type label raises via identifier guard."""
+    m = GraphDataModel(
+        name="a",
+        node_types=[_AuditNode],
+        relationship_types=[_InjectedAuditRelType],
+    )
+    gen = CypherGenerator(m)
+    with pytest.raises(CypherIdentifierError, match="relationship type"):
+        gen.match_relationship(_InjectedAuditRelType)
+
+
+# ---- generate_constraints: injected uid field ----
+
+
+class _InjectedAuditUid(NodeModel):
+    __label__ = "AuditNode"
+    __uid_field__ = "uid) REMOVE n //"
+
+    uid: str
+
+
+def test_audit_generate_constraints_rejects_injected_uid_field():
+    """generate_constraints: malicious __uid_field__ raises before any DDL."""
+    m = GraphDataModel(name="a", node_types=[_InjectedAuditUid], relationship_types=[])
+    gen = CypherGenerator(m)
+    with pytest.raises(CypherIdentifierError, match="property key"):
+        gen.generate_constraints()
+
+
+# ---- Typed-query methods: injected label at synthesis time ----
+
+
+class _InjectedAuditTypedLabel(NodeModel):
+    __label__ = "AuditNode) DETACH DELETE (n"
+    __uid_field__ = "uid"
+
+    uid: str
+
+
+def test_audit_match_by_uid_query_rejects_injected_label():
+    """match_by_uid_query: injected label raises before any typed query is returned."""
+    m = GraphDataModel(
+        name="a", node_types=[_InjectedAuditTypedLabel], relationship_types=[]
+    )
+    gen = CypherGenerator(m)
+    with pytest.raises(CypherIdentifierError, match="label"):
+        gen.match_by_uid_query(_InjectedAuditTypedLabel)
+
+
+def test_audit_merge_query_rejects_injected_label():
+    """merge_query: injected label raises before any typed query is returned."""
+    m = GraphDataModel(
+        name="a", node_types=[_InjectedAuditTypedLabel], relationship_types=[]
+    )
+    gen = CypherGenerator(m)
+    with pytest.raises(CypherIdentifierError, match="label"):
+        gen.merge_query(_InjectedAuditTypedLabel)
+
+
+def test_audit_create_query_rejects_injected_label():
+    """create_query: injected label raises before any typed query is returned."""
+    m = GraphDataModel(
+        name="a", node_types=[_InjectedAuditTypedLabel], relationship_types=[]
+    )
+    gen = CypherGenerator(m)
+    with pytest.raises(CypherIdentifierError, match="label"):
+        gen.create_query(_InjectedAuditTypedLabel)
+
+
+def test_audit_delete_by_uid_query_rejects_injected_label():
+    """delete_by_uid_query: injected label raises before any typed query is returned."""
+    m = GraphDataModel(
+        name="a", node_types=[_InjectedAuditTypedLabel], relationship_types=[]
+    )
+    gen = CypherGenerator(m)
+    with pytest.raises(CypherIdentifierError, match="label"):
+        gen.delete_by_uid_query(_InjectedAuditTypedLabel)

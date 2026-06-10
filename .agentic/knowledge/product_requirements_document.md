@@ -202,7 +202,7 @@ Point-in-time structural analysis of live databases and in-memory graphs.
 Static validation and generation of Cypher queries.
 
 - **[CypherParser / validate_cypher()](../../src/orthograph/extensions/cypher/parser.py)** — parse Cypher AST (via graphglot), validate labels, relationship types, property accesses, and endpoints against a schema
-- **[CypherGenerator](../../src/orthograph/extensions/cypher/generator.py)** — generate MERGE/CREATE/MATCH/constraint statements from schema
+- **[CypherGenerator](../../src/orthograph/extensions/cypher/generator.py)** — generate MERGE/CREATE/MATCH/constraint statements from schema; identifier safety policy: validate-and-reject (see [ADR-008](../decisions/008-cypher-identifier-safety.md))
 - **CypherQueryCatalogue** — registry of named, parameterised Cypher queries with declared parameter types and expected result types; loadable from YAML or populated at runtime; validates queries at registration and results at execution *(not yet implemented)*
 
 #### Query Governance — GQLAlchemy
@@ -298,6 +298,7 @@ Both paths (Cypher and GQLAlchemy) are needed for v0.1.0 to validate the extensi
 - [ADR-001: Core architecture and naming conventions](../decisions/001-architecture-and-naming.md)
 - [ADR-003: Two-phase architecture (inspect then validate)](../decisions/003-extensions-two-phase-architecture.md)
 - [ADR-006: GQLAlchemy integration as optional extension](../decisions/006-gqlalchemy-integration.md)
+- [ADR-008: Cypher identifier safety — validate-and-reject policy](../decisions/008-cypher-identifier-safety.md)
 
 ### Open Design Work Required
 

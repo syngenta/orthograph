@@ -9,7 +9,6 @@ from orthograph.core.graph_data_model import GraphDataModel
 from orthograph.core.node_model import NodeModel
 from orthograph.core.relationship_model import RelationshipModel
 from orthograph.extensions.neo4j import Neo4jInspector, validate_database
-from orthograph.extensions.neo4j.queries import ApocQueryStrategy, CypherQueryStrategy
 
 from .conftest import mock_execute_query
 
@@ -48,29 +47,42 @@ def model() -> GraphDataModel:
     )
 
 
-# --- Strategy detection ---
+# --- APOC auto-detection ---
 
 
-def test_neo4j_detect_apoc_strategy() -> None:
+def test_neo4j_detect_apoc_true() -> None:
+    """_detect_apoc returns True when apoc.meta procedures are present."""
     driver = MagicMock()
     driver.execute_query.return_value = mock_execute_query(
         [{"cnt": 5}],
         ["cnt"],
     )
     inspector = Neo4jInspector(driver)
-    strategy = inspector._detect_strategy()
-    assert isinstance(strategy, ApocQueryStrategy)
+    assert inspector._detect_apoc() is True
 
 
-def test_neo4j_detect_cypher_strategy() -> None:
+def test_neo4j_detect_apoc_false() -> None:
+    """_detect_apoc returns False when no apoc.meta procedures are present."""
     driver = MagicMock()
     driver.execute_query.return_value = mock_execute_query(
         [{"cnt": 0}],
         ["cnt"],
     )
     inspector = Neo4jInspector(driver)
-    strategy = inspector._detect_strategy()
-    assert isinstance(strategy, CypherQueryStrategy)
+    assert inspector._detect_apoc() is False
+
+
+def test_neo4j_use_apoc_flag_skips_detection() -> None:
+    """use_apoc=True skips the SHOW PROCEDURES detection call."""
+    driver = MagicMock()
+    # Single response for node_labels (inspect starts immediately)
+    driver.execute_query.return_value = mock_execute_query([], [])
+    inspector = Neo4jInspector(driver, use_apoc=True)
+    inspector._ensure_catalogue()
+    assert inspector._use_apoc is True
+    # No SHOW PROCEDURES call was made
+    for call in driver.execute_query.call_args_list:
+        assert "SHOW PROCEDURES" not in str(call)
 
 
 # --- Labels ---
@@ -81,7 +93,7 @@ def test_neo4j_inspect_labels() -> None:
 
     call_count = 0
     responses = [
-        # _detect_strategy
+        # _detect_apoc (SHOW PROCEDURES)
         mock_execute_query([{"cnt": 3}], ["cnt"]),
         # node_labels
         mock_execute_query(
@@ -129,7 +141,11 @@ def test_neo4j_inspect_labels() -> None:
                 },
             ],
         ),
-        # cardinality for ACTED_IN against Movie (sorted labels: Movie first)
+        # endpoint_labels for ACTED_IN (E18.1 — queried first to identify sources)
+        mock_execute_query(
+            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
+        ),
+        # cardinality for ACTED_IN against Person (confirmed source label)
         mock_execute_query(
             [
                 {
@@ -167,7 +183,7 @@ def test_neo4j_inspect_produces_profile() -> None:
 
     call_count = 0
     responses = [
-        # _detect_strategy (APOC available)
+        # _detect_apoc (APOC available)
         mock_execute_query([{"cnt": 3}], ["cnt"]),
         # node_labels
         mock_execute_query(
@@ -236,7 +252,11 @@ def test_neo4j_inspect_produces_profile() -> None:
                 },
             ],
         ),
-        # cardinality for ACTED_IN against Movie
+        # endpoint_labels for ACTED_IN (E18.1 — queried first to identify sources)
+        mock_execute_query(
+            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
+        ),
+        # cardinality for ACTED_IN against Person (confirmed source label)
         mock_execute_query(
             [
                 {
@@ -294,6 +314,10 @@ def test_neo4j_inspect_produces_profile() -> None:
     assert acted_in.cardinality_stats is not None
     assert acted_in.cardinality_stats.sample_size == 50
 
+    # E18.1: endpoint labels now populated
+    assert acted_in.source_labels == {"Person"}
+    assert acted_in.target_labels == {"Movie"}
+
     # Constraints
     assert len(profile.constraints) == 1
     assert profile.constraints[0].constraint_type == "UNIQUENESS"
@@ -307,7 +331,7 @@ def test_neo4j_validate_database(model: GraphDataModel) -> None:
 
     call_count = 0
     responses = [
-        # _detect_strategy
+        # _detect_apoc
         mock_execute_query([{"cnt": 1}], ["cnt"]),
         # node_labels
         mock_execute_query(
@@ -376,7 +400,11 @@ def test_neo4j_validate_database(model: GraphDataModel) -> None:
                 },
             ],
         ),
-        # cardinality for ACTED_IN against Movie
+        # endpoint_labels for ACTED_IN (E18.1 — queried first to identify sources)
+        mock_execute_query(
+            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
+        ),
+        # cardinality for ACTED_IN against Person (confirmed source label)
         mock_execute_query(
             [
                 {
