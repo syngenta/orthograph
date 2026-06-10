@@ -1,12 +1,17 @@
 # Epic E14: SQLAlchemy Backend Extension
 
-> **Priority:** High
+> **Priority:** Low (was High)
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Goal:** Add `extensions/sqlalchemy/` to orthograph: `SqlReadQuery`, `SqlWriteQuery`, and
-> `SqlExecutor` that implement the E13 typed contract, giving matterforge a relational backend
+> `SqlExecutor` that implement the E16 typed contract, giving any project a relational backend
 > with the same introspection/port surface as graph backends.
-> **Blocked by:** E13 (typed contract must exist first)
-> **Unblocks:** matterforge Phase 2 (E7–E10)
+> **Blocked by:** E16 (typed contract must exist first) — **E16 is already implemented**
+> **Status note:** The matterforge PoC has verified that `SqlReadQuery`/`SqlWriteQuery`/
+> `SqlExecutor` work correctly when implemented in matterforge itself (as
+> `matterforge/persistence/sql/query_bases.py`) rather than in orthograph. This epic is
+> therefore **not blocking matterforge Phase 2**. It becomes relevant only when a second project
+> needs reusable SQLAlchemy query bases and it would be wasteful to reimplement them.
+> **Decision:** implement when there is a second consumer, not before.
 
 ---
 

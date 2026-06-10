@@ -41,7 +41,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E11 | Auto-Generated CRUD Operations | Medium | planned (blocked by E16) |
 | E12 | Shared Catalogue Interface Extraction | — | **RETIRED → E16** |
 | E13 | Typed Query Catalogue Contract | — | **RETIRED → E16** |
-| E14 | SQLAlchemy Backend Extension | High | planned (blocked by E16) |
+| E14 | SQLAlchemy Backend Extension | Low | planned (not blocking — see E14 note) |
 | E15 | Typed Cypher Catalogue Backend | — | **RETIRED → E16** |
 | E16 | Query Catalogue — Typed Contract, Cypher Backend, Registry | High | **done** (2026-06-10) |
 | E17 | CypherGenerator — Injection Hardening, Typed-Query Realignment & Inspector Alignment | High | planned (blocked by E16) |
@@ -119,7 +119,7 @@ E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
 - **E10** — Connection Ownership Audit (after E9)
 - **E4** — Extension Robustness (after E2 + E10)
 - **E11** — Auto-Generated CRUD Operations (after E16 + E17)
-- **E14** — SQLAlchemy Backend Extension (after E16)
+- **E14** — SQLAlchemy Backend Extension (after E16, only when a second project needs it)
 - **E17** — CypherGenerator Hardening (after E16; unblocks E11)
 
 ### Wave 3 (after Wave 2)
