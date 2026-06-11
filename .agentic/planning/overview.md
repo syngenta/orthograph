@@ -47,7 +47,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E17 | CypherGenerator — Injection Hardening, Typed-Query Realignment & Inspector Alignment | High | **done** (2026-06-10) |
 | E18 | Validation Correctness | High | planned |
 | E19 | YAML Query Authoring — Scoping and Decision | Medium | planned (blocked by E16; needs team scoping session) |
-| E20 | Technical Debt — Error Hierarchy & Library Logging | Medium | planned (independent; cross-cutting) |
+| E20 | Technical Debt | Medium | planned (independent; cross-cutting) |
 | E21 | Technical Debt — E2E Test Activation & Configuration | Medium | finding recorded; needs scoping session (independent) |
 | E22 | E2E Test Coverage Audit & Shared-Contract Test Layer | Medium | requirements recorded; blocked by E21 for live-DB paths; NetworkX path independent |
 | E23 | Inspector Backend-Behaviour Injection Interface | Medium | finding recorded; needs scoping session → ADR (independent; coordinate with E4) |
@@ -64,7 +64,7 @@ INDEPENDENT — can start immediately:
   E3   Documentation & Onboarding
   E9   GQLAlchemy Client Review [HITL]
   E16  Query Catalogue (unified — replaces E6/E12/E13/E15; unblocks E8/E11/E14/matterforge)
-  E20  Tech Debt: error hierarchy + library logging (cross-cutting; coordinate edits)
+  E20  Tech Debt (cross-cutting; coordinate edits)
   E21  Tech Debt: e2e test activation & configuration (needs scoping session)
   E23  Inspector backend-behaviour injection interface (needs scoping session → ADR; coordinate
        with E4)
@@ -128,8 +128,7 @@ E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
 - **E2** — Code Deduplication (unblocks E4)
 - **E3** — Documentation (no dependencies)
 - **E1** — API Ergonomics (independent)
-- **E20** — Tech Debt: error hierarchy + library logging (independent; cross-cutting — coordinate
-  with epics editing the same modules)
+- **E20** — Tech Debt (independent; cross-cutting — coordinate with epics editing the same modules)
 
 ### Wave 2 (after Wave 1)
 - **E8** — GQLAlchemy Query Catalogue (after E16)
@@ -162,7 +161,7 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E14 — SQLAlchemy Backend Extension](active_epics/E14_sqlalchemy_backend_extension.md)
 - [E18 — Validation Correctness](active_epics/E18_validation_correctness.md)
 - [E19 — YAML Query Authoring — Scoping and Decision](active_epics/E19_yaml_query_authoring.md)
-- [E20 — Technical Debt: Error Hierarchy & Library Logging](active_epics/E20_tech_debt_errors_logging.md)
+- [E20 — Technical Debt](active_epics/E20_tech_debt.md)
 - [E21 — Technical Debt: E2E Test Activation & Configuration](active_epics/E21_tech_debt_e2e_test_config.md)
 - [E22 — E2E Test Coverage Audit & Shared-Contract Test Layer](active_epics/E22_e2e_test_coverage_audit.md)
 - [E23 — Inspector Backend-Behaviour Injection Interface](active_epics/E23_inspector_backend_interface.md)

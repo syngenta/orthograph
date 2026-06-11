@@ -1,16 +1,62 @@
-# Epic E20: Technical Debt — Error Hierarchy & Library Logging Discipline
+# Epic E20: Technical Debt
 
 > **Priority:** Medium
 > **Phase:** v0.1.0 — Pilot Readiness
+> **Origin:** E17 refactor session 2026-06-10. General tech-debt bucket — each sub-section
+> records a distinct finding with its own origin date and scope note.
+> **Blocked by:** None — tasks here are independent unless noted. Coordinate with epics
+> actively editing the same modules.
+
+---
+
+## T0: `from __future__ import annotations` — normalise across the codebase
+
+> **Origin:** E8.1 session 2026-06-11
+> **Priority:** Low — cosmetic; no runtime impact on py3.10+
+> **Scope:** `src/` + `tests/`
+
+**Finding.** The import is used inconsistently across the project:
+
+- 8 source files and 7 test files carry it (all in the `gqlalchemy`, `networkx`, and
+  `cypher/exceptions` modules).
+- `cypher/base_models.py` — the primary mirror target — does **not** have it.
+- Only one file (`cypher/exceptions.py`) **strictly requires** it: it imports `ValidationIssue`
+  under `TYPE_CHECKING`, and without deferred evaluation that name would fail at runtime.
+- All other files compile and run fine on py3.10+ without it (PEP 604 `X | Y` unions evaluate
+  at runtime since py3.10; no forward-reference annotations were found).
+- The ruff ruleset (`E,W,F,I`) does not include `UP010` (unnecessary `__future__` import), so
+  tooling neither enforces nor forbids the import today.
+
+**Decision surface.** Three coherent positions:
+
+1. **Remove everywhere except `cypher/exceptions.py`** — matches the `cypher/base_models.py`
+   precedent; rely on py3.10 runtime union support. Enable `ruff UP010` to enforce going forward.
+2. **Add everywhere** — consistent with the majority of `gqlalchemy/` files; costs nothing.
+3. **Leave as-is** — do nothing; inconsistency is a cosmetic annoyance but causes no failures.
+
+**Recommended action (when picked up):**
+1. Decide option 1, 2, or 3 and record the rationale here.
+2. If option 1: run `sed`/ruff-fix to strip the import from all files except
+   `cypher/exceptions.py`; enable `ruff UP010` (add `"UP010"` to `select` in `pyproject.toml`).
+3. If option 2: add the import to the remaining files without it.
+4. Run `pytest` + `mypy src/` + `ruff check` green before closing.
+
+**Acceptance criteria:**
+- [ ] Decision recorded (option 1/2/3) with rationale.
+- [ ] If option 1 or 2: all files consistent; ruff clean; pytest + mypy green.
+- [ ] `cypher/exceptions.py` retains the import regardless of chosen option.
+
+---
+
+## Error Hierarchy & Library Logging Discipline
+
 > **Origin:** E17 refactor session 2026-06-10 (Cypher exception hierarchy introduced; surfaced
 > the absence of a project-wide exception root and any logging convention).
-> **Blocked by:** None — can start immediately. Touches cross-cutting concerns, so coordinate
-> with any epic actively editing the same modules.
 > **Relates to:** PRD Problem Statement ("applications fail silently"), PRD Constraint 1
 > (DB-agnostic core), PRD Constraint 13 (Orthograph never owns a connection — it is a library,
 > not an application), ADR-008 (Cypher identifier safety — raises on unsafe input).
 >
-> **SCOPE NOTE:** This epic establishes two cross-cutting foundations and migrates the existing
+> **SCOPE NOTE:** This section establishes two cross-cutting foundations and migrates the existing
 > code onto them. It does NOT invent new diagnostics features, a metrics system, structured-event
 > emission, or any application-level observability. The library emits diagnostics through the
 > standard `logging` module and raises a coherent exception hierarchy; configuring sinks, levels,
@@ -18,7 +64,7 @@
 
 ---
 
-## Context
+### Context
 
 Two cross-cutting concerns have grown ad-hoc and now warrant a deliberate, one-time foundation:
 
@@ -42,7 +88,7 @@ application-level observability.
 
 ---
 
-## Why This Epic Is Needed
+### Why This Is Needed
 
 - **Catchability.** A consumer should be able to `except OrthographError` to isolate every error
   this library raises from errors raised by their own code or third-party drivers.
@@ -55,7 +101,7 @@ application-level observability.
 
 ---
 
-## Implementation Order (build in this sequence)
+### Implementation Order (build in this sequence)
 
 ```
 STEP 1 — Exception hierarchy        (T1, T2, T3)   define root → adopt in subpackages → migrate raises
@@ -80,9 +126,9 @@ tests/core/test_logging.py                         NEW (T4)
 
 ---
 
-## STEP 1 — Exception hierarchy
+### STEP 1 — Exception hierarchy
 
-### T1: Define the `OrthographError` root and record the decision
+#### T1: Define the `OrthographError` root and record the decision
 
 **What:** A single project-wide base exception that every Orthograph-raised error derives from,
 directly or via a subpackage base.
@@ -107,7 +153,7 @@ directly or via a subpackage base.
 
 ---
 
-### T2: Reparent subpackage bases under the root
+#### T2: Reparent subpackage bases under the root
 
 **What:** Each subpackage that raises domain errors gets (or keeps) a base inheriting
 `OrthographError`.
@@ -128,7 +174,7 @@ clean.
 
 ---
 
-### T3: Migrate bare `raise` sites onto the hierarchy
+#### T3: Migrate bare `raise` sites onto the hierarchy
 
 **What:** Replace bare `raise TypeError/ValueError/Exception(...)` that signal a *library-domain*
 failure with the appropriate hierarchy exception, preserving the message.
@@ -149,9 +195,9 @@ list in the PR). Full `pytest` green; `mypy src/` clean; `ruff check` clean.
 
 ---
 
-## STEP 2 — Logging discipline
+### STEP 2 — Logging discipline
 
-### T4: Define the library logging convention + helper, and record the decision
+#### T4: Define the library logging convention + helper, and record the decision
 
 **What:** A single, documented way the library emits operational diagnostics, honouring
 "Orthograph is a library, not an application" (PRD Constraint 13's spirit).
@@ -180,7 +226,7 @@ output by default; ADR-012 exists.
 
 ---
 
-### T5: Migrate existing logging call sites to the convention
+#### T5: Migrate existing logging call sites to the convention
 
 **What:** Bring the one current ad-hoc logger (and any added since) onto the convention.
 
@@ -197,9 +243,9 @@ output by default; ADR-012 exists.
 
 ---
 
-## STEP 3 — Documentation
+### STEP 3 — Documentation
 
-### T6: Cross-link the decisions and add developer guidance
+#### T6: Cross-link the decisions and add developer guidance
 
 **Actions:**
 1. Add a one-line cross-link to ADR-011 and ADR-012 from CONTEXT.md's decisions routing (no
@@ -214,7 +260,7 @@ them without asking.
 
 ---
 
-## Success Criteria (epic-level)
+### Success Criteria (Error Hierarchy & Logging)
 
 - [ ] `OrthographError` root exists; every library-raised domain error derives from it (T1–T3).
 - [ ] Differentiation is by subclass + message; no stale "possible causes" docstring lists (T1).
@@ -228,7 +274,7 @@ them without asking.
 
 ---
 
-## Out of Scope (this epic)
+### Out of Scope (Error Hierarchy & Logging section)
 
 - Application-level observability: metrics, tracing, structured-event emission, log shipping.
 - Changing `warnings.warn` semantics or removing existing user advisories.
