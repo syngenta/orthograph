@@ -1,9 +1,10 @@
-"""Mermaid diagram renderers for GraphDataModel."""
+"""Mermaid diagram renderers for GraphDefinition."""
 
 import base64
 
-from orthograph.core.graph_data_model import GraphDataModel
-from orthograph.core.types import CardinalitySpec
+from orthograph.dependencies import require
+from orthograph.graph_definition.graph_definition import GraphDefinition
+from orthograph.graph_definition.models import CardinalitySpec
 
 
 def _format_cardinality(spec: CardinalitySpec) -> str:
@@ -19,63 +20,45 @@ def _mermaid_ink_url(graph: str) -> str:
     return f"https://mermaid.ink/img/{base64_string}"
 
 
-def display_mermaid(obj: "GraphDataModel | str") -> None:
-    """Render a Mermaid diagram inline in a Jupyter notebook.
+def display_mermaid(obj: "GraphDefinition | str") -> None:
+    """Render a Mermaid diagram inline in Jupyter.
 
-    Accepts a raw Mermaid string or a ``GraphDataModel``.  Model objects
-    are automatically converted to Mermaid text before rendering.
-
-    Uses the mermaid.ink service to convert the diagram to an image.
-    Requires an active internet connection and an IPython environment
-    (Jupyter notebook or JupyterLab).
-
-    Parameters
-    ----------
-    obj : GraphDataModel | str
-        The object to render.  Strings are used as-is; models are
-        converted via ``model_to_mermaid``.
+    Accepts a raw Mermaid string or a ``GraphDefinition``.
+    Requires IPython (Jupyter) and an internet connection.
 
     Raises
     ------
     ImportError
-        If IPython is not available (not running in a notebook).
+        If IPython is not available.
     TypeError
         If *obj* is not a supported type.
     """
-    try:
-        from IPython.display import Image, display
-    except ImportError:
-        raise ImportError(
-            "display_mermaid() requires IPython. "
-            "Run this function inside a Jupyter notebook."
-        ) from None
+    require("ipython")
+    from IPython.display import Image, display
 
     if isinstance(obj, str):
         mermaid_text = obj
-    elif isinstance(obj, GraphDataModel):
+    elif isinstance(obj, GraphDefinition):
         mermaid_text = model_to_mermaid(obj)
     else:
         raise TypeError(
             f"Cannot render object of type {type(obj).__name__}. "
-            "Expected a Mermaid string or GraphDataModel."
+            "Expected a Mermaid string or GraphDefinition."
         )
 
     url = _mermaid_ink_url(mermaid_text)
     display(Image(url=url))  # type: ignore[no-untyped-call]
 
 
-def model_to_mermaid(model: GraphDataModel) -> str:
-    """Convert a GraphDataModel to an enriched Mermaid diagram string.
+def model_to_mermaid(graph_definition: GraphDefinition) -> str:
+    """Convert a GraphDefinition to a Mermaid diagram string.
 
-    Node boxes show properties with type, required/optional marker, and
-    UID field highlighting.  Relationship edges include cardinality labels.
-
-    All output uses Mermaid-safe syntax: no square brackets in labels
-    (UID fields use a ``#9670;`` diamond marker instead).
+    Shows nodes with properties (type, required/optional, UID marker) and
+    relationships with cardinality labels.
     """
     lines = ["graph TD"]
 
-    for nt in model.node_types:
+    for nt in graph_definition.node_types:
         specs = nt.get_property_specs()
         prop_parts: list[str] = []
         for name, info in specs.items():
@@ -86,9 +69,9 @@ def model_to_mermaid(model: GraphDataModel) -> str:
         props = ", ".join(prop_parts)
         lines.append(f'    {nt.__label__}["{nt.__label__}<br>{props}"]')
 
-    for rt in model.relationship_types:
-        src = rt.__source_type__.__label__
-        tgt = rt.__target_type__.__label__
+    for rt in graph_definition.relationship_types:
+        src = rt.__source_label__
+        tgt = rt.__target_label__
         arrow = "-->" if rt.__directed__ else "---"
 
         # Build label with relationship name, properties, and cardinality

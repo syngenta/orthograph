@@ -4,10 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from orthograph.core.graph_data_model import GraphDataModel
-from orthograph.core.node_model import NodeModel
-from orthograph.core.relationship_model import RelationshipModel
-from orthograph.core.types import Cardinality
+from orthograph.graph_definition.graph_definition import GraphDefinition
+from orthograph.graph_definition.models import (
+    Cardinality,
+    NodeModel,
+    RelationshipModel,
+)
 from orthograph.io.yaml import load_yaml_file, load_yaml_string, save_yaml_file
 
 
@@ -59,35 +61,35 @@ def simple_yaml_file(tmp_path: Path, simple_yaml_content: str) -> Path:
 
 
 def test_yaml_load_from_string(simple_yaml_content: str):
-    model = load_yaml_string(simple_yaml_content)
-    assert isinstance(model, GraphDataModel)
-    assert model.name == "Filmography"
-    assert model.version == "1.0.0"
+    graph_definition = load_yaml_string(simple_yaml_content)
+    assert isinstance(graph_definition, GraphDefinition)
+    assert graph_definition.name == "Filmography"
+    assert graph_definition.version == "1.0.0"
 
 
 def test_yaml_load_node_types(simple_yaml_content: str):
-    model = load_yaml_string(simple_yaml_content)
-    assert model.node_labels == {"Person", "Movie"}
+    graph_definition = load_yaml_string(simple_yaml_content)
+    assert graph_definition.node_labels == {"Person", "Movie"}
 
 
 def test_yaml_node_uid_field(simple_yaml_content: str):
-    model = load_yaml_string(simple_yaml_content)
-    person = model.get_node_type("Person")
+    graph_definition = load_yaml_string(simple_yaml_content)
+    person = graph_definition.get_node_type("Person")
     assert person is not None
     assert person.__uid_field__ == "name"
 
 
 def test_yaml_node_properties(simple_yaml_content: str):
-    model = load_yaml_string(simple_yaml_content)
-    person = model.get_node_type("Person")
+    graph_definition = load_yaml_string(simple_yaml_content)
+    person = graph_definition.get_node_type("Person")
     assert person is not None
     props = person.get_all_property_names()
     assert props == {"name", "age", "email"}
 
 
 def test_yaml_required_vs_optional_properties(simple_yaml_content: str):
-    model = load_yaml_string(simple_yaml_content)
-    person = model.get_node_type("Person")
+    graph_definition = load_yaml_string(simple_yaml_content)
+    person = graph_definition.get_node_type("Person")
     assert person is not None
     required = person.get_required_property_names()
     assert "name" in required
@@ -96,29 +98,29 @@ def test_yaml_required_vs_optional_properties(simple_yaml_content: str):
 
 
 def test_yaml_load_relationship_types(simple_yaml_content: str):
-    model = load_yaml_string(simple_yaml_content)
-    assert model.relationship_labels == {"ACTED_IN", "DIRECTED"}
+    graph_definition = load_yaml_string(simple_yaml_content)
+    assert graph_definition.relationship_labels == {"ACTED_IN", "DIRECTED"}
 
 
 def test_yaml_relationship_endpoints(simple_yaml_content: str):
-    model = load_yaml_string(simple_yaml_content)
-    acted_in = model.get_relationship_type("ACTED_IN")
+    graph_definition = load_yaml_string(simple_yaml_content)
+    acted_in = graph_definition.get_relationship_type("ACTED_IN")
     assert acted_in is not None
-    assert acted_in.__source_type__.__label__ == "Person"
-    assert acted_in.__target_type__.__label__ == "Movie"
+    assert acted_in.__source_label__ == "Person"
+    assert acted_in.__target_label__ == "Movie"
 
 
 def test_yaml_relationship_cardinality(simple_yaml_content: str):
-    model = load_yaml_string(simple_yaml_content)
-    acted_in = model.get_relationship_type("ACTED_IN")
+    graph_definition = load_yaml_string(simple_yaml_content)
+    acted_in = graph_definition.get_relationship_type("ACTED_IN")
     assert acted_in is not None
     assert acted_in.__source_cardinality__ == Cardinality.ZERO_OR_MORE
     assert acted_in.__target_cardinality__ == Cardinality.ZERO_OR_MORE
 
 
 def test_yaml_relationship_default_cardinality(simple_yaml_content: str):
-    model = load_yaml_string(simple_yaml_content)
-    directed = model.get_relationship_type("DIRECTED")
+    graph_definition = load_yaml_string(simple_yaml_content)
+    directed = graph_definition.get_relationship_type("DIRECTED")
     assert directed is not None
     # Default cardinality when not specified
     assert directed.__source_cardinality__ == Cardinality.ZERO_OR_MORE
@@ -126,9 +128,9 @@ def test_yaml_relationship_default_cardinality(simple_yaml_content: str):
 
 
 def test_yaml_load_from_file(simple_yaml_file: Path):
-    model = load_yaml_file(simple_yaml_file)
-    assert model.name == "Filmography"
-    assert model.node_labels == {"Person", "Movie"}
+    graph_definition = load_yaml_file(simple_yaml_file)
+    assert graph_definition.name == "Filmography"
+    assert graph_definition.node_labels == {"Person", "Movie"}
 
 
 def test_yaml_load_nonexistent_file_raises(tmp_path: Path):
@@ -153,9 +155,9 @@ node_types:
       val: {type: str, required: true}
 relationship_types: {}
 """
-    model = load_yaml_string(content)
-    req = model.get_node_type("Req")
-    opt = model.get_node_type("Opt")
+    graph_definition = load_yaml_string(content)
+    req = graph_definition.get_node_type("Req")
+    opt = graph_definition.get_node_type("Opt")
     assert req is not None
     assert req.__optional__ is False
     assert opt is not None
@@ -178,11 +180,11 @@ def test_yaml_save_and_load(tmp_path: Path):
 
     class AB(RelationshipModel):
         __label__ = "A_TO_B"
-        __source_type__ = A
-        __target_type__ = B
+        __source_label__ = "A"
+        __target_label__ = "B"
         weight: float
 
-    model = GraphDataModel(
+    graph_definition = GraphDefinition(
         name="RoundTrip",
         version="2.0.0",
         node_types=[A, B],
@@ -190,7 +192,7 @@ def test_yaml_save_and_load(tmp_path: Path):
     )
 
     path = tmp_path / "roundtrip.yaml"
-    save_yaml_file(model, path)
+    save_yaml_file(graph_definition, path)
 
     loaded = load_yaml_file(path)
     assert loaded.name == "RoundTrip"

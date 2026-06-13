@@ -13,7 +13,7 @@
 > **Relates to:** PRD Constraint 2 (models are single source of truth), PRD Constraint 5 (not a
 > query optimizer — generation is schema-shaped data, not query execution), ADR-003 (two-phase
 > extension architecture), ADR-005 (cardinality semantics), E23 (inspector interface), the
-> `GraphProfile` schema (`extension-contract.md`).
+> `GraphProfile` schema (`decisions/012-optional-dependency-policy.md`).
 
 ---
 
@@ -63,7 +63,7 @@ Every generated node and relationship must be valid against the `GraphDataModel`
 - Every node's label must be a declared node type.
 - Every relationship's type must be a declared relationship type.
 - Required properties must always be present and of the declared type.
-- Endpoint types must match the declared `__source_type__` / `__target_type__`.
+- Endpoint types must match the declared `__source_label__` / `__target_label__`.
 - The model is the single source of truth (PRD Constraint 2): the generator derives all structural
   constraints from the model, never from the caller's ad-hoc input.
 
@@ -190,6 +190,17 @@ exclusive — the dataset could expose both views. Decide during task scoping.
 
 ### Q3 — Where does this live?
 
+> **Forward note — ADR-017 (2026-06-12).** The candidate paths below predate
+> two refactors. `extensions/` was removed by E25/ADR-011 (now `backends/`,
+> `graph_profile/`, `cypher/`). `core/` is renamed to `graph_definition/` by
+> ADR-017, and the observed `GraphProfile` now lives in `graph_profile/models.py`
+> (not `extensions/models.py`). When this scoping session runs, evaluate the
+> location against the **post-ADR-017 topology**: `graph_definition/` (declared),
+> `graph_profile/` (observed), `comparison/` (cross-layer), `diagnostics/`
+> (result currency). A generator that reads a definition + a profile is a
+> cross-layer consumer — weigh a dedicated package over folding it into either
+> twin. Do not revert ADR-017.
+
 Candidate module locations:
 
 - `src/orthograph/extensions/synthetic/` — an optional extension, independently installable
@@ -228,7 +239,7 @@ Decide during task scoping.
 ## Cross-References
 
 - E23 (hard dependency): `.agentic/planning/active_epics/E23_inspector_backend_interface.md`
-- `GraphProfile` schema: `.agentic/knowledge/extension-contract.md`
+- `GraphProfile` schema: `.agentic/decisions/012-optional-dependency-policy.md`
 - PRD: `.agentic/knowledge/product_requirements_document.md`
 - ADR-003 (two-phase architecture): `.agentic/decisions/003-extensions-two-phase-architecture.md`
 - ADR-005 (cardinality semantics): `.agentic/decisions/005-cardinality-semantics.md`

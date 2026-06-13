@@ -2,10 +2,12 @@
 
 import pytest
 
-from orthograph.core.graph_data_model import GraphDataModel
-from orthograph.core.node_model import NodeModel
-from orthograph.core.relationship_model import RelationshipModel
-from orthograph.core.types import Cardinality
+from orthograph.graph_definition.graph_definition import GraphDefinition
+from orthograph.graph_definition.models import (
+    Cardinality,
+    NodeModel,
+    RelationshipModel,
+)
 from orthograph.visualization.mermaid import (
     _mermaid_ink_url,
     display_mermaid,
@@ -32,22 +34,22 @@ class Movie(NodeModel):
 
 class ActedIn(RelationshipModel):
     __label__ = "ACTED_IN"
-    __source_type__ = Person
-    __target_type__ = Movie
+    __source_label__ = "Person"
+    __target_label__ = "Movie"
     role: str
 
 
 class Directed(RelationshipModel):
     __label__ = "DIRECTED"
-    __source_type__ = Person
-    __target_type__ = Movie
+    __source_label__ = "Person"
+    __target_label__ = "Movie"
     __directed__ = True
 
 
 class FriendOf(RelationshipModel):
     __label__ = "FRIEND_OF"
-    __source_type__ = Person
-    __target_type__ = Person
+    __source_label__ = "Person"
+    __target_label__ = "Person"
     __directed__ = False
 
 
@@ -59,15 +61,15 @@ class Company(NodeModel):
 
 class Collaborates(RelationshipModel):
     __label__ = "COLLABORATES"
-    __source_type__ = Person
-    __target_type__ = Company
+    __source_label__ = "Person"
+    __target_label__ = "Company"
     __directed__ = False
 
 
 class LivesIn(RelationshipModel):
     __label__ = "LIVES_IN"
-    __source_type__ = Person
-    __target_type__ = Company
+    __source_label__ = "Person"
+    __target_label__ = "Company"
     __source_cardinality__ = Cardinality.ONE
     __target_cardinality__ = Cardinality.ZERO_OR_MORE
 
@@ -76,8 +78,8 @@ class LivesIn(RelationshipModel):
 
 
 @pytest.fixture()
-def model() -> GraphDataModel:
-    return GraphDataModel(
+def graph_definition() -> GraphDefinition:
+    return GraphDefinition(
         name="Film",
         node_types=[Person, Movie],
         relationship_types=[ActedIn, Directed],
@@ -85,8 +87,8 @@ def model() -> GraphDataModel:
 
 
 @pytest.fixture()
-def undirected_model() -> GraphDataModel:
-    return GraphDataModel(
+def undirected_model() -> GraphDefinition:
+    return GraphDefinition(
         name="Social",
         node_types=[Person],
         relationship_types=[FriendOf],
@@ -98,8 +100,8 @@ def undirected_model() -> GraphDataModel:
 # ============================================================
 
 
-def test_mermaid_basic(model: GraphDataModel):
-    mermaid = model_to_mermaid(model)
+def test_mermaid_basic(graph_definition: GraphDefinition):
+    mermaid = model_to_mermaid(graph_definition)
     assert "graph TD" in mermaid
     assert "Person" in mermaid
     assert "Movie" in mermaid
@@ -107,37 +109,37 @@ def test_mermaid_basic(model: GraphDataModel):
     assert "DIRECTED" in mermaid
 
 
-def test_mermaid_directed_arrow(model: GraphDataModel):
-    mermaid = model_to_mermaid(model)
+def test_mermaid_directed_arrow(graph_definition: GraphDefinition):
+    mermaid = model_to_mermaid(graph_definition)
     assert "-->" in mermaid
 
 
-def test_mermaid_undirected_arrow(undirected_model: GraphDataModel):
+def test_mermaid_undirected_arrow(undirected_model: GraphDefinition):
     mermaid = model_to_mermaid(undirected_model)
     assert "---" in mermaid
 
 
-def test_mermaid_node_properties(model: GraphDataModel):
-    mermaid = model_to_mermaid(model)
+def test_mermaid_node_properties(graph_definition: GraphDefinition):
+    mermaid = model_to_mermaid(graph_definition)
     assert "name" in mermaid
     assert "age" in mermaid
 
 
-def test_mermaid_uid_field_highlighted(model: GraphDataModel):
+def test_mermaid_uid_field_highlighted(graph_definition: GraphDefinition):
     """UID fields should be marked with UID in the output."""
-    mermaid = model_to_mermaid(model)
+    mermaid = model_to_mermaid(graph_definition)
     assert "UID" in mermaid
 
 
-def test_mermaid_no_square_brackets_in_labels(model: GraphDataModel):
+def test_mermaid_no_square_brackets_in_labels(graph_definition: GraphDefinition):
     """Output should not contain [UID] since brackets break Mermaid syntax."""
-    mermaid = model_to_mermaid(model)
+    mermaid = model_to_mermaid(graph_definition)
     assert "[UID]" not in mermaid
 
 
 def test_mermaid_cardinality_labels():
     """Edges should show cardinality labels."""
-    m = GraphDataModel(
+    m = GraphDefinition(
         name="Card",
         node_types=[Person, Company],
         relationship_types=[LivesIn],
@@ -147,15 +149,15 @@ def test_mermaid_cardinality_labels():
     assert "0..*" in mermaid
 
 
-def test_mermaid_required_optional_markers(model: GraphDataModel):
+def test_mermaid_required_optional_markers(graph_definition: GraphDefinition):
     """Required and optional properties should be distinguished."""
-    mermaid = model_to_mermaid(model)
+    mermaid = model_to_mermaid(graph_definition)
     assert "name: str" in mermaid
 
 
 def test_mermaid_undirected_cross_type():
     """Undirected cross-type relationship uses '---' arrow."""
-    m = GraphDataModel(
+    m = GraphDefinition(
         name="Cross",
         node_types=[Person, Company],
         relationship_types=[Collaborates],
@@ -169,7 +171,7 @@ def test_mermaid_undirected_cross_type():
 
 def test_mermaid_mixed_directed_and_undirected():
     """Model with both directed and undirected uses correct arrows."""
-    m = GraphDataModel(
+    m = GraphDefinition(
         name="Mixed",
         node_types=[Person, Movie, Company],
         relationship_types=[ActedIn, FriendOf, Collaborates],
@@ -179,9 +181,9 @@ def test_mermaid_mixed_directed_and_undirected():
     assert "-->" in mermaid
 
 
-def test_mermaid_relationship_properties(model: GraphDataModel):
+def test_mermaid_relationship_properties(graph_definition: GraphDefinition):
     """Relationship properties should appear in the edge label."""
-    mermaid = model_to_mermaid(model)
+    mermaid = model_to_mermaid(graph_definition)
     assert "role: str" in mermaid
 
 
@@ -240,8 +242,8 @@ def test_display_mermaid_with_string(mocker):
     mock_display.assert_called_once()
 
 
-def test_display_mermaid_with_model(mocker, model: GraphDataModel):
-    """display_mermaid accepts a GraphDataModel and converts it."""
+def test_display_mermaid_with_model(mocker, graph_definition: GraphDefinition):
+    """display_mermaid accepts a GraphDefinition and converts it."""
     mock_display = mocker.patch(
         "orthograph.visualization.mermaid.display",
         create=True,
@@ -258,7 +260,7 @@ def test_display_mermaid_with_model(mocker, model: GraphDataModel):
         },
     )
 
-    display_mermaid(model)
+    display_mermaid(graph_definition)
 
     mock_image.assert_called_once()
     mock_display.assert_called_once()

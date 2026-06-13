@@ -85,13 +85,13 @@ to the user's class definition. The correct value is `stacklevel=3`.
 
 ### E18.5: Restore `validate_networkx_graph` with deprecation shim
 
-`validate_networkx_graph` was removed from `src/orthograph/extensions/networkx/__init__.py`
+`validate_networkx_graph` was removed from `src/orthograph/backends/networkx/__init__.py`
 without a deprecation period. Any downstream code importing
-`from orthograph.extensions.networkx import validate_networkx_graph` will get an
+`from orthograph.backends.networkx import validate_networkx_graph` will get an
 `ImportError` on upgrade.
 
 **Acceptance criteria:**
-- [ ] `validate_networkx_graph` is re-exported from the networkx extension `__init__.py`
+- [ ] `validate_networkx_graph` is re-exported from the networkx backend `__init__.py`
 - [ ] The shim emits a `DeprecationWarning` directing callers to the new API
 - [ ] A test verifies the warning is raised and the function still works
 - [ ] The deprecation shim is removed no earlier than the next minor version bump

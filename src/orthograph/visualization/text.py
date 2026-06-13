@@ -1,9 +1,9 @@
-"""Plain text table renderers for GraphDataModel, GraphProfile, ValidationResult."""
+"""Plain text table renderers for GraphDefinition, GraphProfile, ValidationResult."""
 
-from orthograph.core.exceptions import ValidationIssue, ValidationResult
-from orthograph.core.graph_data_model import GraphDataModel
-from orthograph.core.types import CardinalitySpec
-from orthograph.extensions.models import GraphProfile
+from orthograph.diagnostics.result import ValidationIssue, ValidationResult
+from orthograph.graph_definition.graph_definition import GraphDefinition
+from orthograph.graph_definition.models import CardinalitySpec
+from orthograph.graph_profile.models import GraphProfile
 
 
 def _format_cardinality(spec: CardinalitySpec) -> str:
@@ -12,24 +12,24 @@ def _format_cardinality(spec: CardinalitySpec) -> str:
     return f"{spec.min}..{max_str}"
 
 
-def model_to_text(model: GraphDataModel) -> str:
-    """Render a GraphDataModel as a plain text table.
+def model_to_text(graph_definition: GraphDefinition) -> str:
+    """Render a GraphDefinition as a plain text table.
 
     Shows node types with their properties (name, type, required/optional,
     UID marker), and relationship types with endpoints and cardinality.
     """
     lines: list[str] = []
 
-    lines.append(f"Model: {model.name}")
-    if model.version:
-        lines.append(f"Version: {model.version}")
+    lines.append(f"Model: {graph_definition.name}")
+    if graph_definition.version:
+        lines.append(f"Version: {graph_definition.version}")
     lines.append("")
 
     # --- Node types ---
     lines.append("Node Types")
     lines.append("-" * 60)
 
-    for nt in model.node_types:
+    for nt in graph_definition.node_types:
         optional_tag = " (optional)" if nt.__optional__ else ""
         lines.append(f"  {nt.__label__}{optional_tag}")
         specs = nt.get_property_specs()
@@ -44,9 +44,9 @@ def model_to_text(model: GraphDataModel) -> str:
     lines.append("Relationship Types")
     lines.append("-" * 60)
 
-    for rt in model.relationship_types:
-        src = rt.__source_type__.__label__
-        tgt = rt.__target_type__.__label__
+    for rt in graph_definition.relationship_types:
+        src = rt.__source_label__
+        tgt = rt.__target_label__
         direction = "-->" if rt.__directed__ else "---"
         src_card = _format_cardinality(rt.__source_cardinality__)
         tgt_card = _format_cardinality(rt.__target_cardinality__)
@@ -70,22 +70,22 @@ def profile_to_text(profile: GraphProfile) -> str:
     Shows node types with instance counts and property completeness,
     and relationship types with counts, endpoints, and cardinality stats.
     """
-    lines: list[str] = []
-
-    lines.append(f"Profile: {profile.source}")
-    lines.append(f"Timestamp: {profile.timestamp}")
-    lines.append("")
+    lines: list[str] = [
+        f"Profile: {profile.source}",
+        f"Timestamp: {profile.timestamp}",
+        "",
+        "Node Types",
+        "-" * 60,
+    ]
 
     # --- Node types ---
-    lines.append("Node Types")
-    lines.append("-" * 60)
 
     for label, ntp in profile.node_type_profiles.items():
         lines.append(f"  {label} ({ntp.count} instances)")
         for prop_name, pp in ntp.property_profiles.items():
             pct = f"{pp.completeness:.0%}"
             types_str = ", ".join(pp.observed_types) if pp.observed_types else "n/a"
-            mandatory = "mandatory" if pp.is_mandatory else "partial"
+            mandatory = "mandatory" if pp.is_required else "partial"
             lines.append(
                 f"    {prop_name}: {pct} complete "
                 f"({pp.present_count}/{pp.total_count}) "

@@ -6,18 +6,19 @@ from typing import Any, Optional
 
 import pytest
 
-from orthograph import (
+from orthograph.api.visualization import render_model
+from orthograph.backends.networkx.conversion import schema_to_networkx
+from orthograph.backends.networkx.inspector import NetworkxInspector
+from orthograph.comparison.engine import compare
+from orthograph.cypher.generator import CypherGenerator
+from orthograph.graph_definition.graph_definition import GraphDefinition
+from orthograph.graph_definition.models import (
     Cardinality,
-    GraphDataModel,
-    GraphValidator,
     NodeModel,
     RelationshipModel,
 )
-from orthograph.extensions.cypher import CypherGenerator
-from orthograph.extensions.networkx import NetworkxInspector, schema_to_networkx
-from orthograph.extensions.validation import validate_profile
+from orthograph.graph_definition.validation import GraphValidator
 from orthograph.io.yaml import load_yaml_file, save_yaml_file
-from orthograph.visualization import render
 from orthograph.visualization.mermaid import model_to_mermaid
 
 
@@ -66,42 +67,42 @@ class Step(NodeModel):
 
 class Reactant(RelationshipModel):
     __label__ = "REACTANT"
-    __source_type__ = Molecule
-    __target_type__ = ChemicalEquation
+    __source_label__ = "Molecule"
+    __target_label__ = "ChemicalEquation"
     __source_cardinality__ = Cardinality.ZERO_OR_MORE
 
 
 class Product(RelationshipModel):
     __label__ = "PRODUCT"
-    __source_type__ = ChemicalEquation
-    __target_type__ = Molecule
+    __source_label__ = "ChemicalEquation"
+    __target_label__ = "Molecule"
     __source_cardinality__ = Cardinality.ZERO_OR_MORE
 
 
 class HasTemplate(RelationshipModel):
     __label__ = "HAS_TEMPLATE"
-    __source_type__ = ChemicalEquation
-    __target_type__ = Template
+    __source_label__ = "ChemicalEquation"
+    __target_label__ = "Template"
     __source_cardinality__ = Cardinality.ZERO_OR_MORE
 
 
 class HasStep(RelationshipModel):
     __label__ = "HAS_STEP"
-    __source_type__ = Reaction
-    __target_type__ = Step
+    __source_label__ = "Reaction"
+    __target_label__ = "Step"
     __source_cardinality__ = Cardinality.ZERO_OR_MORE
 
 
 class HasCE(RelationshipModel):
     __label__ = "HAS_CE"
-    __source_type__ = Step
-    __target_type__ = ChemicalEquation
+    __source_label__ = "Step"
+    __target_label__ = "ChemicalEquation"
     __source_cardinality__ = Cardinality.ZERO_OR_MORE
 
 
 @pytest.fixture()
-def chemistry_model() -> GraphDataModel:
-    return GraphDataModel(
+def chemistry_model() -> GraphDefinition:
+    return GraphDefinition(
         name="Network_of_Organic_Chemistry",
         version="1.0.0",
         node_types=[Molecule, ChemicalEquation, Template, Reaction, Step],
@@ -112,7 +113,7 @@ def chemistry_model() -> GraphDataModel:
 # --- Chemistry domain model tests ---
 
 
-def test_chemistry_model_structure(chemistry_model: GraphDataModel):
+def test_chemistry_model_structure(chemistry_model: GraphDefinition):
     assert chemistry_model.name == "Network_of_Organic_Chemistry"
     assert chemistry_model.node_labels == {
         "Molecule",
@@ -130,7 +131,7 @@ def test_chemistry_model_structure(chemistry_model: GraphDataModel):
     }
 
 
-def test_chemistry_valid_graph(chemistry_model: GraphDataModel):
+def test_chemistry_valid_graph(chemistry_model: GraphDefinition):
     v = GraphValidator(chemistry_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Reaction", "uid": "R1", "source": "Lab1", "external_id": "EXT1"},
@@ -153,7 +154,7 @@ def test_chemistry_valid_graph(chemistry_model: GraphDataModel):
     assert result.is_valid, [str(e) for e in result.errors]
 
 
-def test_chemistry_invalid_data(chemistry_model: GraphDataModel):
+def test_chemistry_invalid_data(chemistry_model: GraphDefinition):
     v = GraphValidator(chemistry_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Molecule", "uid": "M1"},
@@ -164,7 +165,7 @@ def test_chemistry_invalid_data(chemistry_model: GraphDataModel):
     assert len(result.errors) >= 2
 
 
-def test_chemistry_enum_generation(chemistry_model: GraphDataModel):
+def test_chemistry_enum_generation(chemistry_model: GraphDefinition):
     node_enum = chemistry_model.get_node_label_enum()
     assert node_enum.Molecule.value == "Molecule"
     rel_enum = chemistry_model.get_relationship_label_enum()
@@ -174,7 +175,7 @@ def test_chemistry_enum_generation(chemistry_model: GraphDataModel):
 # --- YAML ---
 
 
-def test_chemistry_yaml_roundtrip(chemistry_model: GraphDataModel, tmp_path):
+def test_chemistry_yaml_roundtrip(chemistry_model: GraphDefinition, tmp_path):
     path = tmp_path / "chemistry.yaml"
     save_yaml_file(chemistry_model, path)
     loaded = load_yaml_file(path)
@@ -187,7 +188,7 @@ def test_chemistry_yaml_roundtrip(chemistry_model: GraphDataModel, tmp_path):
 # --- Cypher ---
 
 
-def test_cypher_generate_full_workflow(chemistry_model: GraphDataModel):
+def test_cypher_generate_full_workflow(chemistry_model: GraphDefinition):
     gen = CypherGenerator(chemistry_model)
     constraints = gen.generate_constraints()
     assert len(constraints) >= 4
@@ -201,17 +202,17 @@ def test_cypher_generate_full_workflow(chemistry_model: GraphDataModel):
 # --- Mermaid ---
 
 
-def test_chemistry_mermaid(chemistry_model: GraphDataModel):
+def test_chemistry_mermaid(chemistry_model: GraphDefinition):
     mermaid = model_to_mermaid(chemistry_model)
     assert "graph TD" in mermaid
     assert "Molecule" in mermaid
     assert "REACTANT" in mermaid
 
 
-def test_chemistry_render_dispatcher(chemistry_model: GraphDataModel):
-    mermaid = render(chemistry_model, format="mermaid")
+def test_chemistry_render_dispatcher(chemistry_model: GraphDefinition):
+    mermaid = render_model(chemistry_model, format="mermaid")
     assert "graph TD" in mermaid
-    text = render(chemistry_model, format="text")
+    text = render_model(chemistry_model)
     assert "Model:" in text
     assert "Molecule" in text
 
@@ -219,13 +220,13 @@ def test_chemistry_render_dispatcher(chemistry_model: GraphDataModel):
 # --- NetworkX ---
 
 
-def test_chemistry_schema_to_networkx(chemistry_model: GraphDataModel):
+def test_chemistry_schema_to_networkx(chemistry_model: GraphDefinition):
     g = schema_to_networkx(chemistry_model)
     assert len(g.nodes) == 5
     assert len(g.edges) == 5
 
 
-def test_chemistry_inspect_and_validate_nx(chemistry_model: GraphDataModel):
+def test_chemistry_inspect_and_validate_nx(chemistry_model: GraphDefinition):
     """End-to-end: build nx graph, inspect, validate against model."""
     import networkx as nx
 
@@ -234,13 +235,13 @@ def test_chemistry_inspect_and_validate_nx(chemistry_model: GraphDataModel):
     g.add_node("ce1", __label__="ChemicalEquation", uid="CE1", smiles="CCO>>CC=O")
     g.add_edge("m1", "ce1", __label__="REACTANT")
 
-    inspector = NetworkxInspector(g)
-    profile = inspector.inspect()
+    inspector = NetworkxInspector()
+    profile = inspector.inspect(g)
 
     assert "Molecule" in profile.node_labels
     assert "REACTANT" in profile.relationship_types
 
-    result = validate_profile(profile, chemistry_model)
+    result = compare(profile, chemistry_model)
     # This will have warnings/errors for missing types (not all types in graph)
     # but the profile itself should be structurally valid
     assert isinstance(result.is_valid, bool)

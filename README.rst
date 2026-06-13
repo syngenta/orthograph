@@ -30,10 +30,16 @@ It provides three capabilities:
    database and compare its structure against the declared model. Both paths produce a
    structured ``ValidationResult`` with typed, differentiable error codes.
 
-**3. Query governance**
+**3. Query governance and drift detection**
    Register named Cypher queries in a typed ``QueryCatalogue``. Each query declares its
    ``Params`` and ``Output`` models; the catalogue validates parameter alignment at
    class-definition time and provides a uniform ``describe()`` surface for introspection.
+   Queries are checked — without executing them — for language correctness and for
+   *domain match* against the model (labels, relationship types, properties, endpoints).
+   ``validate_query_catalogue()`` detects drift between a whole query set and the data model;
+   ``validate_query_catalogue_against_profile()`` extends that to the live database schema,
+   so schema evolution never silently desynchronises your queries and your database from
+   the declared model.
 
 Orthograph never owns a database connection. When it needs one — to inspect, validate
 results, or execute a query — the caller passes it in.
@@ -44,7 +50,7 @@ Extensions
 
 The core library (model definition and data validation) has no external dependencies
 beyond Pydantic and PyYAML. Database-specific functionality is packaged as optional
-extensions:
+backend extras:
 
 ===============  ====================================================================
 Extension        What it adds
@@ -116,7 +122,9 @@ Define the model:
 .. code-block:: python
 
    from typing import Optional
-   from orthograph import GraphDataModel, NodeModel, RelationshipModel
+   from orthograph.graph_definition.graph_definition import GraphDataModel
+   from orthograph.graph_definition.node_model import NodeModel
+   from orthograph.graph_definition.relationship_model import RelationshipModel
 
    class Person(NodeModel):
        __label__ = "Person"
@@ -136,17 +144,17 @@ Define the model:
        __target_type__ = Movie
        role: str
 
-   model = GraphDataModel(
-       name="Filmography",
-       node_types=[Person, Movie],
-       relationship_types=[ActedIn],
-   )
+   graph_data_model = GraphDataModel(
+        name="Filmography",
+        node_types=[Person, Movie],
+        relationship_types=[ActedIn],
+    )
 
 Validate in-memory data before writing to the database:
 
 .. code-block:: python
 
-   from orthograph import GraphValidator
+   from orthograph.api.model import validate
 
    nodes = [
        {"__label__": "Person", "name": "Alice", "born": 1985},
@@ -157,7 +165,7 @@ Validate in-memory data before writing to the database:
         "role": "Lead"},
    ]
 
-   result = GraphValidator(model).validate(nodes, relationships)
+   result = validate(graph_data_model, nodes, relationships)
    print(result.is_valid)      # True / False
    for issue in result.errors:
        print(issue)            # structured ValidationIssue with error code
@@ -167,10 +175,10 @@ Inspect a live Neo4j database and validate it against the model:
 .. code-block:: python
 
    from neo4j import GraphDatabase
-   from orthograph.extensions.neo4j import validate_database
+   from orthograph.api.database import validate
 
    driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
-   result = validate_database(driver, model)
+   result = validate("neo4j", driver, graph_data_model)
 
    print(result.is_valid)
    for error in result.errors:
@@ -180,7 +188,8 @@ Define and register a typed Cypher query:
 
 .. code-block:: python
 
-   from orthograph.extensions.cypher import CypherReadQuery, NoParams
+   from orthograph.cypher.base_models import CypherReadQuery
+   from orthograph.cypher.bindings import NoParams
    from orthograph.catalogue.registry import QueryCatalogue
 
    class PersonByNameParams(BaseModel):
@@ -195,8 +204,8 @@ Define and register a typed Cypher query:
        def materialize(self, raw):
            return Person.model_validate(raw["p"])
 
-   catalogue = QueryCatalogue()
-   catalogue.register_read(FindPerson())
+   query_catalogue = QueryCatalogue()
+   query_catalogue.register_read(FindPerson())
 
 
 Running the tests

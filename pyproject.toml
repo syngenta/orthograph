@@ -31,34 +31,35 @@ dependencies = [
 
 [project.optional-dependencies]
 
-# Extension: NetworkX graph inspection and conversion
+# Backend: NetworkX in-memory graph inspection and conversion
 networkx = [
     "networkx>=3.0",
 ]
 
-# Extension: Cypher query parsing and validation (graphglot parser)
+# Language tool: Cypher query parsing and validation (graphglot parser)
 cypher = [
     "graphglot>=0.9",
 ]
 
-# Extension: Neo4j database inspection and result validation
+# Backend: Neo4j database inspection and result validation
 neo4j = [
     "neo4j>=5.0",
 ]
 
-# Extension: Memgraph database inspection (uses the neo4j Bolt driver)
+# Backend: Memgraph database inspection (shares the neo4j Bolt driver;
+# memgraph speaks Bolt — no separate memgraph Python package required)
 memgraph = [
     "neo4j>=5.0",
 ]
 
-# Extension: GQLAlchemy OGM + query builder integration
+# Backend: GQLAlchemy OGM + query builder integration
 gqlalchemy = [
     "gqlalchemy>=1.6",
 ]
 
-# All extensions
+# All extensions (memgraph shares the neo4j driver so no extra dep is pulled in)
 all = [
-    "orthograph[networkx,cypher,neo4j,gqlalchemy]",
+    "orthograph[networkx,cypher,neo4j,memgraph,gqlalchemy]",
 ]
 
 # Notebook execution in CI (lightweight -- no full Jupyter install)

@@ -25,7 +25,7 @@ realises the *declaration-level* `Identifiers`/`Params` split (validated backend
   (`node(labels=...)`, `.to(relationship_type=...)`), each validated via `validate_identifier`
   (from E17 T1) **before** the builder call.
 - `Params` (values) → **value bindings** (`.where(prop == value)`).
-- `build()` returns a **builder object** (legal under `typed.py`'s `build() -> Any`), not a
+- `build()` returns a **builder object** (legal under `query/base_models.py`'s `build() -> Any`), not a
   `(cypher, dict)` tuple.
 
 Since builder patterns are Python (not serialisable strings), this catalogue is **Python-only** —
@@ -36,9 +36,9 @@ validation; consuming projects provide queries, connections (passed per-call, ne
 orchestration.
 
 **Existing surface to build on (read before starting):**
-- `src/orthograph/catalogue/typed.py` — `ReadQuery[P, D]` / `WriteQuery[P, R]` / `Executor` /
+- `src/orthograph/query/base_models.py` — `ReadQuery[P, D]` / `WriteQuery[P, R]` / `Executor` /
   `QueryBackedReadPort` / `Backend.GQLALCHEMY` (already defined).
-- `src/orthograph/catalogue/registry.py` — `QueryCatalogue` + `describe()` (reuse pattern).
+- `src/orthograph/query/catalogue.py` — `QueryCatalogue` + `describe()` (reuse pattern).
 - `src/orthograph/extensions/gqlalchemy/query_builder.py` — `ValidatedQueryBuilder` +
   `_extract_cypher` (renders a builder to Cypher) + `_validate_cypher` (validates against model).
 - `src/orthograph/extensions/gqlalchemy/codegen.py` — `generate_gqlalchemy_classes` /
@@ -56,10 +56,10 @@ orchestration.
 contract that fix `backend = Backend.GQLALCHEMY` and realise the `Identifiers`/`Params` split via
 builder calls. **This task confirms ADR-010's split in code.**
 
-**Actions (new file `src/orthograph/extensions/gqlalchemy/base_models.py`):**
+**Actions (new file `src/orthograph/backends/gqlalchemy/base_models.py`):**
 1. `GqlAlchemyReadQuery(ReadQuery[P, D])` and `GqlAlchemyWriteQuery(WriteQuery[P, R])` with
    `backend = Backend.GQLALCHEMY` and an empty-default `Identifiers: ClassVar[type[BaseModel]] =
-   NoIdentifiers` (the public empty model from `orthograph.extensions.cypher`, mirroring the
+   NoIdentifiers` (the public empty model from `orthograph.cypher`, mirroring the
    Cypher base; the generic `typed.py` signature stays `[P, D]` — do NOT add a third generic
    param). A value-only query declares `Params = NoParams` (also public, reused from the Cypher
    layer); `Params` stays mandatory because it is the generic `P`.
@@ -74,7 +74,7 @@ builder calls. **This task confirms ADR-010's split in code.**
    `result_adapter` helpers.
 
 **Acceptance criteria:**
-- [ ] `from orthograph.extensions.gqlalchemy import GqlAlchemyReadQuery, GqlAlchemyWriteQuery`
+- [ ] `from orthograph.backends.gqlalchemy import GqlAlchemyReadQuery, GqlAlchemyWriteQuery`
 - [ ] A concrete subclass declaring `Identifiers = {label}` + `Params` + `Output` constructs and
       its `build()` returns a GQLAlchemy builder object (not a tuple).
 - [ ] An injected label (`"x) DETACH DELETE (n"`) passed as an `Identifiers` value raises via

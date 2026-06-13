@@ -66,14 +66,14 @@ Write clear documentation showing how consuming projects should use the extensio
 
 ```python
 # Consuming project code:
-from orthograph.extensions.gqlalchemy import generate_gqlalchemy_classes
+from orthograph.backends.gqlalchemy import generate_gqlalchemy_classes
 
 gql_classes = generate_gqlalchemy_classes(my_model)
 person = gql_classes.Person(name="Alice", born=1985)
 person.save(db)  # GQLAlchemy's own method — consuming project owns this
 
 # Validate results after query:
-from orthograph.extensions.gqlalchemy import validate_gqa_result
+from orthograph.backends.gqlalchemy import validate_gqa_result
 result = db.execute_and_fetch("MATCH (p:Person) RETURN p")
 validate_gqa_result(result, my_model)
 ```

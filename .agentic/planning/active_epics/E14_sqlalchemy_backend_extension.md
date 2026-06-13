@@ -46,7 +46,7 @@ and set `backend = Backend.SQLALCHEMY`. Concrete subclasses provide `build()` bo
    ```python
    from sqlalchemy.sql import Executable
    from sqlalchemy.sql.selectable import Select
-   from orthograph.catalogue.typed import Backend, ReadQuery, WriteQuery
+    from orthograph.query.base_models import Backend, ReadQuery, WriteQuery
 
    class SqlReadQuery(ReadQuery[P, D], Generic[P, D]):
        """build() returns a SQLAlchemy Select. materialize() maps a Row -> declared Output."""
@@ -66,7 +66,7 @@ and set `backend = Backend.SQLALCHEMY`. Concrete subclasses provide `build()` bo
    - The `Select` compiles without a connection: `stmt.compile()` succeeds.
    - `SqlReadQuery.materialize()` with a hand-built fake row tuple returns the declared `Output` type.
 
-**Verification:** `from orthograph.extensions.sqlalchemy import SqlReadQuery, SqlWriteQuery` works.
+**Verification:** `from orthograph.backends.sqlalchemy import SqlReadQuery, SqlWriteQuery` works.
 `mypy src/` passes.
 
 ---
@@ -77,10 +77,10 @@ and set `backend = Backend.SQLALCHEMY`. Concrete subclasses provide `build()` bo
 Read and write are distinct methods with different transactional intent.
 
 **Actions:**
-1. Create `src/orthograph/extensions/sqlalchemy/executor.py`:
+1. Create `src/orthograph/backends/sqlalchemy/executor.py`:
    ```python
    from sqlalchemy.orm import Session
-   from orthograph.catalogue.typed import Executor, ReadQuery, WriteQuery
+    from orthograph.query.base_models import Executor, ReadQuery, WriteQuery
 
    class SqlExecutor(Executor):
        """The single I/O seam for the relational store.
@@ -116,7 +116,7 @@ Read and write are distinct methods with different transactional intent.
    - `read()` does NOT commit; `write()` does.
    - Bad params (`model_validate` raises) prevent any SQL from running.
 
-**Verification:** `from orthograph.extensions.sqlalchemy import SqlExecutor` works.
+**Verification:** `from orthograph.backends.sqlalchemy import SqlExecutor` works.
 Integration test: seed + read + write + re-read with real SQLite passes.
 
 ---
@@ -133,13 +133,13 @@ Integration test: seed + read + write + re-read with real SQLite passes.
    ```
 2. Guard the import: wrap `from sqlalchemy ...` in a try/except that raises a clear
    `ImportError("Install orthograph[sqlalchemy] to use the SQLAlchemy backend.")`.
-3. Isolation test: importing `orthograph.extensions.neo4j` in the same process as
-   `orthograph.extensions.sqlalchemy` works without pulling in the other's dependencies.
-4. Export from `orthograph.extensions.sqlalchemy.__init__`:
+3. Isolation test: importing `orthograph.backends.neo4j` in the same process as
+   `orthograph.backends.sqlalchemy` works without pulling in the other's dependencies.
+4. Export from `orthograph.backends.sqlalchemy.__init__`:
    `SqlReadQuery`, `SqlWriteQuery`, `SqlExecutor`.
 
 **Verification:** `pip install orthograph` (without `[sqlalchemy]`) then
-`import orthograph.extensions.sqlalchemy` raises `ImportError`. With `[sqlalchemy]` it succeeds.
+`import orthograph.backends.sqlalchemy` raises `ImportError`. With `[sqlalchemy]` it succeeds.
 
 ---
 

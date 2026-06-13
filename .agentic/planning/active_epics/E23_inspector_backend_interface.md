@@ -6,10 +6,11 @@
 > the duplication between the Neo4j and Memgraph inspectors and the one remaining raw-string probe).
 > **Blocked by:** None to start scoping. Touches the same files as E4 (Extension Robustness) and
 > E18.1 (cardinality/endpoint-labels parity) — coordinate edits.
-> **Relates to:** [knowledge/extension-contract.md](../../knowledge/extension-contract.md)
+> **Relates to:** [decisions/012-optional-dependency-policy.md](../../decisions/012-optional-dependency-policy.md)
 > (`GraphInspector` ABC, `GraphProfile`), ADR-003 (two-phase extension architecture),
-> ADR-009 (inspector query alignment), and the `src/orthograph/extensions/{neo4j,memgraph}/inspector.py`
-> pair.
+> ADR-009 (inspector query alignment).
+> **Status note:** superseded by E25 — the `api.database.inspect` + `CypherInspector` +
+> `backends/loader` seam delivers this epic's substance (see overview.md, ADR-011).
 >
 > **SCOPE NOTE:** This epic is a **finding record only** — no tasks are defined yet. It captures the
 > structural duplication between the two Cypher inspectors and the open question of whether a shared

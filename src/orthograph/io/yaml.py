@@ -1,14 +1,17 @@
-"""YAML loading and saving for GraphDataModel definitions."""
+"""YAML loading and saving for GraphDefinition definitions."""
 
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
 
-from orthograph.core.graph_data_model import GraphDataModel
-from orthograph.core.node_model import NodeModel
-from orthograph.core.relationship_model import RelationshipModel
-from orthograph.core.types import Cardinality, CardinalitySpec
+from orthograph.graph_definition.graph_definition import GraphDefinition
+from orthograph.graph_definition.models import (
+    Cardinality,
+    CardinalitySpec,
+    NodeModel,
+    RelationshipModel,
+)
 
 
 # Map YAML type strings to Python types
@@ -22,47 +25,45 @@ _TYPE_MAP: dict[str, type] = {
 }
 
 
-def load_yaml_string(content: str) -> GraphDataModel:
-    """Load a GraphDataModel from a YAML string."""
+def load_yaml_string(content: str) -> GraphDefinition:
+    """Load a GraphDefinition from a YAML string."""
     data = yaml.safe_load(content)
     return _build_model(data)
 
 
-def load_yaml_file(path: Path) -> GraphDataModel:
-    """Load a GraphDataModel from a YAML file."""
+def load_yaml_file(path: Path) -> GraphDefinition:
+    """Load a GraphDefinition from a YAML file."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
     content = path.read_text(encoding="utf-8")
     return load_yaml_string(content)
 
 
-def save_yaml_file(model: GraphDataModel, path: Path) -> None:
-    """Save a GraphDataModel to a YAML file."""
-    data = _serialize_model(model)
+def save_yaml_file(graph_definition: GraphDefinition, path: Path) -> None:
+    """Save a GraphDefinition to a YAML file."""
+    data = _serialize_model(graph_definition)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
-def _build_model(data: dict[str, Any]) -> GraphDataModel:
-    """Build a GraphDataModel from parsed YAML data."""
+def _build_model(data: dict[str, Any]) -> GraphDefinition:
+    """Build a GraphDefinition from parsed YAML data."""
     name = data["name"]
     version = data.get("version")
 
-    # Build node types
     node_types_data = data.get("node_types", {})
     node_classes: dict[str, type[NodeModel]] = {}
     for label, spec in node_types_data.items():
         node_cls = _build_node_class(label, spec)
         node_classes[label] = node_cls
 
-    # Build relationship types
     rel_types_data = data.get("relationship_types", {})
     rel_classes: list[type[RelationshipModel]] = []
     for label, spec in rel_types_data.items():
-        rel_cls = _build_rel_class(label, spec, node_classes)
+        rel_cls = _build_rel_class(label, spec)
         rel_classes.append(rel_cls)
 
-    return GraphDataModel(
+    return GraphDefinition(
         name=name,
         version=version,
         node_types=list(node_classes.values()),
@@ -108,7 +109,6 @@ def _build_node_class(label: str, spec: dict[str, Any]) -> type[NodeModel]:
 def _build_rel_class(
     label: str,
     spec: dict[str, Any],
-    node_classes: dict[str, type[NodeModel]],
 ) -> type[RelationshipModel]:
     """Dynamically create a RelationshipModel subclass from YAML spec."""
     source_label = spec["source"]
@@ -138,8 +138,8 @@ def _build_rel_class(
     namespace: dict[str, Any] = {
         "__annotations__": annotations,
         "__label__": label,
-        "__source_type__": node_classes[source_label],
-        "__target_type__": node_classes[target_label],
+        "__source_label__": source_label,
+        "__target_label__": target_label,
         "__directed__": directed,
         "__optional__": optional,
         "__source_cardinality__": source_cardinality,
@@ -175,24 +175,22 @@ def _parse_cardinality(
     return CardinalitySpec(min=min_val, max=max_val)
 
 
-def _serialize_model(model: GraphDataModel) -> dict[str, Any]:
-    """Serialize a GraphDataModel to a YAML-compatible dict."""
+def _serialize_model(graph_definition: GraphDefinition) -> dict[str, Any]:
+    """Serialize a GraphDefinition to a YAML-compatible dict."""
     data: dict[str, Any] = {
-        "name": model.name,
+        "name": graph_definition.name,
     }
-    if model.version:
-        data["version"] = model.version
+    if graph_definition.version:
+        data["version"] = graph_definition.version
 
-    # Serialize node types
     node_types: dict[str, Any] = {}
-    for nt in model.node_types:
+    for nt in graph_definition.node_types:
         node_spec = _serialize_node_type(nt)
         node_types[nt.__label__] = node_spec
     data["node_types"] = node_types
 
-    # Serialize relationship types
     rel_types: dict[str, Any] = {}
-    for rt in model.relationship_types:
+    for rt in graph_definition.relationship_types:
         rel_spec = _serialize_rel_type(rt)
         rel_types[rt.__label__] = rel_spec
     data["relationship_types"] = rel_types
@@ -225,14 +223,13 @@ def _serialize_rel_type(
 ) -> dict[str, Any]:
     """Serialize a RelationshipModel class to a YAML-compatible dict."""
     spec: dict[str, Any] = {
-        "source": rt.__source_type__.__label__,
-        "target": rt.__target_type__.__label__,
+        "source": rt.__source_label__,
+        "target": rt.__target_label__,
         "directed": rt.__directed__,
     }
     if not rt.__optional__:
         spec["optional"] = False
 
-    # Cardinality
     src_card = rt.__source_cardinality__
     tgt_card = rt.__target_cardinality__
     spec["source_cardinality"] = {
@@ -244,7 +241,6 @@ def _serialize_rel_type(
         "max": tgt_card.max,
     }
 
-    # Properties
     props: dict[str, Any] = {}
     prop_specs = rt.get_property_specs()
     for name, info in prop_specs.items():

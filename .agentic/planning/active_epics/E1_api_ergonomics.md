@@ -65,6 +65,22 @@ Accept relationship data as `(source_uid, target_uid, label, props)` tuples in a
 
 ---
 
+### E1.5: Expose query governance through the `api/` surface ✓ done 2026-06-11
+
+**Origin:** PRD reconciliation 2026-06-11 (E25.S6). Capability 3 (query governance &
+drift detection) is implemented in `orthograph.cypher.parser.validate_cypher` and
+`orthograph.cypher.validate_query_catalogue.{validate_query_catalogue, validate_query_catalogue_against_profile}`,
+but — unlike inspection and data validation — it had **no `api/` entry point**.
+
+**Delivered:** three verbs added to `orthograph.api.model`:
+- `validate_query(query, graph_data_model)` — single Cypher query vs model
+- `validate_query_catalogue(query_catalogue, graph_data_model)` — whole query set vs model
+- `validate_query_catalogue_against_profile(query_catalogue, profile, graph_data_model)` — query set + DB shape vs model
+
+Tests added to `tests/api/test_model.py`. PRD seam-gap note resolved.
+
+---
+
 ## Removed (superseded)
 
 - ~~E1.3 (old): Support `__label__` in Dict for `GqlAlchemyClient.save_node()`~~ — superseded by E9 (GQLAlchemy Client Review). The `save_*` methods are being reconsidered under the composition approach.

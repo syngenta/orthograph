@@ -54,3 +54,6 @@ coverage.xml
 
 # Hypothesis testing cache
 .hypothesis/
+
+# OpenCode temp planning artefacts (never commit)
+.opencode/

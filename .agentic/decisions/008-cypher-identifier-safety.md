@@ -127,6 +127,11 @@ accepting-and-transforming.
 
 - E17 epic: `.agentic/planning/active_epics/E17_cypher_generator_hardening.md`
 - PRD Capability: `Query Governance — Cypher` (CypherGenerator bullet)
-- `src/orthograph/extensions/cypher/identifiers.py` — T1
-- `src/orthograph/extensions/cypher/generator.py` — T2, T3, T4
-- `tests/extensions/cypher/test_generator.py` — injection audit block (T6)
+- `src/orthograph/cypher/identifiers.py` — T1
+- `src/orthograph/cypher/generator.py` — T2, T3, T4
+- `tests/cypher/test_generator.py` — injection audit block (T6)
+
+> **Path note (E25 / ADR-011, 2026-06-11):** the Cypher tool moved from
+> `extensions/cypher/` to the top-level `cypher/` package (and its tests from
+> `tests/extensions/cypher/` to `tests/cypher/`). The validate-and-reject policy and the
+> injection-audit regression guard are unchanged; only the import paths moved.

@@ -25,7 +25,7 @@ NOTEBOOKS_DIR = Path(__file__).resolve().parent.parent.parent / "notebooks"
 # All notebooks in the project, grouped by section.
 ALL_NOTEBOOKS = [
     # 01 -- Core
-    NOTEBOOKS_DIR / "01.01_defining_a_graph_data_model.ipynb",
+    NOTEBOOKS_DIR / "01.01_create_a_graph_definition.ipynb",
     NOTEBOOKS_DIR / "01.02_validating_graph_data.ipynb",
     NOTEBOOKS_DIR / "01.03_optionality_and_cardinality.ipynb",
     NOTEBOOKS_DIR / "01.04_visualization.ipynb",

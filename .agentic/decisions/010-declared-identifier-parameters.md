@@ -82,7 +82,7 @@ labels (`:Movie`) remain legal and idiomatic — the mechanism is only for *dyna
   `node(labels=...)`, validated via `validate_identifier`) and value bindings (`Params` →
   `.where(...)`); the `<<placeholder>>` template substitution is the **Cypher-specific
   rendering** of the neutral split, not part of the split itself. The generic base
-  (`orthograph.catalogue.typed.ReadQuery[P, D]`) bakes in no Cypher assumption and is
+  (`orthograph.query.base_models.ReadQuery[P, D]`) bakes in no Cypher assumption and is
   unchanged (`build() -> Any` already permits a builder return).
 - **Implementation note (no empty-key tax):** `Identifiers` carries an empty default at the
   **Cypher base layer** (`CypherReadQuery.Identifiers = NoIdentifiers`); the generic
@@ -102,7 +102,7 @@ labels (`:Movie`) remain legal and idiomatic — the mechanism is only for *dyna
   **rejected** — it would leave `P` unbound and reopen E16's accepted "`Params` is mandatory"
   contract. The call shape is **(a)**: identifier values are bound on the query instance at
   construction (`MyQuery(identifiers={...})`); `build(self, params)` keeps its single argument
-  and the generic `Executor.read/write` seam in `catalogue/typed.py` is untouched. Kind
+  and the generic `Executor.read/write` seam in `query/base_models.py` is untouched. Kind
   resolution: an `Identifiers` field named `rel_type` or ending in `_rel_type` validates as a
   `"relationship type"`, every other field as a `"label"`.
 - **Confirm in code at E8:** the GQLAlchemy query catalogue (E8.1) instantiates a

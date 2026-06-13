@@ -781,3 +781,27 @@ unique classes). Identifier models to write: `NodeLabelIdentifiers`, `RelTypeIde
   shared subclasses, per-instance for strategy selection).
 - [ ] `Neo4jInspector` constructor `strategy` parameter replacement plan confirmed (breaking
   change; needs release note).
+
+---
+
+## Superseded paths & placement (E25 / ADR-011, 2026-06-11)
+
+The decisions of ADR-009 (typed inspector queries; `inspect() -> GraphProfile` as the only
+cross-backend contract; `QueryStrategy` retired; completeness parity) all stand. The E25
+backend-isolation refactor moved the *files* and changed *where* queries live:
+
+- Every `orthograph.extensions.cypher.*` path in this ADR (and its T7 annex §1/§9/§12)
+  is now `orthograph.cypher.*` (e.g. `orthograph.cypher.identifiers`,
+  `NoParams` from `orthograph.cypher.bindings`).
+- `extensions/neo4j/queries.py` → `backends/neo4j/queries.py`;
+  `extensions/memgraph/queries.py` → `backends/memgraph/queries.py`;
+  `extensions/models.py` → `profile/models.py`.
+- **Query placement changed:** backend-specific introspection queries (APOC, pure-Cypher
+  per-label variants, Memgraph `schema.*`, `SHOW CONSTRAINT INFO`) live in their own
+  `backends/<vendor>/queries.py`. The vendor-neutral shared queries (cardinality,
+  endpoint-labels, `coerce_types`) live in `profile/queries/shared.py`. Each backend builds
+  its OWN catalogue, importing the shared neutral queries; neither backend imports the other.
+  This supersedes the annex's implicit "queries live under each vendor's `extensions/` folder
+  and shared classes are registered in both catalogues" placement detail.
+
+See ADR-011 for the full E25 decision record.

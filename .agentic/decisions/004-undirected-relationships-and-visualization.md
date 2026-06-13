@@ -13,10 +13,10 @@ rendering (`---` vs `-->`) and Cypher MATCH patterns (`-` vs `->`). The rest of 
 system ignored the flag:
 
 - `GraphDataModel.get_outgoing/incoming_relationship_types()` — only returned an undirected
-  relationship as outgoing from its `__source_type__` and incoming to its `__target_type__`,
+  relationship as outgoing from its `__source_label__` and incoming to its `__target_label__`,
   not bidirectionally.
 - `GraphValidator._check_referential_integrity()` — strictly enforced `__source_uid__`
-  must be `__source_type__` and `__target_uid__` must be `__target_type__`, even when
+  must be `__source_label__` and `__target_uid__` must be `__target_label__`, even when
   the relationship was undirected. A reversed cross-type pair in the DB would be rejected.
 - `GraphValidator._check_cardinality()` — counted outgoing and incoming separately,
   even for undirected. This was semantically wrong (e.g. a node with 2 outgoing + 3
@@ -28,7 +28,7 @@ system ignored the flag:
 
 ### Decision: `directed=false` means either endpoint order is valid
 
-For an undirected relationship `R` with `__source_type__ = A`, `__target_type__ = B`:
+For an undirected relationship `R` with `__source_label__ = "A"`, `__target_label__ = "B"`:
 
 - Both `A->B` and `B->A` are valid in data and in queries.
 - Cardinality counts total connections (outgoing + incoming) per node per rel type.

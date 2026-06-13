@@ -1,0 +1,1 @@
+"""Memgraph backend adapter."""

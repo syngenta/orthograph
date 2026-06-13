@@ -50,6 +50,27 @@
 
 ## Error Hierarchy & Library Logging Discipline
 
+> **Forward note — ADR-017 (2026-06-12) re-paths this section's file targets.**
+> ADR-017 renames `core/` → `graph_definition/` and extracts the validation
+> result currency to a new `diagnostics/` package. This section is **not
+> contradicted** — its decisions (an `OrthographError` root; a `get_logger` +
+> `NullHandler` convention) still stand — but its *destinations move*:
+> - the project-wide `OrthographError` root and `get_logger`/logging helper are
+>   **cross-cutting infrastructure**, so under ADR-017 they belong in a shared
+>   home (alongside or near `diagnostics/`), **not** inside the renamed
+>   definition package `graph_definition/`. Treat the `core/exceptions.py` /
+>   `core/logging.py` paths below as **`diagnostics/`-adjacent** when this epic
+>   is executed.
+> - the ADR numbers cited below (`011-error-hierarchy.md`, `012-library-logging.md`)
+>   are **stale** — those numbers are already taken (ADR-011 = capability seams,
+>   ADR-012 = optional-dependency policy). Allocate the next free numbers when
+>   picked up.
+> - the `extensions/cypher/` and `extensions/networkx/` paths below predate the
+>   E25 split (now `cypher/` and `backends/networkx/`).
+> Do **not** revert ADR-017. When this section is executed, target the
+> post-ADR-017 topology.
+
+
 > **Origin:** E17 refactor session 2026-06-10 (Cypher exception hierarchy introduced; surfaced
 > the absence of a project-wide exception root and any logging convention).
 > **Relates to:** PRD Problem Statement ("applications fail silently"), PRD Constraint 1

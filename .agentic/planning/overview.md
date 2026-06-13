@@ -50,8 +50,11 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E20 | Technical Debt | Medium | planned (independent; cross-cutting) |
 | E21 | Technical Debt — E2E Test Activation & Configuration | Medium | finding recorded; needs scoping session (independent) |
 | E22 | E2E Test Coverage Audit & Shared-Contract Test Layer | Medium | requirements recorded; blocked by E21 for live-DB paths; NetworkX path independent |
-| E23 | Inspector Backend-Behaviour Injection Interface | Medium | finding recorded; needs scoping session → ADR (independent; coordinate with E4) |
-| E24 | Synthetic Graph Data Generation | Medium | planned (blocked by E23) |
+| E23 | Inspector Backend-Behaviour Injection Interface | Medium | **RETIRED → E25** (the `api.database.inspect` + `CypherInspector` + `backends/loader` seam delivers E23's substance; ADR-011) |
+| E24 | Synthetic Graph Data Generation | Medium | planned (was blocked by E23; now reads the GraphProfile contract directly — re-path via E25) |
+| E25 | Capability Seams & Vendor-Backend Isolation (Refactor) | High | **done** (2026-06-11; branch `architecture-refactoring`; superseded parts of E2/E4/E9/E10/E22/E23 — see ADR-011) |
+| E26 | CI Containerised E2E — Live-Database Tests in the Pipeline | Medium | planned (independent; closes E21 finding #4; provides CI infra for E22 live-DB paths) |
+| E27 | Symmetric Comparison — Compare Any Two Graph Descriptions | Medium | planned (independent; touches `comparison/` + call sites only) |
 
 ---
 
@@ -68,6 +71,8 @@ INDEPENDENT — can start immediately:
   E21  Tech Debt: e2e test activation & configuration (needs scoping session)
   E23  Inspector backend-behaviour injection interface (needs scoping session → ADR; coordinate
        with E4)
+  E26  CI Containerised E2E (independent; closes E21 finding #4; see E26 for sequential tasks)
+  E27  Symmetric Comparison (independent; generalises comparison/ to compare any two operands)
 
 AFTER E23:
   E24  Synthetic Graph Data Generation (profile-driven mode requires consistent GraphProfile
@@ -92,6 +97,8 @@ AFTER E16:
 DONE:
   E17  CypherGenerator hardening (closed identifier-injection risk; aligned generator + inspector
        queries to E16 typed contract; unblocked E11; closed "library does not eat its own cooking")
+  E25  Capability Seams & Backend Isolation (vendor-free api/ seam, backends/<vendor>/ isolation,
+       single dependency authority; superseded parts of E2/E4/E9/E10/E22/E23 — see ADR-011)
 
 GATE — requires E1, E2, E3, E4, E8, E9, E10, E11, E16 substantially complete:
   E7   Pilot Readiness
@@ -166,6 +173,8 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E22 — E2E Test Coverage Audit & Shared-Contract Test Layer](active_epics/E22_e2e_test_coverage_audit.md)
 - [E23 — Inspector Backend-Behaviour Injection Interface](active_epics/E23_inspector_backend_interface.md)
 - [E24 — Synthetic Graph Data Generation](active_epics/E24_synthetic_graph_data_generation.md)
+- [E26 — CI Containerised E2E — Live-Database Tests in the Pipeline](active_epics/E26_ci_containerized_e2e.md)
+- [E27 — Symmetric Comparison — Compare Any Two Graph Descriptions](active_epics/E27_symmetric_comparison.md)
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 
@@ -173,6 +182,7 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E5 — Visualization](archived_epics/E5_visualization.md) *(done 2026-04-15)*
 - [E16 — Query Catalogue Unified](archived_epics/E16_query_catalogue_unified.md) *(done 2026-06-10)*
 - [E17 — CypherGenerator Hardening](archived_epics/E17_cypher_generator_hardening.md) *(done 2026-06-10)*
+- [E25 — Capability Seams & Vendor-Backend Isolation (Refactor)](archived_epics/E25_capability_seams_backend_isolation.md) *(done 2026-06-11)*
 
 **Retired (superseded by E16):**
 - [E6 — Cypher Query Catalogue](archived_epics/E6_query_catalogue.md)

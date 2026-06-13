@@ -5,12 +5,15 @@ from typing import Optional
 
 import pytest
 
-from orthograph.core.exceptions import ValidationIssue, ValidationResult
-from orthograph.core.graph_data_model import GraphDataModel
-from orthograph.core.node_model import NodeModel
-from orthograph.core.relationship_model import RelationshipModel
-from orthograph.core.types import Cardinality, EntityType, Severity
-from orthograph.extensions.models import (
+from orthograph.diagnostics.classification import EntityType, Severity
+from orthograph.diagnostics.result import ValidationIssue, ValidationResult
+from orthograph.graph_definition.graph_definition import GraphDefinition
+from orthograph.graph_definition.models import (
+    Cardinality,
+    NodeModel,
+    RelationshipModel,
+)
+from orthograph.graph_profile.models import (
     CardinalityStats,
     GraphProfile,
     NodeTypeProfile,
@@ -40,8 +43,8 @@ class Movie(NodeModel):
 
 class ActedIn(RelationshipModel):
     __label__ = "ACTED_IN"
-    __source_type__ = Person
-    __target_type__ = Movie
+    __source_label__ = "Person"
+    __target_label__ = "Movie"
     __source_cardinality__ = Cardinality.ZERO_OR_MORE
     __target_cardinality__ = Cardinality.ONE_OR_MORE
     role: str
@@ -49,8 +52,8 @@ class ActedIn(RelationshipModel):
 
 class LivesIn(RelationshipModel):
     __label__ = "LIVES_IN"
-    __source_type__ = Person
-    __target_type__ = Movie
+    __source_label__ = "Person"
+    __target_label__ = "Movie"
     __source_cardinality__ = Cardinality.ONE
     __directed__ = False
 
@@ -59,8 +62,8 @@ class LivesIn(RelationshipModel):
 
 
 @pytest.fixture()
-def model() -> GraphDataModel:
-    return GraphDataModel(
+def graph_definition() -> GraphDefinition:
+    return GraphDefinition(
         name="Film",
         version="1.0",
         node_types=[Person, Movie],
@@ -158,47 +161,47 @@ def sample_result() -> ValidationResult:
 # ============================================================
 
 
-def test_model_to_text_header(model: GraphDataModel):
-    text = model_to_text(model)
+def test_model_to_text_header(graph_definition: GraphDefinition):
+    text = model_to_text(graph_definition)
     assert "Model: Film" in text
     assert "Version: 1.0" in text
 
 
-def test_model_to_text_node_types(model: GraphDataModel):
-    text = model_to_text(model)
+def test_model_to_text_node_types(graph_definition: GraphDefinition):
+    text = model_to_text(graph_definition)
     assert "Node Types" in text
     assert "Person" in text
     assert "Movie" in text
 
 
-def test_model_to_text_properties(model: GraphDataModel):
-    text = model_to_text(model)
+def test_model_to_text_properties(graph_definition: GraphDefinition):
+    text = model_to_text(graph_definition)
     assert "name: str (required) [UID]" in text
     assert "age: int (required)" in text
     assert "email: str (optional)" in text
 
 
-def test_model_to_text_uid_marked(model: GraphDataModel):
-    text = model_to_text(model)
+def test_model_to_text_uid_marked(graph_definition: GraphDefinition):
+    text = model_to_text(graph_definition)
     assert "[UID]" in text
 
 
-def test_model_to_text_relationship_types(model: GraphDataModel):
-    text = model_to_text(model)
+def test_model_to_text_relationship_types(graph_definition: GraphDefinition):
+    text = model_to_text(graph_definition)
     assert "Relationship Types" in text
     assert "ACTED_IN" in text
     assert "Person" in text
     assert "Movie" in text
 
 
-def test_model_to_text_cardinality(model: GraphDataModel):
-    text = model_to_text(model)
+def test_model_to_text_cardinality(graph_definition: GraphDefinition):
+    text = model_to_text(graph_definition)
     assert "0..*" in text
     assert "1..*" in text
 
 
 def test_model_to_text_relationship_direction():
-    m = GraphDataModel(
+    m = GraphDefinition(
         name="Test",
         node_types=[Person, Movie],
         relationship_types=[LivesIn],
@@ -208,7 +211,7 @@ def test_model_to_text_relationship_direction():
 
 
 def test_model_to_text_no_version():
-    m = GraphDataModel(
+    m = GraphDefinition(
         name="NoVersion",
         node_types=[Person, Movie],
         relationship_types=[ActedIn],

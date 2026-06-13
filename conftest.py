@@ -92,7 +92,7 @@ def pytest_collection_modifyitems(
         # Gate on the *applied marker*, not ``item.keywords``.  ``item.keywords``
         # also contains the names of the test's parent directories, so matching
         # "neo4j"/"memgraph" there would skip every pure unit test living under
-        # ``tests/extensions/{neo4j,memgraph}/`` even when it carries no marker.
+        # ``tests/backends/{neo4j,memgraph}/`` even when it carries no marker.
         markers = {marker.name for marker in item.iter_markers()}
         if "neo4j" in markers and not run_neo4j:
             item.add_marker(skip_neo4j)

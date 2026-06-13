@@ -100,3 +100,19 @@ pattern as the existing `neo4j`, `memgraph`, and `networkx` extensions.
 ## References
 
 - Target behavior notebook: `notebooks/03.03_gqlalchemy_integration.ipynb`
+
+---
+
+## Superseded paths (E25 / ADR-011, 2026-06-11)
+
+The integration design (optional dependency, models as source of truth, dict bridge,
+validation outside GQLAlchemy) is unchanged. Only the module *location* moved:
+
+- `orthograph.extensions.gqlalchemy` → `orthograph.backends.gqlalchemy` (vendor-isolated
+  backend folder).
+- The "Explicit `backend=` parameter for GqlAlchemyClient" decision (ADR-007) is realised:
+  `GqlAlchemyClient` no longer dispatches inspectors by class-name string match and no
+  longer silently swallows a missing-Cypher `ImportError` (it routes through
+  `orthograph.dependencies.require`). See E25.S2 and ADR-011.
+
+See ADR-011 for the full E25 decision record.
