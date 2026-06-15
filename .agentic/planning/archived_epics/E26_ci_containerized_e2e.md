@@ -1,5 +1,13 @@
 # Epic E26: CI Containerised E2E — Live-Database Tests in the Pipeline
 
+> **ARCHIVED — SUPERSEDED BY E28 (2026-06-15).** The CI containerised-e2e tasks are now owned by
+> [E28 — Testing Strategy](../active_epics/E28_testing_strategy.md), which consolidates E21, E22,
+> and E26 into one delegation-ready plan. The CI job is E28 T7; the doc-closure is E28 T8.
+> **NOTE:** E26 T4 ("fill in the Memgraph e2e stubs") is OBSOLETE — the Memgraph e2e suite is
+> already fully implemented (15 real tests). **Do not pick up work from this file** — read E28
+> instead. Retained for the CI-job reference (the YAML and service-container notes carried into
+> E28 T7).
+>
 > **Priority:** Medium
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Origin:** Conversation 2026-06-11 (developer question about running e2e tests in CI using

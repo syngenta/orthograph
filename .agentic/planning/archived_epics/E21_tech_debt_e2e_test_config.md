@@ -1,5 +1,12 @@
 # Epic E21: Technical Debt — E2E Test Activation & Configuration
 
+> **ARCHIVED — SUPERSEDED BY E28 (2026-06-15).** This epic's finding (and its open question #4,
+> "no CI story for the e2e layer") is now owned by
+> [E28 — Testing Strategy](../active_epics/E28_testing_strategy.md), which consolidates E21, E22,
+> and E26 into one delegation-ready plan. The activation/configuration decision is E28 T1; the
+> CI story is E28 T7. **Do not pick up work from this file** — read E28 instead. Retained for the
+> finding history below.
+>
 > **Priority:** Medium
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Origin:** E17 STEP 5 session 2026-06-10 (live Neo4j inspector e2e tests added; surfaced

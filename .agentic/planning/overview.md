@@ -48,13 +48,14 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E18 | Validation Correctness | High | planned |
 | E19 | YAML Query Authoring — Scoping and Decision | Medium | planned (blocked by E16; needs team scoping session) |
 | E20 | Technical Debt | Medium | planned (independent; cross-cutting) |
-| E21 | Technical Debt — E2E Test Activation & Configuration | Medium | finding recorded; needs scoping session (independent) |
-| E22 | E2E Test Coverage Audit & Shared-Contract Test Layer | Medium | requirements recorded; blocked by E21 for live-DB paths; NetworkX path independent |
+| E21 | Technical Debt — E2E Test Activation & Configuration | — | **RETIRED → E28** |
+| E22 | E2E Test Coverage Audit & Shared-Contract Test Layer | — | **RETIRED → E28** |
 | E23 | Inspector Backend-Behaviour Injection Interface | Medium | **RETIRED → E25** (the `api.database.inspect` + `CypherInspector` + `backends/loader` seam delivers E23's substance; ADR-011) |
 | E24 | Synthetic Graph Data Generation | Medium | planned (was blocked by E23; now reads the GraphProfile contract directly — re-path via E25) |
 | E25 | Capability Seams & Vendor-Backend Isolation (Refactor) | High | **done** (2026-06-11; branch `architecture-refactoring`; superseded parts of E2/E4/E9/E10/E22/E23 — see ADR-011) |
-| E26 | CI Containerised E2E — Live-Database Tests in the Pipeline | Medium | planned (independent; closes E21 finding #4; provides CI infra for E22 live-DB paths) |
+| E26 | CI Containerised E2E — Live-Database Tests in the Pipeline | — | **RETIRED → E28** |
 | E27 | Symmetric Comparison — Compare Any Two Graph Descriptions | Medium | planned (independent; touches `comparison/` + call sites only) |
+| E28 | Testing Strategy — Activation Harness, Shared-Contract Layer, Shared Fixtures & CI | Medium | planned (independent; consolidates E21+E22+E26; delegation-ready tasks) |
 
 ---
 
@@ -68,11 +69,11 @@ INDEPENDENT — can start immediately:
   E9   GQLAlchemy Client Review [HITL]
   E16  Query Catalogue (unified — replaces E6/E12/E13/E15; unblocks E8/E11/E14/matterforge)
   E20  Tech Debt (cross-cutting; coordinate edits)
-  E21  Tech Debt: e2e test activation & configuration (needs scoping session)
   E23  Inspector backend-behaviour injection interface (needs scoping session → ADR; coordinate
        with E4)
-  E26  CI Containerised E2E (independent; closes E21 finding #4; see E26 for sequential tasks)
   E27  Symmetric Comparison (independent; generalises comparison/ to compare any two operands)
+  E28  Testing Strategy (independent; consolidates E21+E22+E26 — activation harness, shared-contract
+       layer, shared test fixtures, containerised CI; Wave A tasks need no live DB)
 
 AFTER E23:
   E24  Synthetic Graph Data Generation (profile-driven mode requires consistent GraphProfile
@@ -80,9 +81,6 @@ AFTER E23:
 
 AFTER E2:
   E4   Extension Robustness
-
-AFTER E21:
-  E22  E2E test coverage audit + shared-contract layer (live-DB paths; NetworkX path independent)
 
 AFTER E10:
   E4   Extension Robustness (connection patterns settled)
@@ -169,12 +167,10 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E18 — Validation Correctness](active_epics/E18_validation_correctness.md)
 - [E19 — YAML Query Authoring — Scoping and Decision](active_epics/E19_yaml_query_authoring.md)
 - [E20 — Technical Debt](active_epics/E20_tech_debt.md)
-- [E21 — Technical Debt: E2E Test Activation & Configuration](active_epics/E21_tech_debt_e2e_test_config.md)
-- [E22 — E2E Test Coverage Audit & Shared-Contract Test Layer](active_epics/E22_e2e_test_coverage_audit.md)
 - [E23 — Inspector Backend-Behaviour Injection Interface](active_epics/E23_inspector_backend_interface.md)
 - [E24 — Synthetic Graph Data Generation](active_epics/E24_synthetic_graph_data_generation.md)
-- [E26 — CI Containerised E2E — Live-Database Tests in the Pipeline](active_epics/E26_ci_containerized_e2e.md)
 - [E27 — Symmetric Comparison — Compare Any Two Graph Descriptions](active_epics/E27_symmetric_comparison.md)
+- [E28 — Testing Strategy — Activation Harness, Shared-Contract Layer, Shared Fixtures & CI](active_epics/E28_testing_strategy.md)
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 
@@ -189,6 +185,11 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E12 — Shared Catalogue Interface](archived_epics/E12_shared_catalogue_interface.md)
 - [E13 — Typed Query Catalogue Contract](archived_epics/E13_typed_query_catalogue_contract.md)
 - [E15 — Typed Cypher Catalogue Backend](archived_epics/E15_typed_cypher_backend.md)
+
+**Retired (superseded by E28 — Testing Strategy):**
+- [E21 — Technical Debt: E2E Test Activation & Configuration](archived_epics/E21_tech_debt_e2e_test_config.md)
+- [E22 — E2E Test Coverage Audit & Shared-Contract Test Layer](archived_epics/E22_e2e_test_coverage_audit.md)
+- [E26 — CI Containerised E2E — Live-Database Tests in the Pipeline](archived_epics/E26_ci_containerized_e2e.md)
 
 
 ---

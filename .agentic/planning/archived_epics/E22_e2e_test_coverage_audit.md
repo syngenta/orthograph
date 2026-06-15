@@ -1,5 +1,12 @@
 # Epic E22: E2E Test Coverage Audit & Shared-Contract Test Layer
 
+> **ARCHIVED — SUPERSEDED BY E28 (2026-06-15).** The coverage audit and the shared-contract test
+> layer requirement are now owned by
+> [E28 — Testing Strategy](../active_epics/E28_testing_strategy.md), which consolidates E21, E22,
+> and E26 into one delegation-ready plan. The shared-contract layer is E28 T4/T6; the shared
+> test-data consolidation that supports it is E28 T2/T3. **Do not pick up work from this file** —
+> read E28 instead. Retained for the requirements history below.
+>
 > **Priority:** Medium
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Origin:** E17 STEP 5 session 2026-06-10 (first live-DB e2e tests added for the Neo4j

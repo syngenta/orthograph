@@ -428,6 +428,34 @@ fixture from `conftest.py` and the `_complete_profile` helper pattern from
 
 ---
 
+## Verification protocol (run after every task)
+
+Each task is not done until all three gates are green **in this order**:
+
+1. **Tests** — `pytest tests/comparison/` (add `tests/api tests/cypher
+   tests/test_integration.py` when those call sites change in T5/T6):
+   ```
+   python -m pytest tests/comparison/ -v
+   ```
+   Every new behaviour must be covered by a test written **before or alongside**
+   the implementation (TDD red → green). Tests for the new code live in
+   `tests/comparison/` following the existing file-per-module convention
+   (`test_views.py`, `test_diff_rules.py`, `test_compare_peers.py`).
+
+2. **Type-check** — mypy on the changed modules:
+   ```
+   python -m mypy src/orthograph/comparison/ --ignore-missing-imports
+   ```
+
+3. **Pre-commit** — all hooks (ruff lint + format, whitespace, yaml, large files):
+   ```
+   python -m pre_commit run --all-files
+   ```
+
+All three must pass before the task acceptance criteria are ticked off.
+
+---
+
 ## Definition of Done (epic)
 
 - [ ] `comparison/views.py` and `comparison/diff_rules.py` exist; `engine.py` and
@@ -442,7 +470,8 @@ fixture from `conftest.py` and the `_complete_profile` helper pattern from
 - [ ] CONTEXT.md routing row for "How does comparison work?" updated to mention the
       three comparison functions and the `views.py`/`diff_rules.py` split (see
       "Docs" below).
-- [ ] Lint, type-check, and full test suite pass.
+- [ ] Verification protocol (tests → mypy → pre-commit) passes clean for every
+      task before it is marked complete.
 
 ---
 
