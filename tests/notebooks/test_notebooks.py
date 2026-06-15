@@ -15,6 +15,8 @@ DB-requiring notebooks are excluded from collection by
 See the root ``conftest.py`` for marker/flag definitions.
 """
 
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -37,9 +39,18 @@ ALL_NOTEBOOKS = [
     NOTEBOOKS_DIR / "03.02_neo4j_end_to_end.ipynb",
     NOTEBOOKS_DIR / "03.03_gqlalchemy_integration.ipynb",
     NOTEBOOKS_DIR / "03.04_gqlalchemy_database_interaction.ipynb",
-    # 04 -- Query Catalogue
+    # 04 -- Query Catalogue / Comparison
     NOTEBOOKS_DIR / "04.01_typed_cypher_queries.ipynb",
+    NOTEBOOKS_DIR / "04.02_compare_two_profiles.ipynb",
+    NOTEBOOKS_DIR / "04.03_compare_two_definitions.ipynb",
+    NOTEBOOKS_DIR / "04.04_profile_vs_definition_revisited.ipynb",
 ]
+
+# Pattern that matches the old (removed) bare ``compare`` import.
+# The renamed function is ``compare_profile_to_definition``.
+_STALE_COMPARE_IMPORT = re.compile(
+    r"from\s+orthograph\.comparison\.engine\s+import\b[^;#\n]*\bcompare\b(?!_)"
+)
 
 
 @pytest.mark.parametrize(
@@ -51,4 +62,33 @@ def test_notebook_exists(notebook_path: Path) -> None:
     assert notebook_path.exists(), (
         f"Notebook not found: {notebook_path}\n"
         "Either add the notebook or remove it from ALL_NOTEBOOKS."
+    )
+
+
+@pytest.mark.parametrize(
+    "notebook_path",
+    [pytest.param(nb, id=nb.name) for nb in ALL_NOTEBOOKS],
+)
+def test_notebook_no_stale_compare_import(notebook_path: Path) -> None:
+    """Notebooks must not import the removed bare ``compare`` function.
+
+    After E27, the function was renamed to ``compare_profile_to_definition``.
+    Any notebook still importing ``compare`` will raise ``ImportError`` at
+    runtime.
+    """
+    if not notebook_path.exists():
+        pytest.skip("notebook not on disk — covered by test_notebook_exists")
+
+    nb = json.loads(notebook_path.read_text(encoding="utf-8"))
+    violations: list[str] = []
+    for i, cell in enumerate(nb.get("cells", [])):
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if _STALE_COMPARE_IMPORT.search(src):
+            violations.append(f"  cell {i}: {src.strip()[:120]!r}")
+
+    assert not violations, (
+        f"Notebook {notebook_path.name} contains stale 'import compare' "
+        f"(should be 'import compare_profile_to_definition'):\n" + "\n".join(violations)
     )

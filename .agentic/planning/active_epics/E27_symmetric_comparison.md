@@ -128,12 +128,12 @@ Move the `_HasPropertySpecs` Protocol from `engine.py` into `views.py` (it belon
 with `DefinitionView`). Do not import any backend.
 
 **Acceptance criteria:**
-- [ ] `src/orthograph/comparison/views.py` exists with `GraphView`, `DefinitionView`,
+- [x] `src/orthograph/comparison/views.py` exists with `GraphView`, `DefinitionView`,
       `ProfileView`.
-- [ ] `DefinitionView` and `ProfileView` satisfy `isinstance(view, GraphView)`
+- [x] `DefinitionView` and `ProfileView` satisfy `isinstance(view, GraphView)`
       (runtime-checkable Protocol).
-- [ ] No backend (`neo4j`/`memgraph`/`networkx`/`gqlalchemy`) is imported.
-- [ ] `mypy`/type-check passes for the new module.
+- [x] No backend (`neo4j`/`memgraph`/`networkx`/`gqlalchemy`) is imported.
+- [x] `mypy`/type-check passes for the new module.
 
 ---
 
@@ -168,11 +168,11 @@ In `src/orthograph/comparison/rules.py`:
 > red until T3 lands — execute T2 and T3 back-to-back.
 
 **Acceptance criteria:**
-- [ ] `RuleContext` has fields `left_graph`, `right_graph`, `address`, `left`,
+- [x] `RuleContext` has fields `left_graph`, `right_graph`, `address`, `left`,
       `right`, `extra` and no `declared`/`observed`/`graph_definition`/`profile`.
-- [ ] All eleven rules read `context.left`/`context.right`; emitted `code` and
+- [x] All eleven rules read `context.left`/`context.right`; emitted `code` and
       `severity` values are byte-for-byte unchanged.
-- [ ] `standard_rules()` returns the same ten rules in the same order.
+- [x] `standard_rules()` returns the same ten rules in the same order.
 
 ---
 
@@ -252,11 +252,11 @@ In `src/orthograph/comparison/engine.py`:
    to mention the three functions live in `engine.py`.
 
 **Acceptance criteria:**
-- [ ] `compare` no longer exists; `compare_profile_to_definition`,
+- [x] `compare` no longer exists; `compare_profile_to_definition`,
       `compare_profiles`, `compare_definitions` exist with the signatures above.
-- [ ] `_compare_views` is the only place containing the five-pass loop.
-- [ ] `_HasPropertySpecs` no longer defined in `engine.py`.
-- [ ] `comparison/__init__.py` has no new symbol re-exports (docstring may change).
+- [x] `_compare_views` is the only place containing the five-pass loop.
+- [x] `_HasPropertySpecs` no longer defined in `engine.py`.
+- [x] `comparison/__init__.py` has no new symbol re-exports (docstring may change).
 
 ---
 
@@ -329,12 +329,12 @@ conventions (label, rel type, or `f"{label}.{prop_name}"`). Messages name the si
 ("present in left but not right", "left … right …").
 
 **Acceptance criteria:**
-- [ ] `src/orthograph/comparison/diff_rules.py` exists with the nine rules and
+- [x] `src/orthograph/comparison/diff_rules.py` exists with the nine rules and
       `diff_rules()`.
-- [ ] Every diff rule emits only `Severity.INFO`.
-- [ ] Each rule no-ops (returns nothing) for addresses outside its concern, mirroring
+- [x] Every diff rule emits only `Severity.INFO`.
+- [x] Each rule no-ops (returns nothing) for addresses outside its concern, mirroring
       the guard style in `rules.py`.
-- [ ] `diff_rules()` returns the nine rules in the order above.
+- [x] `diff_rules()` returns the nine rules in the order above.
 
 ---
 
@@ -356,10 +356,10 @@ Rename the call (no behaviour change) in:
 change** (the `Rule` Protocol is unchanged).
 
 **Acceptance criteria:**
-- [ ] No `from orthograph.comparison.engine import compare` (the bare name) remains
+- [x] No `from orthograph.comparison.engine import compare` (the bare name) remains
       in `src/`.
-- [ ] All four files import and call `compare_profile_to_definition`.
-- [ ] `api/model.py` is unchanged.
+- [x] All four files import and call `compare_profile_to_definition`.
+- [x] `api/model.py` is unchanged.
 
 ---
 
@@ -385,10 +385,10 @@ Rename in tests (no new behaviour asserted; these prove no regression):
   rename the call/reference.
 
 **Acceptance criteria:**
-- [ ] `pytest tests/comparison tests/api tests/cypher tests/test_integration.py`
+- [x] `pytest tests/comparison tests/api tests/cypher tests/test_integration.py`
       passes.
-- [ ] No reference to the bare `compare` engine function remains in `tests/`.
-- [ ] All `RuleContext` constructions in tests use the new field names and pass
+- [x] No reference to the bare `compare` engine function remains in `tests/`.
+- [x] All `RuleContext` constructions in tests use the new field names and pass
       `GraphView` instances for `left_graph`/`right_graph`.
 
 ---
@@ -419,11 +419,11 @@ fixture from `conftest.py` and the `_complete_profile` helper pattern from
   - Diff results never contain `Severity.ERROR` (so `is_valid` stays `True`).
 
 **Acceptance criteria:**
-- [ ] `tests/comparison/test_views.py`, `test_diff_rules.py`, `test_compare_peers.py`
+- [x] `tests/comparison/test_views.py`, `test_diff_rules.py`, `test_compare_peers.py`
       exist and pass.
-- [ ] `compare_profiles`/`compare_definitions` on identical operands emit zero issues.
-- [ ] Each diff code has at least one test asserting it is emitted at `INFO`.
-- [ ] Full suite green: `pytest tests/comparison` and the repo's standard
+- [x] `compare_profiles`/`compare_definitions` on identical operands emit zero issues.
+- [x] Each diff code has at least one test asserting it is emitted at `INFO`.
+- [x] Full suite green: `pytest tests/comparison` and the repo's standard
       lint/type-check command both pass.
 
 ---
@@ -458,19 +458,19 @@ All three must pass before the task acceptance criteria are ticked off.
 
 ## Definition of Done (epic)
 
-- [ ] `comparison/views.py` and `comparison/diff_rules.py` exist; `engine.py` and
+- [x] `comparison/views.py` and `comparison/diff_rules.py` exist; `engine.py` and
       `rules.py` are generalised as described.
-- [ ] Three public functions: `compare_profile_to_definition` (renamed, behaviour
+- [x] Three public functions: `compare_profile_to_definition` (renamed, behaviour
       identical), `compare_profiles`, `compare_definitions`.
-- [ ] All production call sites and tests use the new names; no bare `compare`
+- [x] All production call sites and tests use the new names; no bare `compare`
       remains in `src/` or `tests/`.
-- [ ] Existing satisfaction-comparison behaviour, codes, and severities are
+- [x] Existing satisfaction-comparison behaviour, codes, and severities are
       unchanged (proved by the migrated `test_engine.py`/`test_rules.py`).
-- [ ] New peer comparisons emit only `INFO` diff issues and distinguish left/right.
-- [ ] CONTEXT.md routing row for "How does comparison work?" updated to mention the
+- [x] New peer comparisons emit only `INFO` diff issues and distinguish left/right.
+- [x] CONTEXT.md routing row for "How does comparison work?" updated to mention the
       three comparison functions and the `views.py`/`diff_rules.py` split (see
       "Docs" below).
-- [ ] Verification protocol (tests → mypy → pre-commit) passes clean for every
+- [x] Verification protocol (tests → mypy → pre-commit) passes clean for every
       task before it is marked complete.
 
 ---

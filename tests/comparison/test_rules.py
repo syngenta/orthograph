@@ -6,7 +6,7 @@ C1 tests cover:
 * The Rule Protocol — isinstance check via runtime_checkable.
 * A minimal concrete rule satisfies the Protocol and produces issues.
 * A rule that yields no issues when the constraint is satisfied.
-* RuleContext defaults (declared/observed None, extra empty dict).
+* RuleContext defaults (left/right None, extra empty dict).
 
 C2 tests cover:
 * Each standard rule emits the exact code + severity as its legacy _check_*
@@ -36,6 +36,7 @@ from orthograph.comparison.rules import (
     UnexpectedRelTypeRule,
     standard_rules,
 )
+from orthograph.comparison.views import DefinitionView, ProfileView
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue
 from orthograph.graph_definition.graph_definition import GraphDefinition
@@ -110,34 +111,34 @@ class _AlwaysFailRule:
 
 def test_rule_context_fields():
     ctx = RuleContext(
-        graph_definition=_MODEL,
-        profile=_PROFILE,
+        left_graph=DefinitionView(_MODEL),
+        right_graph=ProfileView(_PROFILE),
         address="A",
-        declared=_ANode,
-        observed=_PROFILE.node_type_profiles["A"],
+        left=_ANode,
+        right=_PROFILE.node_type_profiles["A"],
     )
     assert ctx.address == "A"
-    assert ctx.declared is _ANode
-    assert ctx.observed is _PROFILE.node_type_profiles["A"]
-    assert ctx.graph_definition is _MODEL
-    assert ctx.profile is _PROFILE
+    assert ctx.left is _ANode
+    assert ctx.right is _PROFILE.node_type_profiles["A"]
+    assert isinstance(ctx.left_graph, DefinitionView)
+    assert isinstance(ctx.right_graph, ProfileView)
 
 
 def test_rule_context_defaults():
     ctx = RuleContext(
-        graph_definition=_MODEL,
-        profile=_PROFILE,
+        left_graph=DefinitionView(_MODEL),
+        right_graph=ProfileView(_PROFILE),
         address="missing_label",
     )
-    assert ctx.declared is None
-    assert ctx.observed is None
+    assert ctx.left is None
+    assert ctx.right is None
     assert ctx.extra == {}
 
 
 def test_rule_context_extra():
     ctx = RuleContext(
-        graph_definition=_MODEL,
-        profile=_PROFILE,
+        left_graph=DefinitionView(_MODEL),
+        right_graph=ProfileView(_PROFILE),
         address="A",
         extra={"hint": "value"},
     )
@@ -146,8 +147,8 @@ def test_rule_context_extra():
 
 def test_rule_context_is_frozen():
     ctx = RuleContext(
-        graph_definition=_MODEL,
-        profile=_PROFILE,
+        left_graph=DefinitionView(_MODEL),
+        right_graph=ProfileView(_PROFILE),
         address="A",
     )
     with pytest.raises((AttributeError, TypeError)):
@@ -188,14 +189,22 @@ def test_object_without_key_does_not_satisfy_protocol():
 
 def test_always_pass_rule_emits_no_issues():
     rule = _AlwaysPassRule()
-    ctx = RuleContext(graph_definition=_MODEL, profile=_PROFILE, address="A")
+    ctx = RuleContext(
+        left_graph=DefinitionView(_MODEL),
+        right_graph=ProfileView(_PROFILE),
+        address="A",
+    )
     issues = list(rule(ctx))
     assert issues == []
 
 
 def test_always_fail_rule_emits_one_issue():
     rule = _AlwaysFailRule()
-    ctx = RuleContext(graph_definition=_MODEL, profile=_PROFILE, address="X")
+    ctx = RuleContext(
+        left_graph=DefinitionView(_MODEL),
+        right_graph=ProfileView(_PROFILE),
+        address="X",
+    )
     issues = list(rule(ctx))
     assert len(issues) == 1
     assert issues[0].code == "TEST_FAILURE"
@@ -210,7 +219,11 @@ def test_rule_key_is_accessible():
 
 def test_rule_produces_validation_issue_instances():
     rule = _AlwaysFailRule()
-    ctx = RuleContext(graph_definition=_MODEL, profile=_PROFILE, address="A")
+    ctx = RuleContext(
+        left_graph=DefinitionView(_MODEL),
+        right_graph=ProfileView(_PROFILE),
+        address="A",
+    )
     for issue in rule(ctx):
         assert isinstance(issue, ValidationIssue)
 
@@ -293,8 +306,8 @@ _STD_PROFILE = GraphProfile(
 def _ctx(**kwargs: Any) -> RuleContext:
     """Shorthand: build a RuleContext with _STD_MODEL + _STD_PROFILE."""
     return RuleContext(
-        graph_definition=_STD_MODEL,
-        profile=_STD_PROFILE,
+        left_graph=DefinitionView(_STD_MODEL),
+        right_graph=ProfileView(_STD_PROFILE),
         **kwargs,
     )
 
@@ -306,7 +319,7 @@ def _ctx(**kwargs: Any) -> RuleContext:
 
 def test_missing_node_label_rule_code_and_severity():
     rule = MissingNodeLabelRule()
-    issues = list(rule(_ctx(address="Ghost")))
+    issues = list(rule(_ctx(address="Ghost", extra={"address_type": "node_label"})))
     assert len(issues) == 1
     assert issues[0].code == "MISSING_NODE_LABEL"
     assert issues[0].severity == Severity.ERROR
@@ -326,7 +339,9 @@ def test_missing_node_label_rule_satisfies_protocol():
 def test_unexpected_node_label_rule_code_and_severity():
     rule = UnexpectedNodeLabelRule()
     ntp = NodeTypeProfile(label="Extra", count=5)
-    issues = list(rule(_ctx(address="Extra", observed=ntp)))
+    issues = list(
+        rule(_ctx(address="Extra", right=ntp, extra={"address_type": "node_label"}))
+    )
     assert len(issues) == 1
     assert issues[0].code == "UNEXPECTED_NODE_LABEL"
     assert issues[0].severity == Severity.WARNING
@@ -344,7 +359,7 @@ def test_unexpected_node_label_rule_satisfies_protocol():
 
 def test_missing_rel_type_rule_code_and_severity():
     rule = MissingRelTypeRule()
-    issues = list(rule(_ctx(address="DIRECTED")))
+    issues = list(rule(_ctx(address="DIRECTED", extra={"address_type": "rel_type"})))
     assert len(issues) == 1
     assert issues[0].code == "MISSING_REL_TYPE"
     assert issues[0].severity == Severity.ERROR
@@ -362,7 +377,7 @@ def test_missing_rel_type_rule_satisfies_protocol():
 
 def test_unexpected_rel_type_rule_code_and_severity():
     rule = UnexpectedRelTypeRule()
-    issues = list(rule(_ctx(address="LIVES_IN")))
+    issues = list(rule(_ctx(address="LIVES_IN", extra={"address_type": "rel_type"})))
     assert len(issues) == 1
     assert issues[0].code == "UNEXPECTED_REL_TYPE"
     assert issues[0].severity == Severity.WARNING
@@ -384,8 +399,8 @@ def test_missing_property_rule_code_and_severity():
     rule = MissingPropertyRule()
     ctx = _ctx(
         address="Person.score",
-        declared=TypeInfo(python_type=int, is_required=True),
-        observed=None,
+        left=TypeInfo(python_type=int, is_required=True),
+        right=None,
         extra={"label": "Person", "prop_name": "score", "entity_type": EntityType.NODE},
     )
     issues = list(rule(ctx))
@@ -409,8 +424,8 @@ def test_unexpected_property_rule_code_and_severity():
     pp = PropertyProfile(name="bonus", present_count=2, total_count=2)
     ctx = _ctx(
         address="Person.bonus",
-        declared=None,
-        observed=pp,
+        left=None,
+        right=pp,
         extra={"label": "Person", "prop_name": "bonus", "entity_type": EntityType.NODE},
     )
     issues = list(rule(ctx))
@@ -436,8 +451,8 @@ def test_property_incomplete_rule_code_and_severity():
     # declared required=True, observed present_count < total_count → incomplete
     ctx = _ctx(
         address="Person.age",
-        declared=TypeInfo(python_type=int, is_required=True),
-        observed=PropertyProfile(name="age", present_count=1, total_count=2),
+        left=TypeInfo(python_type=int, is_required=True),
+        right=PropertyProfile(name="age", present_count=1, total_count=2),
         extra={"label": "Person", "prop_name": "age", "entity_type": EntityType.NODE},
     )
     issues = list(rule(ctx))
@@ -452,8 +467,8 @@ def test_property_incomplete_rule_no_issue_when_complete():
     rule = PropertyIncompleteRule()
     ctx = _ctx(
         address="Person.name",
-        declared=TypeInfo(python_type=str, is_required=True),
-        observed=PropertyProfile(name="name", present_count=2, total_count=2),
+        left=TypeInfo(python_type=str, is_required=True),
+        right=PropertyProfile(name="name", present_count=2, total_count=2),
         extra={"label": "Person", "prop_name": "name", "entity_type": EntityType.NODE},
     )
     assert list(rule(ctx)) == []
@@ -465,8 +480,8 @@ def test_property_incomplete_rule_no_issue_when_not_required():
     rule = PropertyIncompleteRule()
     ctx = _ctx(
         address="Person.age",
-        declared=TypeInfo(python_type=int, is_required=False),
-        observed=PropertyProfile(name="age", present_count=1, total_count=2),
+        left=TypeInfo(python_type=int, is_required=False),
+        right=PropertyProfile(name="age", present_count=1, total_count=2),
         extra={"label": "Person", "prop_name": "age", "entity_type": EntityType.NODE},
     )
     assert list(rule(ctx)) == []
@@ -488,8 +503,8 @@ def test_property_type_mismatch_rule_code_and_severity():
     # declared str, observed Long (maps to int) → mismatch
     ctx = _ctx(
         address="Person.age",
-        declared=TypeInfo(python_type=str, is_required=True),
-        observed=PropertyProfile(
+        left=TypeInfo(python_type=str, is_required=True),
+        right=PropertyProfile(
             name="age",
             present_count=2,
             total_count=2,
@@ -509,8 +524,8 @@ def test_property_type_mismatch_rule_no_issue_when_types_match():
     rule = PropertyTypeMismatchRule()
     ctx = _ctx(
         address="Person.name",
-        declared=TypeInfo(python_type=str, is_required=True),
-        observed=PropertyProfile(
+        left=TypeInfo(python_type=str, is_required=True),
+        right=PropertyProfile(
             name="name",
             present_count=2,
             total_count=2,
@@ -540,8 +555,8 @@ def test_invalid_endpoint_rule_code_and_severity():
     )
     ctx = _ctx(
         address="ACTED_IN",
-        declared=_ActedIn,
-        observed=rtp,
+        left=_ActedIn,
+        right=rtp,
     )
     issues = list(rule(ctx))
     assert len(issues) == 1
@@ -558,7 +573,7 @@ def test_invalid_endpoint_rule_no_issue_when_valid():
         source_labels={"Person"},
         target_labels={"Movie"},
     )
-    ctx = _ctx(address="ACTED_IN", declared=_ActedIn, observed=rtp)
+    ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
     assert list(rule(ctx)) == []
 
 
@@ -583,7 +598,7 @@ def test_cardinality_violation_rule_code_and_severity():
             min_degree=0, max_degree=3, avg_degree=1.5, sample_size=2
         ),
     )
-    ctx = _ctx(address="ACTED_IN", declared=_ActedIn, observed=rtp)
+    ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
     issues = list(rule(ctx))
     assert len(issues) == 1
     assert issues[0].code == "CARDINALITY_VIOLATION"
@@ -602,7 +617,7 @@ def test_cardinality_violation_rule_no_issue_when_satisfied():
             min_degree=1, max_degree=3, avg_degree=2.0, sample_size=2
         ),
     )
-    ctx = _ctx(address="ACTED_IN", declared=_ActedIn, observed=rtp)
+    ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
     assert list(rule(ctx)) == []
 
 
@@ -614,7 +629,7 @@ def test_cardinality_violation_rule_no_issue_when_no_stats():
         source_labels={"Person"},
         target_labels={"Movie"},
     )
-    ctx = _ctx(address="ACTED_IN", declared=_ActedIn, observed=rtp)
+    ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
     assert list(rule(ctx)) == []
 
 
@@ -710,7 +725,7 @@ def test_distinct_count_rule_emits_exactly_one_issue_when_exceeded():
     )
     ctx = _ctx(
         address="Person.status",
-        observed=pp,
+        right=pp,
         extra={
             "label": "Person",
             "prop_name": "status",
@@ -737,7 +752,7 @@ def test_distinct_count_rule_emits_zero_issues_when_within_bound():
     )
     ctx = _ctx(
         address="Person.status",
-        observed=pp,
+        right=pp,
         extra={
             "label": "Person",
             "prop_name": "status",
@@ -765,7 +780,7 @@ def test_distinct_count_rule_emits_zero_issues_when_not_populated():
     )
     ctx = _ctx(
         address="Person.x",
-        observed=pp,
+        right=pp,
         extra={
             "label": "Person",
             "prop_name": "x",
@@ -788,7 +803,7 @@ def test_distinct_count_rule_emits_zero_issues_without_declared_constraint():
     pp = PropertyProfile(name="x", present_count=5, total_count=5, distinct_count=99)
     ctx = _ctx(
         address="Person.x",
-        observed=pp,
+        right=pp,
         # no max_distinct_count in extra → constraint not declared
         extra={"label": "Person", "prop_name": "x", "entity_type": EntityType.NODE},
     )
@@ -830,7 +845,7 @@ def test_case_b_extension_via_injection():
     from collections.abc import Iterable as _Iterable
     from dataclasses import dataclass as _dc
 
-    from orthograph.comparison.engine import compare
+    from orthograph.comparison.engine import compare_profile_to_definition
     from orthograph.comparison.rules import standard_rules
     from orthograph.graph_profile.models import NodeTypeProfile
 
@@ -851,7 +866,7 @@ def test_case_b_extension_via_injection():
         def __call__(self, context: RuleContext) -> _Iterable[ValidationIssue]:
             from orthograph.graph_profile.models import PropertyProfile as _PP
 
-            prop_profile = context.observed
+            prop_profile = context.right
             if not isinstance(prop_profile, _PP):
                 return  # not a property context
             if prop_profile.distinct_count is None:
@@ -922,7 +937,7 @@ def test_case_b_extension_via_injection():
     # No changes to validation.py or rules.py required.
     # ------------------------------------------------------------------
     rules = standard_rules() + [BoundDistinctCountRule(max_distinct=100)]
-    result = compare(profile, _STD_MODEL, rules=rules)
+    result = compare_profile_to_definition(profile, _STD_MODEL, rules=rules)
 
     # --- exact counts ---
     distinct_issues = [i for i in result.issues if i.code == "DISTINCT_COUNT_EXCEEDED"]

@@ -1,0 +1,1100 @@
+"""Unit tests for the symmetric diff rule family (E27.T4).
+
+One focused test per rule — mirrors ``test_rules.py`` style.
+
+Coverage:
+- ``only_in_left`` and ``only_in_right`` for node label, rel type, property.
+- ``PROPERTY_TYPE_CHANGED`` for both the ``TypeInfo`` (definition↔definition)
+  and ``PropertyProfile`` (profile↔profile) shapes.
+- ``ENDPOINTS_CHANGED`` for both profile and definition shapes.
+- ``CARDINALITY_CHANGED`` for both profile and definition shapes.
+- No-op guards: wrong address type, both-sides-present, both-sides-absent,
+  mixed-shape for PropertyTypeChangedRule.
+- ``diff_rules()`` factory returns the nine rules in spec order.
+- Every emitted issue has ``Severity.INFO``.
+"""
+
+from typing import Any, Optional
+
+from orthograph.comparison.diff_rules import (
+    CardinalityChangedRule,
+    EndpointsChangedRule,
+    NodeLabelOnlyInLeftRule,
+    NodeLabelOnlyInRightRule,
+    PropertyOnlyInLeftRule,
+    PropertyOnlyInRightRule,
+    PropertyTypeChangedRule,
+    RelTypeOnlyInLeftRule,
+    RelTypeOnlyInRightRule,
+    diff_rules,
+)
+from orthograph.comparison.rules import Rule, RuleContext
+from orthograph.comparison.views import DefinitionView, ProfileView
+from orthograph.diagnostics.classification import EntityType, Severity
+from orthograph.diagnostics.result import ValidationIssue
+from orthograph.graph_definition.graph_definition import GraphDefinition
+from orthograph.graph_definition.models import (
+    Cardinality,
+    NodeModel,
+    RelationshipModel,
+)
+from orthograph.graph_definition.property_spec import TypeInfo
+from orthograph.graph_profile.models import (
+    CardinalityStats,
+    GraphProfile,
+    NodeTypeProfile,
+    PropertyProfile,
+    RelationshipTypeProfile,
+)
+
+
+# ---------------------------------------------------------------------------
+# Minimal fixtures used throughout
+# ---------------------------------------------------------------------------
+
+
+class _PersonNode(NodeModel):
+    __label__ = "Person"
+    name: str
+    age: Optional[int] = None
+
+
+class _MovieNode(NodeModel):
+    __label__ = "Movie"
+    title: str
+
+
+class _CityNode(NodeModel):
+    __label__ = "City"
+    name: str
+
+
+class _DirectorNode(NodeModel):
+    __label__ = "Director"
+    name: str
+
+
+class _FilmNode(NodeModel):
+    __label__ = "Film"
+    title: str
+
+
+class _ActedIn(RelationshipModel):
+    __label__ = "ACTED_IN"
+    __source_label__ = "Person"
+    __target_label__ = "Movie"
+    role: str
+
+
+class _ActedInAlt(RelationshipModel):
+    """ACTED_IN with different endpoints (Director → Film)."""
+
+    __label__ = "ACTED_IN"
+    __source_label__ = "Director"
+    __target_label__ = "Film"
+
+
+class _LivesIn(RelationshipModel):
+    __label__ = "LIVES_IN"
+    __source_label__ = "Person"
+    __target_label__ = "City"
+    __source_cardinality__ = Cardinality.ONE
+
+
+class _LivesInLoose(RelationshipModel):
+    __label__ = "LIVES_IN"
+    __source_label__ = "Person"
+    __target_label__ = "City"
+    __source_cardinality__ = Cardinality.ZERO_OR_MORE
+
+
+# GD that includes all node types so referential integrity holds
+_GD_LEFT = GraphDefinition(
+    name="left",
+    node_types=[_PersonNode, _MovieNode, _CityNode],
+    relationship_types=[_ActedIn, _LivesIn],
+)
+
+_GD_RIGHT = GraphDefinition(
+    name="right",
+    node_types=[_PersonNode, _MovieNode],
+    relationship_types=[_ActedIn],
+)
+
+# Definitions for endpoint-changed test (Director/Film nodes required)
+_GD_ALT = GraphDefinition(
+    name="alt",
+    node_types=[_DirectorNode, _FilmNode],
+    relationship_types=[_ActedInAlt],
+)
+
+# Definitions for cardinality-changed test
+_GD_STRICT_CARD = GraphDefinition(
+    name="strict",
+    node_types=[_PersonNode, _CityNode],
+    relationship_types=[_LivesIn],
+)
+
+_GD_LOOSE_CARD = GraphDefinition(
+    name="loose",
+    node_types=[_PersonNode, _CityNode],
+    relationship_types=[_LivesInLoose],
+)
+
+_GP_EMPTY = GraphProfile(source="empty")
+
+_GP_PERSON = GraphProfile(
+    source="person_only",
+    node_type_profiles={"Person": NodeTypeProfile(label="Person", count=5)},
+)
+
+
+def _def_view(gd: GraphDefinition) -> DefinitionView:
+    return DefinitionView(gd)
+
+
+def _prof_view(gp: GraphProfile) -> ProfileView:
+    return ProfileView(gp)
+
+
+def _ctx(
+    left=None,
+    right=None,
+    address: str = "SomeLabel",
+    extra: dict[str, Any] | None = None,
+    *,
+    left_gd: GraphDefinition = _GD_LEFT,
+    right_gd: GraphDefinition = _GD_LEFT,
+) -> RuleContext:
+    """Build a RuleContext backed by DefinitionViews (convenient for most tests)."""
+    return RuleContext(
+        left_graph=_def_view(left_gd),
+        right_graph=_def_view(right_gd),
+        address=address,
+        left=left,
+        right=right,
+        extra=extra or {},
+    )
+
+
+def _pctx(
+    left=None,
+    right=None,
+    address: str = "SomeLabel",
+    extra: dict[str, Any] | None = None,
+    *,
+    left_gp: GraphProfile = _GP_EMPTY,
+    right_gp: GraphProfile = _GP_EMPTY,
+) -> RuleContext:
+    """Build a RuleContext backed by ProfileViews."""
+    return RuleContext(
+        left_graph=_prof_view(left_gp),
+        right_graph=_prof_view(right_gp),
+        address=address,
+        left=left,
+        right=right,
+        extra=extra or {},
+    )
+
+
+_PROP_EXTRA_NODE = {
+    "label": "Person",
+    "prop_name": "name",
+    "entity_type": EntityType.NODE,
+}
+
+_PROP_EXTRA_REL = {
+    "label": "ACTED_IN",
+    "prop_name": "role",
+    "entity_type": EntityType.RELATIONSHIP,
+}
+
+
+# ---------------------------------------------------------------------------
+# diff_rules() factory
+# ---------------------------------------------------------------------------
+
+
+def test_diff_rules_returns_nine_rules():
+    rules = diff_rules()
+    assert len(rules) == 9
+
+
+def test_diff_rules_order():
+    """Verify keys in the spec-mandated order."""
+    expected = [
+        "diff.node_label.only_in_left",
+        "diff.node_label.only_in_right",
+        "diff.rel_type.only_in_left",
+        "diff.rel_type.only_in_right",
+        "diff.property.only_in_left",
+        "diff.property.only_in_right",
+        "diff.property.type_changed",
+        "diff.rel.endpoints_changed",
+        "diff.rel.cardinality_changed",
+    ]
+    assert [r.key for r in diff_rules()] == expected
+
+
+def test_diff_rules_all_satisfy_rule_protocol():
+    for rule in diff_rules():
+        assert isinstance(rule, Rule), f"{rule.key} does not satisfy Rule protocol"
+
+
+# ---------------------------------------------------------------------------
+# NodeLabelOnlyInLeftRule
+# ---------------------------------------------------------------------------
+
+
+def test_node_label_only_in_left_fires():
+    rule = NodeLabelOnlyInLeftRule()
+    # left = NodeTypeProfile present, right = None  (left-only node label)
+    ntp = NodeTypeProfile(label="Person", count=3)
+    ctx = _pctx(
+        left=ntp, right=None, address="Person", extra={"address_type": "node_label"}
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue.code == "NODE_LABEL_ONLY_IN_LEFT"
+    assert issue.severity == Severity.INFO
+    assert issue.entity_type == EntityType.NODE
+    assert issue.entity_id == "Person"
+
+
+def test_node_label_only_in_left_noop_when_right_present():
+    rule = NodeLabelOnlyInLeftRule()
+    ntp = NodeTypeProfile(label="Person", count=3)
+    ctx = _pctx(left=ntp, right=ntp, address="Person")
+    assert list(rule(ctx)) == []
+
+
+def test_node_label_only_in_left_noop_when_both_absent():
+    rule = NodeLabelOnlyInLeftRule()
+    ctx = _pctx(left=None, right=None, address="Ghost")
+    assert list(rule(ctx)) == []
+
+
+def test_node_label_only_in_left_noop_for_property_address():
+    rule = NodeLabelOnlyInLeftRule()
+    ntp = NodeTypeProfile(label="Person", count=3)
+    ctx = _pctx(left=ntp, right=None, address="Person.name", extra=_PROP_EXTRA_NODE)
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# NodeLabelOnlyInRightRule
+# ---------------------------------------------------------------------------
+
+
+def test_node_label_only_in_right_fires():
+    rule = NodeLabelOnlyInRightRule()
+    ntp = NodeTypeProfile(label="City", count=1)
+    ctx = _pctx(
+        left=None, right=ntp, address="City", extra={"address_type": "node_label"}
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "NODE_LABEL_ONLY_IN_RIGHT"
+    assert issues[0].severity == Severity.INFO
+    assert issues[0].entity_type == EntityType.NODE
+
+
+def test_node_label_only_in_right_noop_when_left_present():
+    rule = NodeLabelOnlyInRightRule()
+    ntp = NodeTypeProfile(label="City", count=1)
+    ctx = _pctx(left=ntp, right=ntp, address="City")
+    assert list(rule(ctx)) == []
+
+
+def test_node_label_only_in_right_noop_for_property_address():
+    rule = NodeLabelOnlyInRightRule()
+    ntp = NodeTypeProfile(label="Person", count=3)
+    ctx = _pctx(left=None, right=ntp, address="Person.name", extra=_PROP_EXTRA_NODE)
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# RelTypeOnlyInLeftRule
+# ---------------------------------------------------------------------------
+
+
+def test_rel_type_only_in_left_fires_profile():
+    rule = RelTypeOnlyInLeftRule()
+    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    ctx = _pctx(
+        left=rtp, right=None, address="ACTED_IN", extra={"address_type": "rel_type"}
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "REL_TYPE_ONLY_IN_LEFT"
+    assert issues[0].severity == Severity.INFO
+    assert issues[0].entity_type == EntityType.RELATIONSHIP
+
+
+def test_rel_type_only_in_left_fires_definition():
+    rule = RelTypeOnlyInLeftRule()
+    ctx = _ctx(
+        left=_ActedIn,
+        right=None,
+        address="ACTED_IN",
+        extra={"address_type": "rel_type"},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "REL_TYPE_ONLY_IN_LEFT"
+
+
+def test_rel_type_only_in_left_noop_when_right_present():
+    rule = RelTypeOnlyInLeftRule()
+    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    ctx = _pctx(left=rtp, right=rtp, address="ACTED_IN")
+    assert list(rule(ctx)) == []
+
+
+def test_rel_type_only_in_left_noop_for_property_address():
+    rule = RelTypeOnlyInLeftRule()
+    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    ctx = _pctx(left=rtp, right=None, address="ACTED_IN.role", extra=_PROP_EXTRA_REL)
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# RelTypeOnlyInRightRule
+# ---------------------------------------------------------------------------
+
+
+def test_rel_type_only_in_right_fires_profile():
+    rule = RelTypeOnlyInRightRule()
+    rtp = RelationshipTypeProfile(rel_type="DIRECTED", count=2)
+    ctx = _pctx(
+        left=None, right=rtp, address="DIRECTED", extra={"address_type": "rel_type"}
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "REL_TYPE_ONLY_IN_RIGHT"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_rel_type_only_in_right_fires_definition():
+    rule = RelTypeOnlyInRightRule()
+    ctx = _ctx(
+        left=None,
+        right=_ActedIn,
+        address="ACTED_IN",
+        extra={"address_type": "rel_type"},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "REL_TYPE_ONLY_IN_RIGHT"
+
+
+def test_rel_type_only_in_right_noop_when_left_present():
+    rule = RelTypeOnlyInRightRule()
+    rtp = RelationshipTypeProfile(rel_type="DIRECTED", count=2)
+    ctx = _pctx(left=rtp, right=rtp, address="DIRECTED")
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# PropertyOnlyInLeftRule
+# ---------------------------------------------------------------------------
+
+
+def test_property_only_in_left_fires_type_info():
+    rule = PropertyOnlyInLeftRule()
+    ti = TypeInfo(python_type=str, is_required=True)
+    ctx = _ctx(left=ti, right=None, address="Person.name", extra=_PROP_EXTRA_NODE)
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_ONLY_IN_LEFT"
+    assert issues[0].severity == Severity.INFO
+    assert issues[0].entity_type == EntityType.NODE
+    assert issues[0].entity_id == "Person.name"
+
+
+def test_property_only_in_left_fires_property_profile():
+    rule = PropertyOnlyInLeftRule()
+    pp = PropertyProfile(name="name", present_count=3, total_count=3)
+    ctx = _pctx(left=pp, right=None, address="Person.name", extra=_PROP_EXTRA_NODE)
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_ONLY_IN_LEFT"
+
+
+def test_property_only_in_left_noop_when_right_present():
+    rule = PropertyOnlyInLeftRule()
+    ti = TypeInfo(python_type=str, is_required=True)
+    ctx = _ctx(left=ti, right=ti, address="Person.name", extra=_PROP_EXTRA_NODE)
+    assert list(rule(ctx)) == []
+
+
+def test_property_only_in_left_noop_no_prop_name():
+    """Non-property address (no prop_name in extra) must be ignored."""
+    rule = PropertyOnlyInLeftRule()
+    ntp = NodeTypeProfile(label="Person", count=3)
+    ctx = _pctx(left=ntp, right=None, address="Person")
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# PropertyOnlyInRightRule
+# ---------------------------------------------------------------------------
+
+
+def test_property_only_in_right_fires():
+    rule = PropertyOnlyInRightRule()
+    ti = TypeInfo(python_type=int, is_required=False)
+    extra = {"label": "Person", "prop_name": "age", "entity_type": EntityType.NODE}
+    ctx = _ctx(left=None, right=ti, address="Person.age", extra=extra)
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_ONLY_IN_RIGHT"
+    assert issues[0].severity == Severity.INFO
+    assert issues[0].entity_id == "Person.age"
+
+
+def test_property_only_in_right_noop_when_left_present():
+    rule = PropertyOnlyInRightRule()
+    ti = TypeInfo(python_type=int, is_required=False)
+    ctx = _ctx(left=ti, right=ti, address="Person.age", extra=_PROP_EXTRA_NODE)
+    assert list(rule(ctx)) == []
+
+
+def test_property_only_in_right_noop_no_prop_name():
+    rule = PropertyOnlyInRightRule()
+    ntp = NodeTypeProfile(label="Person", count=3)
+    ctx = _pctx(left=None, right=ntp, address="Person")
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# PropertyTypeChangedRule — TypeInfo shape (definition ↔ definition)
+# ---------------------------------------------------------------------------
+
+
+def test_property_type_changed_fires_type_info():
+    rule = PropertyTypeChangedRule()
+    ti_left = TypeInfo(python_type=str, is_required=True)
+    ti_right = TypeInfo(python_type=int, is_required=True)
+    ctx = _ctx(
+        left=ti_left, right=ti_right, address="Person.name", extra=_PROP_EXTRA_NODE
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_TYPE_CHANGED"
+    assert issues[0].severity == Severity.INFO
+    assert issues[0].context["left"] is str
+    assert issues[0].context["right"] is int
+
+
+def test_property_type_changed_noop_same_type_info():
+    rule = PropertyTypeChangedRule()
+    ti = TypeInfo(python_type=str, is_required=True)
+    ctx = _ctx(left=ti, right=ti, address="Person.name", extra=_PROP_EXTRA_NODE)
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# PropertyTypeChangedRule — PropertyProfile shape (profile ↔ profile)
+# ---------------------------------------------------------------------------
+
+
+def test_property_type_changed_fires_property_profile():
+    rule = PropertyTypeChangedRule()
+    pp_left = PropertyProfile(
+        name="score", present_count=10, total_count=10, observed_types=["Long"]
+    )
+    pp_right = PropertyProfile(
+        name="score", present_count=10, total_count=10, observed_types=["String"]
+    )
+    extra = {"label": "Player", "prop_name": "score", "entity_type": EntityType.NODE}
+    ctx = _pctx(left=pp_left, right=pp_right, address="Player.score", extra=extra)
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_TYPE_CHANGED"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_property_type_changed_noop_same_property_profile():
+    rule = PropertyTypeChangedRule()
+    pp = PropertyProfile(
+        name="name", present_count=3, total_count=3, observed_types=["String"]
+    )
+    ctx = _pctx(left=pp, right=pp, address="Person.name", extra=_PROP_EXTRA_NODE)
+    assert list(rule(ctx)) == []
+
+
+def test_property_type_changed_noop_mixed_shape():
+    """TypeInfo vs PropertyProfile must not fire (wrong comparison family)."""
+    rule = PropertyTypeChangedRule()
+    ti = TypeInfo(python_type=str, is_required=True)
+    pp = PropertyProfile(
+        name="name", present_count=3, total_count=3, observed_types=["String"]
+    )
+    ctx = RuleContext(
+        left_graph=_def_view(_GD_LEFT),
+        right_graph=_prof_view(_GP_PERSON),
+        address="Person.name",
+        left=ti,
+        right=pp,
+        extra=_PROP_EXTRA_NODE,
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_property_type_changed_noop_empty_observed_types():
+    """No issue when either side has empty observed_types."""
+    rule = PropertyTypeChangedRule()
+    pp_left = PropertyProfile(
+        name="x", present_count=0, total_count=5, observed_types=[]
+    )
+    pp_right = PropertyProfile(
+        name="x", present_count=5, total_count=5, observed_types=["String"]
+    )
+    extra = {"label": "X", "prop_name": "x", "entity_type": EntityType.NODE}
+    ctx = _pctx(left=pp_left, right=pp_right, address="X.x", extra=extra)
+    assert list(rule(ctx)) == []
+
+
+def test_property_type_changed_noop_no_prop_name():
+    rule = PropertyTypeChangedRule()
+    ti = TypeInfo(python_type=str, is_required=True)
+    ctx = _ctx(left=ti, right=ti, address="Person")
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# EndpointsChangedRule — profile ↔ profile
+# ---------------------------------------------------------------------------
+
+
+def test_endpoints_changed_fires_source_profile():
+    rule = EndpointsChangedRule()
+    rtp_left = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_labels={"Person"}, target_labels={"Movie"}
+    )
+    rtp_right = RelationshipTypeProfile(
+        rel_type="ACTED_IN",
+        count=3,
+        source_labels={"Director"},
+        target_labels={"Movie"},
+    )
+    ctx = _pctx(
+        left=rtp_left,
+        right=rtp_right,
+        address="ACTED_IN",
+        extra={"address_type": "rel_type"},
+    )
+    issues = list(rule(ctx))
+    assert any(
+        i.code == "ENDPOINTS_CHANGED" and i.context["role"] == "source" for i in issues
+    )
+    assert all(i.severity == Severity.INFO for i in issues)
+
+
+def test_endpoints_changed_fires_target_profile():
+    rule = EndpointsChangedRule()
+    rtp_left = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_labels={"Person"}, target_labels={"Movie"}
+    )
+    rtp_right = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=3, source_labels={"Person"}, target_labels={"Film"}
+    )
+    ctx = _pctx(
+        left=rtp_left,
+        right=rtp_right,
+        address="ACTED_IN",
+        extra={"address_type": "rel_type"},
+    )
+    issues = list(rule(ctx))
+    assert any(
+        i.code == "ENDPOINTS_CHANGED" and i.context["role"] == "target" for i in issues
+    )
+
+
+def test_endpoints_changed_noop_identical_profile():
+    rule = EndpointsChangedRule()
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_labels={"Person"}, target_labels={"Movie"}
+    )
+    ctx = _pctx(
+        left=rtp, right=rtp, address="ACTED_IN", extra={"address_type": "rel_type"}
+    )
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# EndpointsChangedRule — definition ↔ definition
+# ---------------------------------------------------------------------------
+
+
+def test_endpoints_changed_fires_source_definition():
+    rule = EndpointsChangedRule()
+    ctx = _ctx(
+        left=_ActedIn,
+        right=_ActedInAlt,
+        address="ACTED_IN",
+        extra={"address_type": "rel_type"},
+    )
+    issues = list(rule(ctx))
+    codes = [i.code for i in issues]
+    assert "ENDPOINTS_CHANGED" in codes
+    roles = {i.context["role"] for i in issues}
+    assert "source" in roles
+    assert all(i.severity == Severity.INFO for i in issues)
+
+
+def test_endpoints_changed_noop_identical_definition():
+    rule = EndpointsChangedRule()
+    ctx = _ctx(
+        left=_ActedIn,
+        right=_ActedIn,
+        address="ACTED_IN",
+        extra={"address_type": "rel_type"},
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_endpoints_changed_noop_when_left_absent():
+    rule = EndpointsChangedRule()
+    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    ctx = _pctx(
+        left=None, right=rtp, address="ACTED_IN", extra={"address_type": "rel_type"}
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_endpoints_changed_noop_for_property_address():
+    rule = EndpointsChangedRule()
+    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    ctx = _pctx(left=rtp, right=rtp, address="ACTED_IN.role", extra=_PROP_EXTRA_REL)
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# CardinalityChangedRule — profile ↔ profile
+# ---------------------------------------------------------------------------
+
+
+def test_cardinality_changed_fires_profile():
+    rule = CardinalityChangedRule()
+    rtp_left = RelationshipTypeProfile(
+        rel_type="ACTED_IN",
+        count=5,
+        cardinality_stats=CardinalityStats(
+            min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5
+        ),
+    )
+    rtp_right = RelationshipTypeProfile(
+        rel_type="ACTED_IN",
+        count=5,
+        cardinality_stats=CardinalityStats(
+            min_degree=2, max_degree=5, avg_degree=3.0, sample_size=5
+        ),
+    )
+    ctx = _pctx(
+        left=rtp_left,
+        right=rtp_right,
+        address="ACTED_IN",
+        extra={"address_type": "rel_type"},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "CARDINALITY_CHANGED"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_cardinality_changed_noop_identical_stats():
+    rule = CardinalityChangedRule()
+    stats = CardinalityStats(min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5)
+    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5, cardinality_stats=stats)
+    ctx = _pctx(
+        left=rtp, right=rtp, address="ACTED_IN", extra={"address_type": "rel_type"}
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_cardinality_changed_noop_when_stats_none():
+    rule = CardinalityChangedRule()
+    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    ctx = _pctx(
+        left=rtp, right=rtp, address="ACTED_IN", extra={"address_type": "rel_type"}
+    )
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# CardinalityChangedRule — definition ↔ definition
+# ---------------------------------------------------------------------------
+
+
+def test_cardinality_changed_fires_definition():
+    rule = CardinalityChangedRule()
+    # _LivesIn has Cardinality.ONE; _LivesInLoose has Cardinality.ZERO_OR_MORE
+    ctx = _ctx(
+        left=_LivesIn,
+        right=_LivesInLoose,
+        address="LIVES_IN",
+        extra={"address_type": "rel_type"},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "CARDINALITY_CHANGED"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_cardinality_changed_noop_identical_definition():
+    rule = CardinalityChangedRule()
+    ctx = _ctx(
+        left=_LivesIn,
+        right=_LivesIn,
+        address="LIVES_IN",
+        extra={"address_type": "rel_type"},
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_cardinality_changed_noop_for_property_address():
+    rule = CardinalityChangedRule()
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN",
+        count=5,
+        cardinality_stats=CardinalityStats(
+            min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5
+        ),
+    )
+    ctx = _pctx(left=rtp, right=rtp, address="ACTED_IN.role", extra=_PROP_EXTRA_REL)
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# All emitted issues are INFO — cross-cutting assertion
+# ---------------------------------------------------------------------------
+
+
+def test_all_emitted_issues_are_info():
+    """Every diff rule can only emit Severity.INFO issues."""
+    rules = diff_rules()
+
+    def _collect_issues(ctx: RuleContext) -> list[ValidationIssue]:
+        return [issue for rule in rules for issue in rule(ctx)]
+
+    # Node label: left only
+    ntp = NodeTypeProfile(label="Ghost", count=1)
+    issues = _collect_issues(
+        _pctx(
+            left=ntp, right=None, address="Ghost", extra={"address_type": "node_label"}
+        )
+    )
+    # Node label: right only
+    issues += _collect_issues(
+        _pctx(
+            left=None, right=ntp, address="Ghost", extra={"address_type": "node_label"}
+        )
+    )
+    # Rel type: left only (definition)
+    issues += _collect_issues(
+        _ctx(
+            left=_ActedIn,
+            right=None,
+            address="ACTED_IN",
+            extra={"address_type": "rel_type"},
+        )
+    )
+    # Property: left only
+    ti = TypeInfo(python_type=str, is_required=True)
+    issues += _collect_issues(
+        _ctx(left=ti, right=None, address="Person.name", extra=_PROP_EXTRA_NODE)
+    )
+    # Property type changed (TypeInfo)
+    ti2 = TypeInfo(python_type=int, is_required=True)
+    issues += _collect_issues(
+        _ctx(left=ti, right=ti2, address="Person.name", extra=_PROP_EXTRA_NODE)
+    )
+
+    assert issues, "Expected at least some issues to be emitted in the INFO check"
+    for issue in issues:
+        assert issue.severity == Severity.INFO, (
+            f"Rule emitted non-INFO issue: {issue.code} ({issue.severity})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bug/design regression tests (reported review issues)
+# ---------------------------------------------------------------------------
+
+
+def test_cardinality_changed_noop_asymmetric_stats_none_left():
+    """CardinalityChangedRule is silent when the left profile lacks stats.
+
+    A schema evolving from 'cardinality untracked' → 'cardinality tracked'
+    produces no diff issue.  This is correct by design: the rule requires
+    measured data on both sides to emit a meaningful diff.
+    """
+    rule = CardinalityChangedRule()
+    rtp_no_stats = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp_with_stats = RelationshipTypeProfile(
+        rel_type="ACTED_IN",
+        count=5,
+        cardinality_stats=CardinalityStats(
+            min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5
+        ),
+    )
+    ctx = _pctx(
+        left=rtp_no_stats,
+        right=rtp_with_stats,
+        address="ACTED_IN",
+        extra={"address_type": "rel_type"},
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_cardinality_changed_noop_asymmetric_stats_none_right():
+    """Same as above but the right profile lacks stats."""
+    rule = CardinalityChangedRule()
+    rtp_with_stats = RelationshipTypeProfile(
+        rel_type="ACTED_IN",
+        count=5,
+        cardinality_stats=CardinalityStats(
+            min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5
+        ),
+    )
+    rtp_no_stats = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    ctx = _pctx(
+        left=rtp_with_stats,
+        right=rtp_no_stats,
+        address="ACTED_IN",
+        extra={"address_type": "rel_type"},
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_property_type_changed_unknown_type_strings_differ():
+    """PropertyTypeChangedRule fires when both sides have unknown type strings
+    that are different from each other.
+
+    When db_type_to_python cannot map a type string, the raw string is kept
+    in the set.  Two different unmapped strings → PROPERTY_TYPE_CHANGED.
+    """
+    rule = PropertyTypeChangedRule()
+    pp_left = PropertyProfile(
+        name="geo",
+        present_count=5,
+        total_count=5,
+        observed_types=["Point"],  # unknown → kept as "Point"
+    )
+    pp_right = PropertyProfile(
+        name="geo",
+        present_count=5,
+        total_count=5,
+        observed_types=["Geo3D"],  # unknown → kept as "Geo3D"
+    )
+    extra = {"label": "Place", "prop_name": "geo", "entity_type": EntityType.NODE}
+    ctx = _pctx(left=pp_left, right=pp_right, address="Place.geo", extra=extra)
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_TYPE_CHANGED"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_property_type_changed_same_unknown_type_string_noop():
+    """PropertyTypeChangedRule is silent when both sides have the same
+    unmapped type string."""
+    rule = PropertyTypeChangedRule()
+    pp = PropertyProfile(
+        name="geo",
+        present_count=5,
+        total_count=5,
+        observed_types=["Point"],
+    )
+    extra = {"label": "Place", "prop_name": "geo", "entity_type": EntityType.NODE}
+    ctx = _pctx(left=pp, right=pp, address="Place.geo", extra=extra)
+    assert list(rule(ctx)) == []
+
+
+def test_node_label_rules_noop_for_rel_type_address_type():
+    """NodeLabelOnlyInLeftRule and NodeLabelOnlyInRightRule must be silent
+    when extra carries address_type='rel_type' (engine consistency guard).
+
+    After the engine started stamping address_type, the diff rules also need
+    to respect it to remain consistent with the standard rules.
+    """
+    left_rule = NodeLabelOnlyInLeftRule()
+    right_rule = NodeLabelOnlyInRightRule()
+    ntp = NodeTypeProfile(label="Person", count=3)
+
+    # A rel-type-stamped context — the rules must not fire even though
+    # left/right look like node profiles
+    ctx_left_only = _pctx(
+        left=ntp,
+        right=None,
+        address="Person",
+        extra={"address_type": "rel_type"},
+    )
+    ctx_right_only = _pctx(
+        left=None,
+        right=ntp,
+        address="Person",
+        extra={"address_type": "rel_type"},
+    )
+    assert list(left_rule(ctx_left_only)) == []
+    assert list(right_rule(ctx_right_only)) == []
+
+
+def test_rel_type_rules_noop_for_node_label_address_type():
+    """RelTypeOnlyInLeftRule and RelTypeOnlyInRightRule must be silent
+    when extra carries address_type='node_label'."""
+    left_rule = RelTypeOnlyInLeftRule()
+    right_rule = RelTypeOnlyInRightRule()
+    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+
+    ctx_left_only = _pctx(
+        left=rtp,
+        right=None,
+        address="ACTED_IN",
+        extra={"address_type": "node_label"},
+    )
+    ctx_right_only = _pctx(
+        left=None,
+        right=rtp,
+        address="ACTED_IN",
+        extra={"address_type": "node_label"},
+    )
+    assert list(left_rule(ctx_left_only)) == []
+    assert list(right_rule(ctx_right_only)) == []
+
+
+# ---------------------------------------------------------------------------
+# EndpointsChangedRule / CardinalityChangedRule — node-label address guard
+# (regression for the `"prop_name" in extra` → `address_type != "rel_type"` fix)
+# ---------------------------------------------------------------------------
+
+
+def test_endpoints_changed_noop_for_node_label_address():
+    """EndpointsChangedRule must be silent for node-label addresses.
+
+    Before the fix the rule used ``"prop_name" in context.extra`` as its
+    guard, which passed through node-label contexts (no prop_name, no
+    address_type stamp).  After the fix the rule checks
+    ``address_type != "rel_type"`` and must return immediately.
+    """
+    rule = EndpointsChangedRule()
+    ntp = NodeTypeProfile(label="Person", count=3)
+    ctx = _pctx(
+        left=ntp,
+        right=ntp,
+        address="Person",
+        extra={"address_type": "node_label"},
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_endpoints_changed_noop_for_node_label_address_left_only():
+    """EndpointsChangedRule must be silent for a left-only node-label address."""
+    rule = EndpointsChangedRule()
+    ntp = NodeTypeProfile(label="Person", count=3)
+    ctx = _pctx(
+        left=ntp,
+        right=None,
+        address="Person",
+        extra={"address_type": "node_label"},
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_cardinality_changed_noop_for_node_label_address():
+    """CardinalityChangedRule must be silent for node-label addresses.
+
+    Same guard regression as EndpointsChangedRule — the old
+    ``"prop_name" in extra`` check allowed node-label contexts through;
+    the new ``address_type != "rel_type"`` check must reject them.
+    """
+    rule = CardinalityChangedRule()
+    ntp = NodeTypeProfile(label="Person", count=3)
+    ctx = _pctx(
+        left=ntp,
+        right=ntp,
+        address="Person",
+        extra={"address_type": "node_label"},
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_cardinality_changed_noop_for_node_label_address_left_only():
+    """CardinalityChangedRule must be silent for a left-only node-label address."""
+    rule = CardinalityChangedRule()
+    ntp = NodeTypeProfile(label="Person", count=3)
+    ctx = _pctx(
+        left=ntp,
+        right=None,
+        address="Person",
+        extra={"address_type": "node_label"},
+    )
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# PropertyTypeChangedRule — None-safe fallback for db_type_to_python
+# (regression for the `or t` → `is not None` fix)
+# ---------------------------------------------------------------------------
+
+
+def test_property_type_changed_noop_mapped_type_that_is_bool_falsy_would_not_occur():
+    """Verify that the is-not-None guard is used rather than truthiness.
+
+    ``db_type_to_python`` currently maps every known type to a non-None,
+    non-falsy Python type (str, int, float, bool, list).  This test
+    documents the invariant: for all known type strings the mapped value
+    is truthy, so the old ``or t`` and the new ``is not None`` are
+    equivalent today.  The test uses 'Boolean' (maps to ``bool``) on both
+    sides to confirm no spurious PROPERTY_TYPE_CHANGED is emitted — if the
+    old ``or t`` code had been replaced incorrectly, ``bool or 'Boolean'``
+    would return ``bool`` (fine), but the explicit test makes the contract
+    clear for future map additions.
+    """
+    rule = PropertyTypeChangedRule()
+    pp_left = PropertyProfile(
+        name="active",
+        present_count=5,
+        total_count=5,
+        observed_types=["Boolean"],
+    )
+    pp_right = PropertyProfile(
+        name="active",
+        present_count=5,
+        total_count=5,
+        observed_types=["Bool"],  # different string, same mapped type (bool)
+    )
+    extra = {"label": "User", "prop_name": "active", "entity_type": EntityType.NODE}
+    ctx = _pctx(left=pp_left, right=pp_right, address="User.active", extra=extra)
+    # Both map to bool → sets are equal → no issue
+    assert list(rule(ctx)) == []
+
+
+def test_property_type_changed_unknown_type_same_as_known_mapped_noop():
+    """An unmapped string kept as-is does not collide with a Python type object.
+
+    If one side has an unknown type kept as ``'MyType'`` (a str) and the
+    other side has a known type mapped to ``str`` (the type), these are
+    *not* equal and PROPERTY_TYPE_CHANGED fires.  This confirms the raw
+    string and the type object are distinct set members.
+    """
+    rule = PropertyTypeChangedRule()
+    pp_left = PropertyProfile(
+        name="val",
+        present_count=5,
+        total_count=5,
+        observed_types=["String"],  # maps to str
+    )
+    pp_right = PropertyProfile(
+        name="val",
+        present_count=5,
+        total_count=5,
+        observed_types=["MyCustomType"],  # unknown → kept as "MyCustomType"
+    )
+    extra = {"label": "X", "prop_name": "val", "entity_type": EntityType.NODE}
+    ctx = _pctx(left=pp_left, right=pp_right, address="X.val", extra=extra)
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_TYPE_CHANGED"

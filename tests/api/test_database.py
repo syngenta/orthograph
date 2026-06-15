@@ -271,12 +271,12 @@ def test_query_bad_params_raise_before_session_run() -> None:
 
 
 def test_validate_with_custom_rules_sees_custom_issue() -> None:
-    """A custom rule injected via compare is applied and its issue
+    """A custom rule injected via compare_profile_to_definition is applied and its issue
     is returned in the result."""
     from collections.abc import Iterable
     from dataclasses import dataclass
 
-    from orthograph.comparison.engine import compare
+    from orthograph.comparison.engine import compare_profile_to_definition
     from orthograph.comparison.rules import RuleContext
     from orthograph.diagnostics.classification import EntityType, Severity
     from orthograph.diagnostics.result import ValidationIssue
@@ -300,7 +300,7 @@ def test_validate_with_custom_rules_sees_custom_issue() -> None:
         source="test",
         node_type_profiles={"Person": NodeTypeProfile(label="Person", count=1)},
     )
-    result = compare(profile, model, rules=[SentinelRule()])
+    result = compare_profile_to_definition(profile, model, rules=[SentinelRule()])
     codes = [i.code for i in result.issues]
     assert "SENTINEL" in codes
 
@@ -349,11 +349,11 @@ def test_validate_api_with_custom_rules_sees_custom_issue() -> None:
 
 def test_validate_with_empty_rules_emits_no_standard_issues() -> None:
     """Passing rules=[] suppresses the standard rule set entirely."""
-    from orthograph.comparison.engine import compare
+    from orthograph.comparison.engine import compare_profile_to_definition
     from orthograph.graph_profile.models import GraphProfile
 
     model = GraphDefinition(name="test", node_types=[Person], relationship_types=[])
     # Profile intentionally missing Person — would normally raise MISSING_NODE_LABEL
     profile = GraphProfile(source="test")
-    result = compare(profile, model, rules=[])
+    result = compare_profile_to_definition(profile, model, rules=[])
     assert result.issues == []

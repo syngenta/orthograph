@@ -9,7 +9,7 @@ import pytest
 from orthograph.api.visualization import render_model
 from orthograph.backends.networkx.conversion import schema_to_networkx
 from orthograph.backends.networkx.inspector import NetworkxInspector
-from orthograph.comparison.engine import compare
+from orthograph.comparison.engine import compare_profile_to_definition
 from orthograph.cypher.generator import CypherGenerator
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
@@ -241,7 +241,7 @@ def test_chemistry_inspect_and_validate_nx(chemistry_model: GraphDefinition):
     assert "Molecule" in profile.node_labels
     assert "REACTANT" in profile.relationship_types
 
-    result = compare(profile, chemistry_model)
+    result = compare_profile_to_definition(profile, chemistry_model)
     # This will have warnings/errors for missing types (not all types in graph)
     # but the profile itself should be structurally valid
     assert isinstance(result.is_valid, bool)

@@ -14,7 +14,7 @@ from orthograph.backends.neo4j.queries import (
     build_apoc_catalogue,
     build_cypher_catalogue,
 )
-from orthograph.comparison.engine import compare
+from orthograph.comparison.engine import compare_profile_to_definition
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_profile.inspection import CypherInspector
@@ -209,4 +209,4 @@ def validate_database(
 ) -> ValidationResult:
     """Validate a Neo4j database against a GraphDefinition."""
     profile = Neo4jInspector().inspect(connection, database=database)
-    return compare(profile, graph_definition)
+    return compare_profile_to_definition(profile, graph_definition)

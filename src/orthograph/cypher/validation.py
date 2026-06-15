@@ -7,7 +7,7 @@ model.  Imperative or non-Cypher queries are reported as ``QUERY_UNVERIFIABLE``
 
 from collections.abc import Sequence
 
-from orthograph.comparison.engine import compare
+from orthograph.comparison.engine import compare_profile_to_definition
 from orthograph.comparison.rules import Rule
 from orthograph.cypher.parser import validate_cypher
 from orthograph.diagnostics.classification import EntityType, Severity
@@ -80,5 +80,5 @@ def validate_query_catalogue_against_profile(
     Never opens a database connection.
     """
     result = validate_query_catalogue(query_catalogue, graph_definition)
-    result.merge(compare(profile, graph_definition, rules=rules))
+    result.merge(compare_profile_to_definition(profile, graph_definition, rules=rules))
     return result

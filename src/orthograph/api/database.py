@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from typing import Any, Callable
 
 from orthograph.backends import loader
-from orthograph.comparison.engine import compare
+from orthograph.comparison.engine import compare_profile_to_definition
 from orthograph.comparison.rules import Rule
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
@@ -52,7 +52,9 @@ def validate(
     for neo4j).  ``rules`` overrides the default comparison rule set.
     """
     profile = inspect(backend=backend, connection=connection, **backend_kwargs)
-    return compare(profile=profile, graph_definition=graph_definition, rules=rules)
+    return compare_profile_to_definition(
+        profile=profile, graph_definition=graph_definition, rules=rules
+    )
 
 
 def query(

@@ -22,7 +22,7 @@ from orthograph.backends.memgraph.queries import (
     MemgraphNodePropertiesQuery,
     MemgraphRelPropertiesQuery,
 )
-from orthograph.comparison.engine import compare
+from orthograph.comparison.engine import compare_profile_to_definition
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_profile.inspection import CypherInspector
@@ -158,4 +158,4 @@ def validate_database(
 ) -> ValidationResult:
     """Validate a Memgraph database against a GraphDefinition."""
     profile = MemgraphInspector().inspect(connection)
-    return compare(profile, graph_definition)
+    return compare_profile_to_definition(profile, graph_definition)

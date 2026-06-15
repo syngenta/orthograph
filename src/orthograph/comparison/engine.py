@@ -1,26 +1,28 @@
-"""Compare a :class:`GraphProfile` against a :class:`GraphDefinition`.
+"""Comparison engine — walks two :class:`GraphView` operands and applies rules.
 
-The engine walks each address in the shared declared/observed address space,
-builds a :class:`~orthograph.comparison.rules.RuleContext`, calls every
-applicable rule, and collects :class:`~orthograph.diagnostics.result.ValidationIssue` s.
+Three public comparison functions are available:
+
+- :func:`compare_profile_to_definition` — checks whether a profile satisfies
+  a declared graph definition (renamed from the former ``compare``).
+- :func:`compare_profiles` — symmetric diff between two
+  :class:`~orthograph.graph_profile.models.GraphProfile` objects.
+- :func:`compare_definitions` — symmetric diff between two
+  :class:`~orthograph.graph_definition.graph_definition.GraphDefinition`
+  objects.
+
+All three delegate to the private :func:`_compare_views` walker which iterates
+the union address space and applies the supplied rule set.
 """
 
 from collections.abc import Sequence
-from typing import Protocol
 
+from orthograph.comparison.diff_rules import diff_rules
 from orthograph.comparison.rules import Rule, RuleContext, standard_rules
+from orthograph.comparison.views import DefinitionView, GraphView, ProfileView
 from orthograph.diagnostics.classification import EntityType
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_definition.property_spec import TypeInfo
-from orthograph.graph_profile.models import GraphProfile, PropertyProfile
-
-
-class _HasPropertySpecs(Protocol):
-    """Protocol for types that expose ``get_property_specs()``."""
-
-    @classmethod
-    def get_property_specs(cls) -> dict[str, TypeInfo]: ...
+from orthograph.graph_profile.models import GraphProfile
 
 
 # --- DB type to Python type mapping ---
@@ -51,12 +53,132 @@ def db_type_to_python(db_type: str) -> type | None:
     return _DB_TYPE_MAP.get(db_type)
 
 
-def compare(
+# ---------------------------------------------------------------------------
+# Private walker
+# ---------------------------------------------------------------------------
+
+
+def _compare_views(
+    left_graph: GraphView,
+    right_graph: GraphView,
+    rules: Sequence[Rule],
+) -> ValidationResult:
+    """Walk the union address space of two views and apply every rule.
+
+    This is the single five-pass loop shared by all three public comparison
+    functions.  Rules are self-selecting: each rule inspects ``context.left``
+    / ``context.right`` and ``context.extra``, and returns early when the
+    address is not its concern.
+    """
+    result = ValidationResult()
+
+    def _apply(ctx: RuleContext) -> None:
+        for rule in rules:
+            for issue in rule(ctx):
+                result.add(issue)
+
+    # ------------------------------------------------------------------
+    # 1. Node-label addresses
+    # ------------------------------------------------------------------
+    left_labels = left_graph.node_labels()
+    right_labels = right_graph.node_labels()
+
+    for label in left_labels | right_labels:
+        _apply(
+            RuleContext(
+                left_graph=left_graph,
+                right_graph=right_graph,
+                address=label,
+                left=left_graph.node_at(label),
+                right=right_graph.node_at(label),
+                extra={"address_type": "node_label"},
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # 2. Relationship-type addresses
+    # ------------------------------------------------------------------
+    left_rel_types = left_graph.relationship_types()
+    right_rel_types = right_graph.relationship_types()
+
+    for rt in left_rel_types | right_rel_types:
+        _apply(
+            RuleContext(
+                left_graph=left_graph,
+                right_graph=right_graph,
+                address=rt,
+                left=left_graph.relationship_at(rt),
+                right=right_graph.relationship_at(rt),
+                extra={"address_type": "rel_type"},
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # 3. Property addresses — node types
+    # Walk only labels present on *both* sides (intersection).
+    # Properties of one-sided labels are already covered by the
+    # presence rules above; walking them here would generate spurious
+    # UNEXPECTED_PROPERTY / MISSING_PROPERTY issues for the parent label.
+    # ------------------------------------------------------------------
+    for label in left_labels & right_labels:
+        left_props = left_graph.node_properties(label)
+        right_props = right_graph.node_properties(label)
+        for prop_name in set(left_props) | set(right_props):
+            _apply(
+                RuleContext(
+                    left_graph=left_graph,
+                    right_graph=right_graph,
+                    address=f"{label}.{prop_name}",
+                    left=left_props.get(prop_name),
+                    right=right_props.get(prop_name),
+                    extra={
+                        "label": label,
+                        "prop_name": prop_name,
+                        "entity_type": EntityType.NODE,
+                    },
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # 4. Property addresses — relationship types
+    # Same intersection semantics as pass-3.
+    # ------------------------------------------------------------------
+    for rt in left_rel_types & right_rel_types:
+        left_props = left_graph.relationship_properties(rt)
+        right_props = right_graph.relationship_properties(rt)
+        for prop_name in set(left_props) | set(right_props):
+            _apply(
+                RuleContext(
+                    left_graph=left_graph,
+                    right_graph=right_graph,
+                    address=f"{rt}.{prop_name}",
+                    left=left_props.get(prop_name),
+                    right=right_props.get(prop_name),
+                    extra={
+                        "label": rt,
+                        "prop_name": prop_name,
+                        "entity_type": EntityType.RELATIONSHIP,
+                    },
+                )
+            )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Public comparison functions
+# ---------------------------------------------------------------------------
+
+
+def compare_profile_to_definition(
     profile: GraphProfile,
     graph_definition: GraphDefinition,
     rules: Sequence[Rule] | None = None,
 ) -> ValidationResult:
-    """Compare a :class:`GraphProfile` against a :class:`GraphDefinition`.
+    """Check whether *profile* satisfies the constraints in *graph_definition*.
+
+    This is a direct rename of the former ``compare`` function; behaviour and
+    emitted codes/severities are identical.
 
     Parameters
     ----------
@@ -64,159 +186,52 @@ def compare(
         Rule set to apply.  Defaults to
         :func:`~orthograph.comparison.rules.standard_rules`.
         Pass a custom list to extend or replace the standard behaviour.
+
+    Implementation note
+    -------------------
+    The public parameter order is ``(profile, graph_definition)`` but the
+    internal :func:`_compare_views` call passes them *reversed*:
+    ``left = DefinitionView(graph_definition)``,
+    ``right = ProfileView(profile)``.
+
+    This intentional inversion aligns with the rule semantics in
+    ``rules.py``, where ``left`` is always the *declared* (definition) side
+    and ``right`` is the *observed* (profile) side.  Rules use
+    ``context.left`` to read declared constraints and ``context.right`` to
+    read observed data — the public argument order is just a convenience for
+    callers who think in terms of "does my profile satisfy this definition?".
     """
-    active_rules: Sequence[Rule] = rules if rules is not None else standard_rules()
-    result = ValidationResult()
-
-    def _apply(ctx: RuleContext) -> None:
-        for rule in active_rules:
-            for issue in rule(ctx):
-                result.add(issue)
-
-    # ------------------------------------------------------------------
-    # 1. Node-label addresses
-    # ------------------------------------------------------------------
-    declared_labels = graph_definition.node_labels
-    observed_labels = profile.node_labels
-
-    for label in declared_labels - observed_labels:
-        _apply(
-            RuleContext(
-                graph_definition=graph_definition,
-                profile=profile,
-                address=label,
-                declared=label,
-                observed=None,
-            )
-        )
-    for label in observed_labels - declared_labels:
-        _apply(
-            RuleContext(
-                graph_definition=graph_definition,
-                profile=profile,
-                address=label,
-                declared=None,
-                observed=profile.node_type_profiles[label],
-            )
-        )
-
-    # ------------------------------------------------------------------
-    # 2. Relationship-type addresses
-    # ------------------------------------------------------------------
-    declared_rel_types = graph_definition.relationship_labels
-    observed_rel_types = profile.relationship_types
-
-    for rt in declared_rel_types - observed_rel_types:
-        _apply(
-            RuleContext(
-                graph_definition=graph_definition,
-                profile=profile,
-                address=rt,
-                declared=rt,
-                observed=None,
-            )
-        )
-    for rt in observed_rel_types - declared_rel_types:
-        _apply(
-            RuleContext(
-                graph_definition=graph_definition,
-                profile=profile,
-                address=rt,
-                declared=None,
-                observed=profile.rel_type_profiles[rt],
-            )
-        )
-
-    # ------------------------------------------------------------------
-    # 3. Property addresses — node types
-    # ------------------------------------------------------------------
-    for node_type in graph_definition.node_types:
-        node_label = node_type.__label__
-        node_profile = profile.node_type_profiles.get(node_label)
-        if node_profile is None:
-            continue
-        _walk_properties(
-            graph_definition=graph_definition,
-            profile=profile,
-            label=node_label,
-            entity_type=EntityType.NODE,
-            model_type=node_type,
-            profile_props=node_profile.property_profiles,
-            active_rules=active_rules,
-            result=result,
-        )
-
-    # ------------------------------------------------------------------
-    # 4. Property addresses — relationship types
-    # ------------------------------------------------------------------
-    for rel_type in graph_definition.relationship_types:
-        rel_label = rel_type.__label__
-        rel_profile = profile.rel_type_profiles.get(rel_label)
-        if rel_profile is None:
-            continue
-        _walk_properties(
-            graph_definition=graph_definition,
-            profile=profile,
-            label=rel_label,
-            entity_type=EntityType.RELATIONSHIP,
-            model_type=rel_type,
-            profile_props=rel_profile.property_profiles,
-            active_rules=active_rules,
-            result=result,
-        )
-
-    # ------------------------------------------------------------------
-    # 5. Endpoint + cardinality addresses — rel types in both
-    # ------------------------------------------------------------------
-    for rel_type in graph_definition.relationship_types:
-        rel_label = rel_type.__label__
-        rel_profile = profile.rel_type_profiles.get(rel_label)
-        if rel_profile is None:
-            continue
-        _apply(
-            RuleContext(
-                graph_definition=graph_definition,
-                profile=profile,
-                address=rel_label,
-                declared=rel_type,
-                observed=rel_profile,
-            )
-        )
-
-    return result
+    active = rules if rules is not None else standard_rules()
+    return _compare_views(
+        DefinitionView(graph_definition), ProfileView(profile), active
+    )
 
 
-def _walk_properties(
-    graph_definition: GraphDefinition,
-    profile: GraphProfile,
-    label: str,
-    entity_type: EntityType,
-    model_type: type[_HasPropertySpecs],
-    profile_props: dict[str, PropertyProfile],
-    active_rules: Sequence[Rule],
-    result: ValidationResult,
-) -> None:
-    """Walk all property addresses for one entity type and apply rules."""
-    model_specs = model_type.get_property_specs()
-    all_prop_names = set(model_specs) | set(profile_props)
+def compare_profiles(
+    left: GraphProfile,
+    right: GraphProfile,
+    rules: Sequence[Rule] | None = None,
+) -> ValidationResult:
+    """Symmetric diff between two :class:`GraphProfile` objects.
 
-    for prop_name in all_prop_names:
-        type_info = model_specs.get(prop_name)
-        prop_profile = profile_props.get(prop_name)
-        address = f"{label}.{prop_name}"
-        extra = {
-            "label": label,
-            "prop_name": prop_name,
-            "entity_type": entity_type,
-        }
-        ctx = RuleContext(
-            graph_definition=graph_definition,
-            profile=profile,
-            address=address,
-            declared=type_info,
-            observed=prop_profile,
-            extra=extra,
-        )
-        for rule in active_rules:
-            for issue in rule(ctx):
-                result.add(issue)
+    Emits ``INFO`` issues for addresses present on one side only or where a
+    measurable attribute (type, endpoints, cardinality) differs.  Uses
+    :func:`~orthograph.comparison.diff_rules.diff_rules` by default.
+    """
+    active = rules if rules is not None else diff_rules()
+    return _compare_views(ProfileView(left), ProfileView(right), active)
+
+
+def compare_definitions(
+    left: GraphDefinition,
+    right: GraphDefinition,
+    rules: Sequence[Rule] | None = None,
+) -> ValidationResult:
+    """Symmetric diff between two :class:`GraphDefinition` objects.
+
+    Emits ``INFO`` issues for addresses present on one side only or where a
+    measurable attribute (type, endpoints, cardinality) differs.  Uses
+    :func:`~orthograph.comparison.diff_rules.diff_rules` by default.
+    """
+    active = rules if rules is not None else diff_rules()
+    return _compare_views(DefinitionView(left), DefinitionView(right), active)

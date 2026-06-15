@@ -2,21 +2,24 @@
 
 A **Rule** encapsulates one unit of the satisfaction test:
 
-    *given the declared constraint and observed measurement at an address,
+    *given the left-side object and right-side measurement at an address,
     emit zero or more ValidationIssues if the constraint is not satisfied.*
 
+For :func:`~orthograph.comparison.engine.compare_profile_to_definition` the
+convention is **left = declared (definition), right = observed (profile)**,
+which is what the satisfaction rules below assume.
+
 Extend the rule set by passing a custom list to
-:func:`~orthograph.comparison.engine.compare`.
+:func:`~orthograph.comparison.engine.compare_profile_to_definition`.
 """
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from orthograph.comparison.views import GraphView
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue
-from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_profile.models import GraphProfile
 
 
 @dataclass(frozen=True)
@@ -25,28 +28,36 @@ class RuleContext:
 
     Attributes
     ----------
+    left_graph:
+        The :class:`~orthograph.comparison.views.GraphView` for the left
+        operand.  For ``compare_profile_to_definition`` this is the definition
+        (declared side).
+    right_graph:
+        The :class:`~orthograph.comparison.views.GraphView` for the right
+        operand.  For ``compare_profile_to_definition`` this is the profile
+        (observed side).
     address:
         The shared key for this evaluation — e.g. ``"Person"`` for a
         node-label rule, ``"ACTED_IN"`` for a relationship-type rule,
         or ``"Person.name"`` for a property rule.
-    declared:
-        The declared object at this address (e.g. a ``NodeModel`` subclass,
+    left:
+        The left-side object at this address (e.g. a ``NodeModel`` subclass,
         a ``TypeInfo``).  ``None`` when the address exists only on the
-        observed side.
-    observed:
-        The observed object at this address (e.g. a ``NodeTypeProfile``,
+        right side.
+    right:
+        The right-side object at this address (e.g. a ``NodeTypeProfile``,
         a ``PropertyProfile``).  ``None`` when the address exists only on
-        the declared side.
+        the left side.
     extra:
         Optional bag for additional context (e.g. ``label``, ``prop_name``,
         ``entity_type`` for property rules).
     """
 
-    graph_definition: GraphDefinition
-    profile: GraphProfile
+    left_graph: GraphView
+    right_graph: GraphView
     address: str
-    declared: Any = field(default=None)
-    observed: Any = field(default=None)
+    left: Any = field(default=None)
+    right: Any = field(default=None)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -79,6 +90,10 @@ class Rule(Protocol):
 #                        extra["entity_type"] = EntityType
 #   endpoint rules     : address = rel_type str
 #   cardinality rules  : address = rel_type str
+#
+# Convention for compare_profile_to_definition:
+#   left  = declared (definition side)
+#   right = observed (profile side)
 # ---------------------------------------------------------------------------
 
 
@@ -90,9 +105,9 @@ class MissingNodeLabelRule:
     key: str = "node_label.missing"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if "prop_name" in context.extra:
-            return  # property address — not a node-label context
-        if context.observed is not None:
+        if context.extra.get("address_type") != "node_label":
+            return  # not a node-label address
+        if context.right is not None:
             return  # label present in profile — not missing
         label: str = context.address
         yield ValidationIssue(
@@ -114,9 +129,9 @@ class UnexpectedNodeLabelRule:
     key: str = "node_label.unexpected"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if "prop_name" in context.extra:
-            return  # property address — not a node-label context
-        if context.declared is not None:
+        if context.extra.get("address_type") != "node_label":
+            return  # not a node-label address
+        if context.left is not None:
             return  # label is declared — not unexpected
         label: str = context.address
         yield ValidationIssue(
@@ -136,9 +151,9 @@ class MissingRelTypeRule:
     key: str = "rel_type.missing"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if "prop_name" in context.extra:
-            return  # property address — not a rel-type context
-        if context.observed is not None:
+        if context.extra.get("address_type") != "rel_type":
+            return  # not a rel-type address
+        if context.right is not None:
             return  # rel type present in profile — not missing
         rt: str = context.address
         yield ValidationIssue(
@@ -161,9 +176,9 @@ class UnexpectedRelTypeRule:
     key: str = "rel_type.unexpected"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if "prop_name" in context.extra:
-            return  # property address — not a rel-type context
-        if context.declared is not None:
+        if context.extra.get("address_type") != "rel_type":
+            return  # not a rel-type address
+        if context.left is not None:
             return  # rel type is declared — not unexpected
         rt: str = context.address
         yield ValidationIssue(
@@ -185,8 +200,8 @@ class MissingPropertyRule:
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
         from orthograph.graph_definition.property_spec import TypeInfo
 
-        type_info: TypeInfo | None = context.declared
-        if type_info is None or context.observed is not None:
+        type_info: TypeInfo | None = context.left
+        if type_info is None or context.right is not None:
             return  # no declaration or property was observed — not applicable
         if not isinstance(type_info, TypeInfo):
             return  # context is not a property address
@@ -214,15 +229,15 @@ class UnexpectedPropertyRule:
     key: str = "property.unexpected"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.declared is not None:
+        if context.left is not None:
             return  # property is declared — not unexpected
-        if context.observed is None:
+        if context.right is None:
             return  # no observation either — nothing to report
         if "prop_name" not in context.extra:
             return  # not a property address
         from orthograph.graph_profile.models import PropertyProfile
 
-        if not isinstance(context.observed, PropertyProfile):
+        if not isinstance(context.right, PropertyProfile):
             return  # not a property observation
         label: str = context.extra["label"]
         prop_name: str = context.extra["prop_name"]
@@ -249,8 +264,8 @@ class PropertyIncompleteRule:
         from orthograph.graph_definition.property_spec import TypeInfo
         from orthograph.graph_profile.models import PropertyProfile
 
-        type_info: TypeInfo | None = context.declared
-        prop_profile: PropertyProfile | None = context.observed
+        type_info: TypeInfo | None = context.left
+        prop_profile: PropertyProfile | None = context.right
         if not isinstance(type_info, TypeInfo) or not isinstance(
             prop_profile, PropertyProfile
         ):
@@ -290,8 +305,8 @@ class PropertyTypeMismatchRule:
         from orthograph.graph_definition.property_spec import TypeInfo
         from orthograph.graph_profile.models import PropertyProfile
 
-        type_info: TypeInfo | None = context.declared
-        prop_profile: PropertyProfile | None = context.observed
+        type_info: TypeInfo | None = context.left
+        prop_profile: PropertyProfile | None = context.right
         if not isinstance(type_info, TypeInfo) or not isinstance(
             prop_profile, PropertyProfile
         ):
@@ -331,8 +346,8 @@ class InvalidEndpointRule:
         from orthograph.graph_definition.models import RelationshipModel
         from orthograph.graph_profile.models import RelationshipTypeProfile
 
-        rt_class = context.declared
-        rel_profile = context.observed
+        rt_class = context.left
+        rel_profile = context.right
         if not (
             isinstance(rt_class, type)
             and issubclass(rt_class, RelationshipModel)
@@ -396,8 +411,8 @@ class CardinalityViolationRule:
         from orthograph.graph_definition.models import RelationshipModel
         from orthograph.graph_profile.models import RelationshipTypeProfile
 
-        rt_class = context.declared
-        rel_profile = context.observed
+        rt_class = context.left
+        rel_profile = context.right
         if not (
             isinstance(rt_class, type)
             and issubclass(rt_class, RelationshipModel)
@@ -471,7 +486,7 @@ class PropertyDistinctCountRule:
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
         from orthograph.graph_profile.models import PropertyProfile
 
-        prop_profile = context.observed
+        prop_profile = context.right
         max_distinct: int | None = context.extra.get("max_distinct_count")
         if not isinstance(prop_profile, PropertyProfile):
             return  # not a property address

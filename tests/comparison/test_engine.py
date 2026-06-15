@@ -1,6 +1,9 @@
-"""Tests for orthograph.comparison.engine -- compare()."""
+"""Tests for orthograph.comparison.engine -- compare_profile_to_definition()."""
 
-from orthograph.comparison.engine import compare, db_type_to_python
+from orthograph.comparison.engine import (
+    compare_profile_to_definition,
+    db_type_to_python,
+)
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_profile.models import (
     CardinalityStats,
@@ -81,7 +84,7 @@ def test_db_type_to_python_unknown():
 
 def test_compare_perfect_match(filmography_model: GraphDefinition):
     profile = _complete_profile(filmography_model)
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert result.is_valid, [str(e) for e in result.errors]
 
 
@@ -96,9 +99,18 @@ def test_compare_missing_node_label(
     profiles = dict(profile.node_type_profiles)
     del profiles["City"]
     profile = profile.model_copy(update={"node_type_profiles": profiles})
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert not result.is_valid
-    assert any(e.code == "MISSING_NODE_LABEL" for e in result.errors)
+    missing = [e for e in result.errors if e.code == "MISSING_NODE_LABEL"]
+    assert len(missing) == 1
+    assert missing[0].entity_id == "City"
+    # No spurious cross-type error for the same address
+    spurious = [
+        i
+        for i in result.issues
+        if i.entity_id == "City" and i.code != "MISSING_NODE_LABEL"
+    ]
+    assert spurious == [], f"Spurious issues at 'City': {spurious}"
 
 
 def test_compare_unexpected_node_label(
@@ -108,9 +120,18 @@ def test_compare_unexpected_node_label(
     profiles = dict(profile.node_type_profiles)
     profiles["Animal"] = NodeTypeProfile(label="Animal", count=5)
     profile = profile.model_copy(update={"node_type_profiles": profiles})
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert result.is_valid  # warnings don't invalidate
-    assert any(e.code == "UNEXPECTED_NODE_LABEL" for e in result.warnings)
+    warnings = [w for w in result.warnings if w.code == "UNEXPECTED_NODE_LABEL"]
+    assert len(warnings) == 1
+    assert warnings[0].entity_id == "Animal"
+    # No spurious cross-type warning for the same address
+    spurious = [
+        i
+        for i in result.issues
+        if i.entity_id == "Animal" and i.code != "UNEXPECTED_NODE_LABEL"
+    ]
+    assert spurious == [], f"Spurious issues at 'Animal': {spurious}"
 
 
 # --- Relationship type checks ---
@@ -123,9 +144,17 @@ def test_compare_missing_rel_type(
     profiles = dict(profile.rel_type_profiles)
     del profiles["ACTED_IN"]
     profile = profile.model_copy(update={"rel_type_profiles": profiles})
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert not result.is_valid
-    assert any(e.code == "MISSING_REL_TYPE" for e in result.errors)
+    missing = [e for e in result.errors if e.code == "MISSING_REL_TYPE"]
+    assert len(missing) == 1
+    assert missing[0].entity_id == "ACTED_IN"
+    spurious = [
+        i
+        for i in result.issues
+        if i.entity_id == "ACTED_IN" and i.code != "MISSING_REL_TYPE"
+    ]
+    assert spurious == [], f"Spurious issues at 'ACTED_IN': {spurious}"
 
 
 def test_compare_unexpected_rel_type(
@@ -135,9 +164,17 @@ def test_compare_unexpected_rel_type(
     profiles = dict(profile.rel_type_profiles)
     profiles["FRIEND_OF"] = RelationshipTypeProfile(rel_type="FRIEND_OF", count=10)
     profile = profile.model_copy(update={"rel_type_profiles": profiles})
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert result.is_valid
-    assert any(e.code == "UNEXPECTED_REL_TYPE" for e in result.warnings)
+    warnings = [w for w in result.warnings if w.code == "UNEXPECTED_REL_TYPE"]
+    assert len(warnings) == 1
+    assert warnings[0].entity_id == "FRIEND_OF"
+    spurious = [
+        i
+        for i in result.issues
+        if i.entity_id == "FRIEND_OF" and i.code != "UNEXPECTED_REL_TYPE"
+    ]
+    assert spurious == [], f"Spurious issues at 'FRIEND_OF': {spurious}"
 
 
 # --- Property checks ---
@@ -153,9 +190,11 @@ def test_compare_missing_required_property(
     del person_props["age"]
     profiles["Person"] = person.model_copy(update={"property_profiles": person_props})
     profile = profile.model_copy(update={"node_type_profiles": profiles})
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert not result.is_valid
-    assert any(e.code == "MISSING_PROPERTY" for e in result.errors)
+    missing = [e for e in result.errors if e.code == "MISSING_PROPERTY"]
+    assert len(missing) == 1
+    assert missing[0].entity_id == "Person.age"
 
 
 def test_compare_property_type_mismatch(
@@ -173,9 +212,11 @@ def test_compare_property_type_mismatch(
     )
     profiles["Person"] = person.model_copy(update={"property_profiles": person_props})
     profile = profile.model_copy(update={"node_type_profiles": profiles})
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert not result.is_valid
-    assert any(e.code == "PROPERTY_TYPE_MISMATCH" for e in result.errors)
+    mismatches = [e for e in result.errors if e.code == "PROPERTY_TYPE_MISMATCH"]
+    assert len(mismatches) == 1
+    assert mismatches[0].entity_id == "Person.age"
 
 
 def test_compare_property_incomplete(
@@ -193,9 +234,11 @@ def test_compare_property_incomplete(
     )
     profiles["Person"] = person.model_copy(update={"property_profiles": person_props})
     profile = profile.model_copy(update={"node_type_profiles": profiles})
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert result.is_valid  # warning, not error
-    assert any(e.code == "PROPERTY_INCOMPLETE" for e in result.warnings)
+    incomplete = [w for w in result.warnings if w.code == "PROPERTY_INCOMPLETE"]
+    assert len(incomplete) == 1
+    assert incomplete[0].entity_id == "Person.name"
 
 
 def test_compare_unexpected_property(
@@ -212,9 +255,11 @@ def test_compare_unexpected_property(
     )
     profiles["Person"] = person.model_copy(update={"property_profiles": person_props})
     profile = profile.model_copy(update={"node_type_profiles": profiles})
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert result.is_valid
-    assert any(e.code == "UNEXPECTED_PROPERTY" for e in result.issues)
+    unexpected = [i for i in result.issues if i.code == "UNEXPECTED_PROPERTY"]
+    assert len(unexpected) == 1
+    assert unexpected[0].entity_id == "Person.phone"
 
 
 # --- Endpoint checks ---
@@ -230,9 +275,10 @@ def test_compare_invalid_endpoint(
         update={"source_labels": {"City"}}  # wrong source
     )
     profile = profile.model_copy(update={"rel_type_profiles": profiles})
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert not result.is_valid
-    assert any(e.code == "INVALID_ENDPOINT" for e in result.errors)
+    endpoint_errors = [e for e in result.errors if e.code == "INVALID_ENDPOINT"]
+    assert len(endpoint_errors) == 1
 
 
 # --- Cardinality checks ---
@@ -255,9 +301,10 @@ def test_compare_cardinality_violation(
         }
     )
     profile = profile.model_copy(update={"rel_type_profiles": profiles})
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert not result.is_valid
-    assert any(e.code == "CARDINALITY_VIOLATION" for e in result.errors)
+    violations = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert len(violations) == 1
 
 
 def test_compare_no_cardinality_stats_skipped(
@@ -266,7 +313,7 @@ def test_compare_no_cardinality_stats_skipped(
     """When cardinality stats are None, no cardinality check is performed."""
     profile = _complete_profile(filmography_model)
     # _complete_profile already has cardinality_stats=None
-    result = compare(profile, filmography_model)
+    result = compare_profile_to_definition(profile, filmography_model)
     assert not any(e.code == "CARDINALITY_VIOLATION" for e in result.issues)
 
 
@@ -299,7 +346,7 @@ def test_compare_undirected_cross_type_forward_valid():
         relationship_types=[UCollaborates],
     )
     profile = _complete_profile(graph_definition)
-    result = compare(profile, graph_definition)
+    result = compare_profile_to_definition(profile, graph_definition)
     assert result.is_valid, [str(e) for e in result.errors]
 
 
@@ -369,7 +416,7 @@ def test_compare_undirected_cross_type_reverse_valid():
         node_type_profiles=node_profiles,
         rel_type_profiles=rel_profiles,
     )
-    result = compare(profile, graph_definition)
+    result = compare_profile_to_definition(profile, graph_definition)
     # Should not have INVALID_ENDPOINT errors
     assert not any(e.code == "INVALID_ENDPOINT" for e in result.errors)
 
@@ -439,5 +486,190 @@ def test_compare_directed_cross_type_reverse_rejected():
         node_type_profiles=node_profiles,
         rel_type_profiles=rel_profiles,
     )
-    result = compare(profile, graph_definition)
-    assert any(e.code == "INVALID_ENDPOINT" for e in result.errors)
+    result = compare_profile_to_definition(profile, graph_definition)
+    endpoint_errors = [e for e in result.errors if e.code == "INVALID_ENDPOINT"]
+    assert len(endpoint_errors) >= 1  # both source and target are wrong: 2 errors
+
+
+# ---------------------------------------------------------------------------
+# Regression: Bug 1 — satisfaction rules must not fire on the wrong pass
+#
+# Before the fix, the union walker ran ALL rules against every address in
+# every pass.  MissingNodeLabelRule (no extra.prop_name + right is None)
+# would also fire at a rel-type address, and MissingRelTypeRule would also
+# fire at a node-label address, doubling false-positive counts.
+# ---------------------------------------------------------------------------
+
+
+def test_missing_node_label_does_not_emit_missing_rel_type(
+    filmography_model: GraphDefinition,
+):
+    """A missing node label must produce exactly one MISSING_NODE_LABEL,
+    zero MISSING_REL_TYPE for the same entity id."""
+    profile = _complete_profile(filmography_model)
+    profiles = dict(profile.node_type_profiles)
+    del profiles["City"]
+    profile = profile.model_copy(update={"node_type_profiles": profiles})
+    result = compare_profile_to_definition(profile, filmography_model)
+
+    # The missing entity is a node, not a rel — no MISSING_REL_TYPE at "City"
+    spurious = [
+        i
+        for i in result.issues
+        if i.code == "MISSING_REL_TYPE" and i.entity_id == "City"
+    ]
+    assert spurious == [], (
+        f"MISSING_REL_TYPE emitted at node-label address 'City': {spurious}"
+    )
+
+    # Exactly one MISSING_NODE_LABEL at "City"
+    node_errors = [i for i in result.errors if i.code == "MISSING_NODE_LABEL"]
+    assert len(node_errors) == 1
+    assert node_errors[0].entity_id == "City"
+
+
+def test_missing_rel_type_does_not_emit_missing_node_label(
+    filmography_model: GraphDefinition,
+):
+    """A missing rel type must produce exactly one MISSING_REL_TYPE,
+    zero MISSING_NODE_LABEL for the same entity id."""
+    profile = _complete_profile(filmography_model)
+    profiles = dict(profile.rel_type_profiles)
+    del profiles["ACTED_IN"]
+    profile = profile.model_copy(update={"rel_type_profiles": profiles})
+    result = compare_profile_to_definition(profile, filmography_model)
+
+    spurious = [
+        i
+        for i in result.issues
+        if i.code == "MISSING_NODE_LABEL" and i.entity_id == "ACTED_IN"
+    ]
+    assert spurious == [], (
+        f"MISSING_NODE_LABEL emitted at rel-type address 'ACTED_IN': {spurious}"
+    )
+
+    rel_errors = [i for i in result.errors if i.code == "MISSING_REL_TYPE"]
+    assert len(rel_errors) == 1
+    assert rel_errors[0].entity_id == "ACTED_IN"
+
+
+def test_unexpected_node_label_does_not_emit_unexpected_rel_type(
+    filmography_model: GraphDefinition,
+):
+    """An unexpected node label must emit UNEXPECTED_NODE_LABEL, not
+    UNEXPECTED_REL_TYPE at the same address."""
+    profile = _complete_profile(filmography_model)
+    profiles = dict(profile.node_type_profiles)
+    profiles["Animal"] = NodeTypeProfile(label="Animal", count=3)
+    profile = profile.model_copy(update={"node_type_profiles": profiles})
+    result = compare_profile_to_definition(profile, filmography_model)
+
+    spurious = [
+        i
+        for i in result.issues
+        if i.code == "UNEXPECTED_REL_TYPE" and i.entity_id == "Animal"
+    ]
+    assert spurious == [], (
+        f"UNEXPECTED_REL_TYPE emitted at node address 'Animal': {spurious}"
+    )
+
+    node_warnings = [i for i in result.warnings if i.code == "UNEXPECTED_NODE_LABEL"]
+    assert any(w.entity_id == "Animal" for w in node_warnings)
+
+
+def test_unexpected_rel_type_does_not_emit_unexpected_node_label(
+    filmography_model: GraphDefinition,
+):
+    """An unexpected rel type must emit UNEXPECTED_REL_TYPE, not
+    UNEXPECTED_NODE_LABEL at the same address."""
+    profile = _complete_profile(filmography_model)
+    profiles = dict(profile.rel_type_profiles)
+    profiles["FRIEND_OF"] = RelationshipTypeProfile(rel_type="FRIEND_OF", count=10)
+    profile = profile.model_copy(update={"rel_type_profiles": profiles})
+    result = compare_profile_to_definition(profile, filmography_model)
+
+    spurious = [
+        i
+        for i in result.issues
+        if i.code == "UNEXPECTED_NODE_LABEL" and i.entity_id == "FRIEND_OF"
+    ]
+    assert spurious == [], (
+        f"UNEXPECTED_NODE_LABEL emitted at rel address 'FRIEND_OF': {spurious}"
+    )
+
+    rel_warnings = [i for i in result.warnings if i.code == "UNEXPECTED_REL_TYPE"]
+    assert any(w.entity_id == "FRIEND_OF" for w in rel_warnings)
+
+
+# ---------------------------------------------------------------------------
+# Regression: Bug 2 — UNEXPECTED_PROPERTY must NOT fire for properties
+# belonging to unexpected (profile-only) node/rel-type labels.
+#
+# When an unexpected node label appears in the profile, its properties are
+# walked in pass-3.  MissingPropertyRule/UnexpectedPropertyRule must not
+# fire for those properties — doing so creates spurious noise.
+# ---------------------------------------------------------------------------
+
+
+def test_unexpected_node_label_properties_do_not_emit_unexpected_property(
+    filmography_model: GraphDefinition,
+):
+    """Properties of an unexpected node label must not generate
+    UNEXPECTED_PROPERTY issues."""
+    profile = _complete_profile(filmography_model)
+    profiles = dict(profile.node_type_profiles)
+    profiles["Animal"] = NodeTypeProfile(
+        label="Animal",
+        count=3,
+        property_profiles={
+            "species": PropertyProfile(
+                name="species",
+                present_count=3,
+                total_count=3,
+                observed_types=["String"],
+            )
+        },
+    )
+    profile = profile.model_copy(update={"node_type_profiles": profiles})
+    result = compare_profile_to_definition(profile, filmography_model)
+
+    spurious = [
+        i
+        for i in result.issues
+        if i.code == "UNEXPECTED_PROPERTY" and i.entity_id.startswith("Animal.")
+    ]
+    assert spurious == [], (
+        f"UNEXPECTED_PROPERTY emitted for unexpected node 'Animal': {spurious}"
+    )
+
+
+def test_unexpected_rel_type_properties_do_not_emit_unexpected_property(
+    filmography_model: GraphDefinition,
+):
+    """Properties of an unexpected relationship type must not generate
+    UNEXPECTED_PROPERTY issues."""
+    profile = _complete_profile(filmography_model)
+    profiles = dict(profile.rel_type_profiles)
+    profiles["FRIEND_OF"] = RelationshipTypeProfile(
+        rel_type="FRIEND_OF",
+        count=5,
+        property_profiles={
+            "since": PropertyProfile(
+                name="since",
+                present_count=5,
+                total_count=5,
+                observed_types=["Long"],
+            )
+        },
+    )
+    profile = profile.model_copy(update={"rel_type_profiles": profiles})
+    result = compare_profile_to_definition(profile, filmography_model)
+
+    spurious = [
+        i
+        for i in result.issues
+        if i.code == "UNEXPECTED_PROPERTY" and i.entity_id.startswith("FRIEND_OF.")
+    ]
+    assert spurious == [], (
+        f"UNEXPECTED_PROPERTY emitted for unexpected rel 'FRIEND_OF': {spurious}"
+    )
