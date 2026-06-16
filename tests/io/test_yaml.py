@@ -138,6 +138,39 @@ def test_yaml_load_nonexistent_file_raises(tmp_path: Path):
         load_yaml_file(tmp_path / "nonexistent.yaml")
 
 
+def test_yaml_missing_name_raises_value_error():
+    content = """\
+node_types:
+  Person:
+    properties:
+      name: str
+"""
+    with pytest.raises(ValueError, match="missing required field 'name'"):
+        load_yaml_string(content)
+
+
+def test_yaml_relationship_missing_source_raises_value_error():
+    content = """\
+name: "Test"
+relationship_types:
+  KNOWS:
+    target: Person
+"""
+    with pytest.raises(ValueError, match="KNOWS.*missing required field 'source'"):
+        load_yaml_string(content)
+
+
+def test_yaml_relationship_missing_target_raises_value_error():
+    content = """\
+name: "Test"
+relationship_types:
+  KNOWS:
+    source: Person
+"""
+    with pytest.raises(ValueError, match="KNOWS.*missing required field 'target'"):
+        load_yaml_string(content)
+
+
 # --- YAML with optional entities tests ---
 
 

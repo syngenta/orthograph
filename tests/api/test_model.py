@@ -180,6 +180,18 @@ def test_validate_query_unknown_label(graph_definition: GraphDefinition) -> None
     assert "QUERY_UNKNOWN_NODE_LABEL" in codes
 
 
+def test_validate_query_unparseable_returns_result_not_exception(
+    graph_definition: GraphDefinition,
+) -> None:
+    """A syntactically unparseable query must not raise — it must return a result."""
+    from orthograph.diagnostics.result import ValidationResult
+
+    result = validate_query("THIS IS NOT CYPHER %%%", graph_definition)
+    assert isinstance(result, ValidationResult)
+    assert not result.is_valid
+    assert any(e.code == "QUERY_PARSE_ERROR" for e in result.errors)
+
+
 # ---------------------------------------------------------------------------
 # validate_query_catalogue
 # ---------------------------------------------------------------------------

@@ -11,7 +11,11 @@ from orthograph.graph_definition.models import (
     NodeModel,
     RelationshipModel,
 )
-from orthograph.graph_definition.validation import GraphValidator
+from orthograph.graph_definition.validation import (
+    GraphValidator,
+    _unpack_node,
+    _unpack_rel,
+)
 
 
 # --- Fixtures ---
@@ -1000,3 +1004,139 @@ def test_undirected_cardinality_violation():
     result = v.validate(nodes=nodes, relationships=rels)
     assert not result.is_valid
     assert any(e.code == "CARDINALITY_VIOLATION" for e in result.errors)
+
+
+# ---------------------------------------------------------------------------
+# _unpack_node / _unpack_rel unit tests
+# Guard against regressions where meta keys leak into props or are misread.
+# ---------------------------------------------------------------------------
+
+
+def test_unpack_node_model_instance_no_label_in_props():
+    """NodeModel instance: __label__ must not appear in props."""
+    p = Person(name="Alice", age=30)
+    label, props = _unpack_node(p)
+    assert label == "Person"
+    assert "__label__" not in props
+    assert props == {"name": "Alice", "age": 30, "email": None}
+
+
+def test_unpack_node_dict_label_removed_from_props():
+    """Raw dict: __label__ is consumed and must not remain in props."""
+    label, props = _unpack_node({"__label__": "Person", "name": "Alice", "age": 30})
+    assert label == "Person"
+    assert "__label__" not in props
+    assert props == {"name": "Alice", "age": 30}
+
+
+def test_unpack_node_dict_missing_label_returns_none():
+    label, props = _unpack_node({"name": "Alice", "age": 30})
+    assert label is None
+    assert "__label__" not in props
+
+
+def test_unpack_rel_dict_all_meta_removed_from_props():
+    """Raw dict: all three dunder meta keys are consumed; only props remain."""
+    label, src, tgt, props = _unpack_rel(
+        {
+            "__label__": "ACTED_IN",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Inception",
+            "role": "Cobb",
+        }
+    )
+    assert label == "ACTED_IN"
+    assert src == "Alice"
+    assert tgt == "Inception"
+    assert props == {"role": "Cobb"}
+    assert "__label__" not in props
+    assert "__source_uid__" not in props
+    assert "__target_uid__" not in props
+
+
+def test_unpack_rel_model_instance_uids_are_none():
+    """RelationshipModel instance: src/tgt uids are None (model carries no uid)."""
+
+    class Knows(RelationshipModel):
+        __label__ = "KNOWS"
+        __source_label__ = "Person"
+        __target_label__ = "Person"
+        since: int
+
+    r = Knows(since=2020)
+    label, src, tgt, props = _unpack_rel(r)
+    assert label == "KNOWS"
+    assert src is None
+    assert tgt is None
+    assert props == {"since": 2020}
+    assert "__label__" not in props
+
+
+def test_validate_nodes_model_instance_no_false_extra_properties(
+    filmography_model,
+):
+    """NodeModel instances must never trigger EXTRA_PROPERTIES from __label__."""
+    v = GraphValidator(filmography_model)
+    result = v.validate_nodes([Person(name="Alice", age=30)])
+    assert result.is_valid
+    assert not any(e.code == "EXTRA_PROPERTIES" for e in result.errors)
+
+
+def test_validate_relationships_model_instance_triggers_missing_endpoint(
+    filmography_model,
+):
+    """RelationshipModel instances have no uid info: MISSING_ENDPOINT is expected.
+
+    Documents the contract: callers that want referential validation
+    must supply dicts with __source_uid__ / __target_uid__.
+    """
+    v = GraphValidator(filmography_model)
+
+    class ActedInInstance(RelationshipModel):
+        __label__ = "ACTED_IN"
+        __source_label__ = "Person"
+        __target_label__ = "Movie"
+        role: str
+
+    result = v.validate_relationships([ActedInInstance(role="Cobb")])
+    assert not result.is_valid
+    assert any(e.code == "MISSING_ENDPOINT" for e in result.errors)
+
+
+# ---------------------------------------------------------------------------
+# Regression: _check_entity_presence must check both node AND rel presence
+# (guards against the duplicate-return bug where the rel half was dead code)
+# ---------------------------------------------------------------------------
+
+
+def test_entity_presence_reports_both_missing_node_and_rel_types():
+    """Both a required node type and a required rel type absent: both reported."""
+
+    class ReqNode(NodeModel):
+        __label__ = "ReqNode"
+        __optional__ = False
+        val: str
+
+    class ReqRel(RelationshipModel):
+        __label__ = "REQ_REL"
+        __source_label__ = "ReqNode"
+        __target_label__ = "ReqNode"
+        __optional__ = False
+
+    gd = GraphDefinition(
+        name="BothRequired",
+        node_types=[ReqNode],
+        relationship_types=[ReqRel],
+    )
+    v = GraphValidator(gd)
+    result = v.validate(nodes=[], relationships=[])
+
+    assert not result.is_valid
+    missing_codes = [e.code for e in result.errors if e.code == "MISSING_REQUIRED_TYPE"]
+    # Must report one for the node type and one for the rel type
+    assert len(missing_codes) == 2
+    entity_ids = {
+        e.entity_id for e in result.errors if e.code == "MISSING_REQUIRED_TYPE"
+    }
+    assert "ReqNode" in entity_ids
+    assert "REQ_REL" in entity_ids

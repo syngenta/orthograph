@@ -48,6 +48,13 @@ def save_yaml_file(graph_definition: GraphDefinition, path: Path) -> None:
 
 def _build_model(data: dict[str, Any]) -> GraphDefinition:
     """Build a GraphDefinition from parsed YAML data."""
+    if not isinstance(data, dict):
+        raise TypeError(
+            f"Expected a YAML mapping at the top level, got {type(data).__name__}. "
+            "Pass a Path object to load from a file."
+        )
+    if "name" not in data:
+        raise ValueError("GraphDefinition YAML is missing required field 'name'.")
     name = data["name"]
     version = data.get("version")
 
@@ -111,6 +118,14 @@ def _build_rel_class(
     spec: dict[str, Any],
 ) -> type[RelationshipModel]:
     """Dynamically create a RelationshipModel subclass from YAML spec."""
+    if "source" not in spec:
+        raise ValueError(
+            f"Relationship type '{label}' is missing required field 'source'."
+        )
+    if "target" not in spec:
+        raise ValueError(
+            f"Relationship type '{label}' is missing required field 'target'."
+        )
     source_label = spec["source"]
     target_label = spec["target"]
     directed = spec.get("directed", True)

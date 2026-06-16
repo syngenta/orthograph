@@ -332,6 +332,53 @@ class PropertyTypeMismatchRule:
                 )
 
 
+def _invalid_endpoint_issues(
+    label: str,
+    expected_src: str,
+    expected_tgt: str,
+    observed_sources: set[str],
+    observed_targets: set[str],
+    directed: bool,
+) -> Iterable[ValidationIssue]:
+    """Yield INVALID_ENDPOINT issues for out-of-range source/target labels.
+
+    When the relationship is undirected both orientations are valid, so both
+    endpoint sets are expanded accordingly before the membership check.
+    """
+    valid_sources: set[str] = {expected_src}
+    valid_targets: set[str] = {expected_tgt}
+    if not directed:
+        valid_sources.add(expected_tgt)
+        valid_targets.add(expected_src)
+
+    for src in observed_sources:
+        if src not in valid_sources:
+            yield ValidationIssue(
+                code="INVALID_ENDPOINT",
+                severity=Severity.ERROR,
+                entity_type=EntityType.RELATIONSHIP,
+                entity_id=label,
+                message=(
+                    f"Relationship '{label}' has source "
+                    f"label '{src}', expected '{expected_src}'"
+                ),
+                context={"role": "source", "actual": src, "expected": expected_src},
+            )
+    for tgt in observed_targets:
+        if tgt not in valid_targets:
+            yield ValidationIssue(
+                code="INVALID_ENDPOINT",
+                severity=Severity.ERROR,
+                entity_type=EntityType.RELATIONSHIP,
+                entity_id=label,
+                message=(
+                    f"Relationship '{label}' has target "
+                    f"label '{tgt}', expected '{expected_tgt}'"
+                ),
+                context={"role": "target", "actual": tgt, "expected": expected_tgt},
+            )
+
+
 @dataclass
 class InvalidEndpointRule:
     """Emits ``INVALID_ENDPOINT`` (ERROR) for each source or target label
@@ -354,50 +401,15 @@ class InvalidEndpointRule:
             and isinstance(rel_profile, RelationshipTypeProfile)
         ):
             return  # need both sides as proper types
-        label: str = context.address
 
-        expected_src = rt_class.__source_label__
-        expected_tgt = rt_class.__target_label__
-        valid_sources: set[str] = {expected_src}
-        valid_targets: set[str] = {expected_tgt}
-        if not rt_class.__directed__:
-            valid_sources.add(expected_tgt)
-            valid_targets.add(expected_src)
-
-        for src in rel_profile.source_labels:
-            if src not in valid_sources:
-                yield ValidationIssue(
-                    code="INVALID_ENDPOINT",
-                    severity=Severity.ERROR,
-                    entity_type=EntityType.RELATIONSHIP,
-                    entity_id=label,
-                    message=(
-                        f"Relationship '{label}' has source "
-                        f"label '{src}', expected '{expected_src}'"
-                    ),
-                    context={
-                        "role": "source",
-                        "actual": src,
-                        "expected": expected_src,
-                    },
-                )
-        for tgt in rel_profile.target_labels:
-            if tgt not in valid_targets:
-                yield ValidationIssue(
-                    code="INVALID_ENDPOINT",
-                    severity=Severity.ERROR,
-                    entity_type=EntityType.RELATIONSHIP,
-                    entity_id=label,
-                    message=(
-                        f"Relationship '{label}' has target "
-                        f"label '{tgt}', expected '{expected_tgt}'"
-                    ),
-                    context={
-                        "role": "target",
-                        "actual": tgt,
-                        "expected": expected_tgt,
-                    },
-                )
+        yield from _invalid_endpoint_issues(
+            label=context.address,
+            expected_src=rt_class.__source_label__,
+            expected_tgt=rt_class.__target_label__,
+            observed_sources=rel_profile.source_labels,
+            observed_targets=rel_profile.target_labels,
+            directed=rt_class.__directed__,
+        )
 
 
 @dataclass

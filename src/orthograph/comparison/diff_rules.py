@@ -26,14 +26,209 @@ Address conventions (set by the engine, same as ``rules.py``):
   ``TypeInfo`` (definition) or ``PropertyProfile`` (profile), or ``None``.
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
 
 from orthograph.comparison.rules import Rule, RuleContext
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue
+from orthograph.graph_definition.models import RelationshipModel
+from orthograph.graph_definition.property_spec import TypeInfo
+from orthograph.graph_profile.models import PropertyProfile, RelationshipTypeProfile
+
+
+# ---------------------------------------------------------------------------
+# Relationship operand kind resolution
+# ---------------------------------------------------------------------------
+
+RelKind = Literal["profile", "definition"]
+
+
+def _rel_operand_kind(left: object, right: object) -> RelKind | None:
+    """Return 'profile' or 'definition' if both operands are the same rel kind.
+
+    Returns None when the operands are mixed or unrecognised (e.g. profile vs
+    definition — only arises in compare_profile_to_definition which uses
+    standard_rules(), not diff_rules()).
+    """
+    if isinstance(left, RelationshipTypeProfile) and isinstance(
+        right, RelationshipTypeProfile
+    ):
+        return "profile"
+    if (
+        isinstance(left, type)
+        and issubclass(left, RelationshipModel)
+        and isinstance(right, type)
+        and issubclass(right, RelationshipModel)
+    ):
+        return "definition"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Property type helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolved_definition_types(
+    left: TypeInfo, right: TypeInfo
+) -> tuple[object, object] | None:
+    """Return (left_desc, right_desc) if the Python types differ, else None."""
+    if left.python_type is right.python_type:
+        return None
+    return left.python_type, right.python_type
+
+
+def _resolved_profile_types(
+    left: PropertyProfile, right: PropertyProfile
+) -> tuple[object, object] | None:
+    """Return (left_types, right_types) as sets if they differ, else None.
+
+    Imports ``db_type_to_python`` lazily to avoid a circular dependency at
+    module load time.
+    """
+    from orthograph.comparison.engine import db_type_to_python
+
+    left_types = {
+        (m if (m := db_type_to_python(t)) is not None else t)
+        for t in left.observed_types
+    }
+    right_types = {
+        (m if (m := db_type_to_python(t)) is not None else t)
+        for t in right.observed_types
+    }
+    if not left_types or not right_types:
+        return None
+    if left_types == right_types:
+        return None
+    return left_types, right_types
+
+
+# ---------------------------------------------------------------------------
+# Endpoint helpers (profile ↔ profile)
+# ---------------------------------------------------------------------------
+
+
+def _endpoint_issues_profile(
+    rt: str,
+    left: RelationshipTypeProfile,
+    right: RelationshipTypeProfile,
+) -> Iterable[ValidationIssue]:
+    """Yield ENDPOINTS_CHANGED issues for a profile ↔ profile comparison."""
+    for role, left_labels, right_labels in (
+        ("source", left.source_labels, right.source_labels),
+        ("target", left.target_labels, right.target_labels),
+    ):
+        if left_labels != right_labels:
+            yield ValidationIssue(
+                code="ENDPOINTS_CHANGED",
+                severity=Severity.INFO,
+                entity_type=EntityType.RELATIONSHIP,
+                entity_id=rt,
+                message=(
+                    f"Relationship '{rt}' {role} labels differ: "
+                    f"left={sorted(left_labels)} right={sorted(right_labels)}"
+                ),
+                context={
+                    "role": role,
+                    "left": sorted(left_labels),
+                    "right": sorted(right_labels),
+                },
+            )
+
+
+def _endpoint_issues_definition(
+    rt: str,
+    left: type[RelationshipModel],
+    right: type[RelationshipModel],
+) -> Iterable[ValidationIssue]:
+    """Yield ENDPOINTS_CHANGED issues for a definition ↔ definition comparison."""
+    for role, left_val, right_val in (
+        ("source", left.__source_label__, right.__source_label__),
+        ("target", left.__target_label__, right.__target_label__),
+        ("directed", left.__directed__, right.__directed__),
+    ):
+        if left_val != right_val:
+            yield ValidationIssue(
+                code="ENDPOINTS_CHANGED",
+                severity=Severity.INFO,
+                entity_type=EntityType.RELATIONSHIP,
+                entity_id=rt,
+                message=(
+                    f"Relationship '{rt}' {role} "
+                    f"{'label' if role != 'directed' else 'flag'} differs: "
+                    f"left={left_val!r} right={right_val!r}"
+                ),
+                context={"role": role, "left": left_val, "right": right_val},
+            )
+
+
+# ---------------------------------------------------------------------------
+# Cardinality helpers (profile ↔ profile and definition ↔ definition)
+# ---------------------------------------------------------------------------
+
+
+def _cardinality_issue_profile(
+    rt: str,
+    left: RelationshipTypeProfile,
+    right: RelationshipTypeProfile,
+) -> ValidationIssue | None:
+    """Return a CARDINALITY_CHANGED issue if stats differ, else None."""
+    if left.cardinality_stats is None or right.cardinality_stats is None:
+        return None
+    l_stats = left.cardinality_stats
+    r_stats = right.cardinality_stats
+    if (
+        l_stats.min_degree == r_stats.min_degree
+        and l_stats.max_degree == r_stats.max_degree
+    ):
+        return None
+    return ValidationIssue(
+        code="CARDINALITY_CHANGED",
+        severity=Severity.INFO,
+        entity_type=EntityType.RELATIONSHIP,
+        entity_id=rt,
+        message=(
+            f"Relationship '{rt}' cardinality differs: "
+            f"left min={l_stats.min_degree} max={l_stats.max_degree}, "
+            f"right min={r_stats.min_degree} max={r_stats.max_degree}"
+        ),
+        context={
+            "left_min": l_stats.min_degree,
+            "left_max": l_stats.max_degree,
+            "right_min": r_stats.min_degree,
+            "right_max": r_stats.max_degree,
+        },
+    )
+
+
+def _cardinality_issue_definition(
+    rt: str,
+    left: type[RelationshipModel],
+    right: type[RelationshipModel],
+) -> ValidationIssue | None:
+    """Return a CARDINALITY_CHANGED issue if source cardinalities differ, else None."""
+    l_card = left.__source_cardinality__
+    r_card = right.__source_cardinality__
+    if l_card == r_card:
+        return None
+    return ValidationIssue(
+        code="CARDINALITY_CHANGED",
+        severity=Severity.INFO,
+        entity_type=EntityType.RELATIONSHIP,
+        entity_id=rt,
+        message=(
+            f"Relationship '{rt}' source cardinality differs: "
+            f"left={l_card!r} right={r_card!r}"
+        ),
+        context={
+            "left_min": l_card.min,
+            "left_max": l_card.max,
+            "right_min": r_card.min,
+            "right_max": r_card.max,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -215,42 +410,21 @@ class PropertyTypeChangedRule:
         if context.left is None or context.right is None:
             return
 
-        from orthograph.comparison.engine import db_type_to_python
-        from orthograph.graph_definition.property_spec import TypeInfo
-        from orthograph.graph_profile.models import PropertyProfile
-
         left = context.left
         right = context.right
 
-        # Definition ↔ definition: both sides are TypeInfo
         if isinstance(left, TypeInfo) and isinstance(right, TypeInfo):
-            if left.python_type is right.python_type:
-                return
-            left_desc: object = left.python_type
-            right_desc: object = right.python_type
-
-        # Profile ↔ profile: both sides are PropertyProfile
+            resolved = _resolved_definition_types(left, right)
         elif isinstance(left, PropertyProfile) and isinstance(right, PropertyProfile):
-            left_types = {
-                (m if (m := db_type_to_python(t)) is not None else t)
-                for t in left.observed_types
-            }
-            right_types = {
-                (m if (m := db_type_to_python(t)) is not None else t)
-                for t in right.observed_types
-            }
-            # Skip if either descriptor is empty (no type information)
-            if not left_types or not right_types:
-                return
-            if left_types == right_types:
-                return
-            left_desc = left_types
-            right_desc = right_types
-
+            resolved = _resolved_profile_types(left, right)
         else:
-            # Mixed shape — skip (only arises in compare_profile_to_definition)
+            # Mixed shape — only arises in compare_profile_to_definition
             return
 
+        if resolved is None:
+            return
+
+        left_desc, right_desc = resolved
         label: str = context.extra["label"]
         prop_name: str = context.extra["prop_name"]
         entity_type: EntityType = context.extra["entity_type"]
@@ -295,110 +469,12 @@ class EndpointsChangedRule:
         if context.left is None or context.right is None:
             return
 
-        from orthograph.graph_definition.models import RelationshipModel
-        from orthograph.graph_profile.models import RelationshipTypeProfile
-
-        left = context.left
-        right = context.right
         rt: str = context.address
-
-        # Profile ↔ profile
-        if isinstance(left, RelationshipTypeProfile) and isinstance(
-            right, RelationshipTypeProfile
-        ):
-            if left.source_labels != right.source_labels:
-                yield ValidationIssue(
-                    code="ENDPOINTS_CHANGED",
-                    severity=Severity.INFO,
-                    entity_type=EntityType.RELATIONSHIP,
-                    entity_id=rt,
-                    message=(
-                        f"Relationship '{rt}' source labels differ: "
-                        f"left={sorted(left.source_labels)} "
-                        f"right={sorted(right.source_labels)}"
-                    ),
-                    context={
-                        "role": "source",
-                        "left": sorted(left.source_labels),
-                        "right": sorted(right.source_labels),
-                    },
-                )
-            if left.target_labels != right.target_labels:
-                yield ValidationIssue(
-                    code="ENDPOINTS_CHANGED",
-                    severity=Severity.INFO,
-                    entity_type=EntityType.RELATIONSHIP,
-                    entity_id=rt,
-                    message=(
-                        f"Relationship '{rt}' target labels differ: "
-                        f"left={sorted(left.target_labels)} "
-                        f"right={sorted(right.target_labels)}"
-                    ),
-                    context={
-                        "role": "target",
-                        "left": sorted(left.target_labels),
-                        "right": sorted(right.target_labels),
-                    },
-                )
-            return
-
-        # Definition ↔ definition
-        if (
-            isinstance(left, type)
-            and issubclass(left, RelationshipModel)
-            and isinstance(right, type)
-            and issubclass(right, RelationshipModel)
-        ):
-            if left.__source_label__ != right.__source_label__:
-                yield ValidationIssue(
-                    code="ENDPOINTS_CHANGED",
-                    severity=Severity.INFO,
-                    entity_type=EntityType.RELATIONSHIP,
-                    entity_id=rt,
-                    message=(
-                        f"Relationship '{rt}' source label differs: "
-                        f"left='{left.__source_label__}' "
-                        f"right='{right.__source_label__}'"
-                    ),
-                    context={
-                        "role": "source",
-                        "left": left.__source_label__,
-                        "right": right.__source_label__,
-                    },
-                )
-            if left.__target_label__ != right.__target_label__:
-                yield ValidationIssue(
-                    code="ENDPOINTS_CHANGED",
-                    severity=Severity.INFO,
-                    entity_type=EntityType.RELATIONSHIP,
-                    entity_id=rt,
-                    message=(
-                        f"Relationship '{rt}' target label differs: "
-                        f"left='{left.__target_label__}' "
-                        f"right='{right.__target_label__}'"
-                    ),
-                    context={
-                        "role": "target",
-                        "left": left.__target_label__,
-                        "right": right.__target_label__,
-                    },
-                )
-            if left.__directed__ != right.__directed__:
-                yield ValidationIssue(
-                    code="ENDPOINTS_CHANGED",
-                    severity=Severity.INFO,
-                    entity_type=EntityType.RELATIONSHIP,
-                    entity_id=rt,
-                    message=(
-                        f"Relationship '{rt}' directed flag differs: "
-                        f"left={left.__directed__} right={right.__directed__}"
-                    ),
-                    context={
-                        "role": "directed",
-                        "left": left.__directed__,
-                        "right": right.__directed__,
-                    },
-                )
+        kind = _rel_operand_kind(context.left, context.right)
+        if kind == "profile":
+            yield from _endpoint_issues_profile(rt, context.left, context.right)
+        elif kind == "definition":
+            yield from _endpoint_issues_definition(rt, context.left, context.right)
 
 
 @dataclass
@@ -424,70 +500,16 @@ class CardinalityChangedRule:
         if context.left is None or context.right is None:
             return
 
-        from orthograph.graph_definition.models import RelationshipModel
-        from orthograph.graph_profile.models import RelationshipTypeProfile
-
-        left = context.left
-        right = context.right
         rt: str = context.address
-
-        # Profile ↔ profile
-        if isinstance(left, RelationshipTypeProfile) and isinstance(
-            right, RelationshipTypeProfile
-        ):
-            if left.cardinality_stats is None or right.cardinality_stats is None:
-                return
-            l_stats = left.cardinality_stats
-            r_stats = right.cardinality_stats
-            if (
-                l_stats.min_degree != r_stats.min_degree
-                or l_stats.max_degree != r_stats.max_degree
-            ):
-                yield ValidationIssue(
-                    code="CARDINALITY_CHANGED",
-                    severity=Severity.INFO,
-                    entity_type=EntityType.RELATIONSHIP,
-                    entity_id=rt,
-                    message=(
-                        f"Relationship '{rt}' cardinality differs: "
-                        f"left min={l_stats.min_degree} max={l_stats.max_degree}, "
-                        f"right min={r_stats.min_degree} max={r_stats.max_degree}"
-                    ),
-                    context={
-                        "left_min": l_stats.min_degree,
-                        "left_max": l_stats.max_degree,
-                        "right_min": r_stats.min_degree,
-                        "right_max": r_stats.max_degree,
-                    },
-                )
+        kind = _rel_operand_kind(context.left, context.right)
+        if kind == "profile":
+            issue = _cardinality_issue_profile(rt, context.left, context.right)
+        elif kind == "definition":
+            issue = _cardinality_issue_definition(rt, context.left, context.right)
+        else:
             return
-
-        # Definition ↔ definition
-        if (
-            isinstance(left, type)
-            and issubclass(left, RelationshipModel)
-            and isinstance(right, type)
-            and issubclass(right, RelationshipModel)
-        ):
-            l_card = left.__source_cardinality__
-            r_card = right.__source_cardinality__
-            if l_card != r_card:
-                yield ValidationIssue(
-                    code="CARDINALITY_CHANGED",
-                    severity=Severity.INFO,
-                    entity_type=EntityType.RELATIONSHIP,
-                    entity_id=rt,
-                    message=(
-                        f"Relationship '{rt}' source cardinality differs: "
-                        f"left={l_card!r} right={r_card!r}"
-                    ),
-                    context={
-                        "left_min": l_card.min,
-                        "left_max": l_card.max,
-                        "right_min": r_card.min,
-                        "right_max": r_card.max,
-                    },
-                )
+        if issue is not None:
+            yield issue
 
 
 # ---------------------------------------------------------------------------

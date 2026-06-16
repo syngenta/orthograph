@@ -34,6 +34,42 @@ class Backend(str, Enum):
     GQLALCHEMY = "gqlalchemy"
 
 
+def _check_attr_presence(
+    cls: type, attrs: tuple[str, ...], problems: list[str]
+) -> None:
+    """Append a problem for each attr missing from *cls* or its MRO."""
+    for attr in attrs:
+        if not any(attr in base.__dict__ for base in cls.__mro__):
+            problems.append(f"missing class variable: {attr}")
+
+
+def _check_model_attrs(
+    cls: type, model_attrs: tuple[str, ...], problems: list[str]
+) -> None:
+    """Append a problem for each model_attr that is
+    present but not a BaseModel subclass."""
+    for attr in model_attrs:
+        value = getattr(cls, attr, None)
+        if value is not None and not (
+            isinstance(value, type) and issubclass(value, BaseModel)
+        ):
+            problems.append(f"{attr} must be a BaseModel subclass, got {value!r}")
+
+
+def _check_backend_attr(cls: type, problems: list[str]) -> None:
+    """Append a problem if ``backend`` is present but not a Backend value."""
+    backend = getattr(cls, "backend", None)
+    if backend is not None and not isinstance(backend, Backend):
+        problems.append(f"backend must be a Backend value, got {backend!r}")
+
+
+def _check_name_attr(cls: type, problems: list[str]) -> None:
+    """Append a problem if ``name`` is present but not a str."""
+    name = getattr(cls, "name", None)
+    if name is not None and not isinstance(name, str):
+        problems.append(f"name must be a str, got {name!r}")
+
+
 def _enforce_query_contract(
     cls: type, *, model_attrs: tuple[str, ...], other_attrs: tuple[str, ...]
 ) -> None:
@@ -43,27 +79,12 @@ def _enforce_query_contract(
     Raises ``TypeError`` listing all problems.
     """
     problems: list[str] = []
-    for attr in (*model_attrs, *other_attrs):
-        if not any(attr in base.__dict__ for base in cls.__mro__):
-            problems.append(f"missing class variable: {attr}")
-
-    for attr in model_attrs:
-        value = getattr(cls, attr, None)
-        if value is not None and not (
-            isinstance(value, type) and issubclass(value, BaseModel)
-        ):
-            problems.append(f"{attr} must be a BaseModel subclass, got {value!r}")
-
+    _check_attr_presence(cls, (*model_attrs, *other_attrs), problems)
+    _check_model_attrs(cls, model_attrs, problems)
     if "backend" in other_attrs:
-        backend = getattr(cls, "backend", None)
-        if backend is not None and not isinstance(backend, Backend):
-            problems.append(f"backend must be a Backend value, got {backend!r}")
-
+        _check_backend_attr(cls, problems)
     if "name" in other_attrs:
-        name = getattr(cls, "name", None)
-        if name is not None and not isinstance(name, str):
-            problems.append(f"name must be a str, got {name!r}")
-
+        _check_name_attr(cls, problems)
     if problems:
         raise TypeError(f"{cls.__name__}: " + "; ".join(problems))
 

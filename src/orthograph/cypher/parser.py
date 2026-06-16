@@ -57,42 +57,42 @@ class GraphglotParser:
 
     def _extract(self, lg: LineageGraph) -> CypherQueryInfo:
         info = CypherQueryInfo()
+        self._extract_bindings(lg, info)
+        self._extract_property_accesses(lg, info)
+        info.patterns = self._extract_patterns(lg, info)
+        info.query_intent = self._detect_intent(lg)
+        return info
 
-        # Extract bindings (variables bound to labels/types)
+    def _extract_bindings(self, lg: LineageGraph, info: CypherQueryInfo) -> None:
+        """Populate ``info.node_labels``, ``info.relationship_types``, and
+        ``info.variable_bindings`` from the lineage graph."""
         for binding_id in lg.bindings:
             binding = lg.nodes[binding_id]
-            name = binding.name
             label_expr = binding.label_expression
+            label_str = str(label_expr) if label_expr else None
 
             if binding.kind == BindingKind.NODE:
-                if label_expr:
-                    info.node_labels.add(str(label_expr))
-                if name and label_expr:
-                    info.variable_bindings[name] = str(label_expr)
+                target_set = info.node_labels
             elif binding.kind == BindingKind.EDGE:
-                if label_expr:
-                    info.relationship_types.add(str(label_expr))
-                if name and label_expr:
-                    info.variable_bindings[name] = str(label_expr)
+                target_set = info.relationship_types
+            else:
+                continue
 
-        # Extract property accesses
+            if label_str:
+                target_set.add(label_str)
+                if binding.name:
+                    info.variable_bindings[binding.name] = label_str
+
+    def _extract_property_accesses(
+        self, lg: LineageGraph, info: CypherQueryInfo
+    ) -> None:
+        """Populate ``info.property_accesses`` from property references."""
         for prop_id in lg.property_refs:
             prop_node = lg.nodes[prop_id]
             prop_name = prop_node.property_name
-            # Find which binding this property ref depends on
             owner_var = self._find_prop_owner(prop_id, lg, info.variable_bindings)
             if owner_var:
-                if owner_var not in info.property_accesses:
-                    info.property_accesses[owner_var] = set()
-                info.property_accesses[owner_var].add(prop_name)
-
-        # Extract patterns (relationship connections)
-        info.patterns = self._extract_patterns(lg, info)
-
-        # Determine query intent
-        info.query_intent = self._detect_intent(lg)
-
-        return info
+                info.property_accesses.setdefault(owner_var, set()).add(prop_name)
 
     @staticmethod
     def _find_prop_owner(
@@ -100,20 +100,22 @@ class GraphglotParser:
         lg: LineageGraph,
         variable_bindings: dict[str, str],
     ) -> str | None:
-        """Find the variable that owns a property reference."""
+        """Find the variable that owns a property reference.
+
+        For each edge that touches ``prop_id``, the adjacent node is the
+        candidate owner. The first candidate whose name is in
+        ``variable_bindings`` is returned.
+        """
         for edge in lg.edges:
             if edge.source_id == prop_id:
-                target = lg.nodes.get(edge.target_id)
-                if target and hasattr(target, "name"):
-                    name = target.name
-                    if name in variable_bindings:
-                        return name
-            if edge.target_id == prop_id:
-                source = lg.nodes.get(edge.source_id)
-                if source and hasattr(source, "name"):
-                    name = source.name
-                    if name in variable_bindings:
-                        return name
+                candidate_id = edge.target_id
+            elif edge.target_id == prop_id:
+                candidate_id = edge.source_id
+            else:
+                continue
+            node = lg.nodes.get(candidate_id)
+            if node and hasattr(node, "name") and node.name in variable_bindings:
+                return node.name
         return None
 
     @staticmethod
@@ -121,38 +123,37 @@ class GraphglotParser:
         lg: LineageGraph,
         info: CypherQueryInfo,
     ) -> list[PatternInfo]:
-        """Extract relationship patterns from bindings."""
-        patterns: list[PatternInfo] = []
-        bindings_list = list(lg.bindings)
-        binding_nodes = [lg.nodes[b] for b in bindings_list]
+        """Extract non-overlapping (node, edge, node) triples from bindings.
 
+        Advances by 3 when a NODE-EDGE-NODE triple is matched so patterns do
+        not overlap; advances by 1 otherwise.
+        """
+        binding_nodes = [lg.nodes[b] for b in lg.bindings]
+        patterns: list[PatternInfo] = []
         i = 0
-        while i < len(binding_nodes):
-            b = binding_nodes[i]
-            if b.kind == BindingKind.NODE and i + 2 < len(binding_nodes):
-                edge = binding_nodes[i + 1]
-                target = binding_nodes[i + 2]
-                if edge.kind == BindingKind.EDGE and target.kind == BindingKind.NODE:
-                    patterns.append(
-                        PatternInfo(
-                            source_label=(
-                                str(b.label_expression) if b.label_expression else None
-                            ),
-                            relationship_type=(
-                                str(edge.label_expression)
-                                if edge.label_expression
-                                else None
-                            ),
-                            target_label=(
-                                str(target.label_expression)
-                                if target.label_expression
-                                else None
-                            ),
-                        )
+        while i < len(binding_nodes) - 2:
+            a, b, c = binding_nodes[i], binding_nodes[i + 1], binding_nodes[i + 2]
+            if (
+                a.kind == BindingKind.NODE
+                and b.kind == BindingKind.EDGE
+                and c.kind == BindingKind.NODE
+            ):
+                patterns.append(
+                    PatternInfo(
+                        source_label=str(a.label_expression)
+                        if a.label_expression
+                        else None,
+                        relationship_type=str(b.label_expression)
+                        if b.label_expression
+                        else None,
+                        target_label=str(c.label_expression)
+                        if c.label_expression
+                        else None,
                     )
-                    i += 3
-                    continue
-            i += 1
+                )
+                i += 3
+            else:
+                i += 1
         return patterns
 
     @staticmethod
@@ -188,8 +189,25 @@ def validate_cypher(
     graph_definition: GraphDefinition,
     parser: CypherParserStrategy | None = None,
 ) -> ValidationResult:
-    """Validate a Cypher query string against a GraphDefinition."""
-    info = parse_cypher(query, parser)
+    """Validate a Cypher query string against a GraphDefinition.
+
+    Always returns a :class:`ValidationResult`.  A parse failure is returned
+    as a ``QUERY_PARSE_ERROR`` issue (severity ERROR) rather than raised.
+    """
+    try:
+        info = parse_cypher(query, parser)
+    except Exception as exc:
+        result = ValidationResult()
+        result.add(
+            ValidationIssue(
+                code="QUERY_PARSE_ERROR",
+                severity=Severity.ERROR,
+                entity_type=EntityType.QUERY,
+                entity_id=query,
+                message=f"Query could not be parsed: {exc}",
+            )
+        )
+        return result
     result = ValidationResult()
     _check_labels(info, graph_definition, result)
     _check_rel_types(info, graph_definition, result)
@@ -269,48 +287,55 @@ def _check_properties(
                 )
 
 
+def _pattern_endpoint_issue(
+    pat: PatternInfo,
+    graph_definition: GraphDefinition,
+) -> ValidationIssue | None:
+    """Return a QUERY_INVALID_ENDPOINT issue if ``pat``
+    violates the model, else None."""
+    if not pat.relationship_type or not pat.source_label or not pat.target_label:
+        return None
+
+    rel_type = graph_definition.get_relationship_type(pat.relationship_type)
+    if rel_type is None:
+        return None
+
+    expected_src = rel_type.__source_label__
+    expected_tgt = rel_type.__target_label__
+    forward_ok = pat.source_label == expected_src and pat.target_label == expected_tgt
+    reverse_ok = (
+        not rel_type.__directed__
+        and pat.source_label == expected_tgt
+        and pat.target_label == expected_src
+    )
+    if forward_ok or reverse_ok:
+        return None
+
+    return ValidationIssue(
+        code="QUERY_INVALID_ENDPOINT",
+        severity=Severity.ERROR,
+        entity_type=EntityType.RELATIONSHIP,
+        entity_id=pat.relationship_type,
+        message=(
+            f"Query pattern (:{pat.source_label})-[:{pat.relationship_type}]->"
+            f"(:{pat.target_label}) does not match model "
+            f"(:{expected_src})-[:{pat.relationship_type}]->(:{expected_tgt})"
+        ),
+        context={
+            "expected_source": expected_src,
+            "expected_target": expected_tgt,
+            "actual_source": pat.source_label,
+            "actual_target": pat.target_label,
+        },
+    )
+
+
 def _check_endpoints(
     info: CypherQueryInfo,
     graph_definition: GraphDefinition,
     result: ValidationResult,
 ) -> None:
     for pat in info.patterns:
-        if not pat.relationship_type or not pat.source_label or not pat.target_label:
-            continue
-
-        rel_type = graph_definition.get_relationship_type(pat.relationship_type)
-        if rel_type is None:
-            continue
-
-        expected_src = rel_type.__source_label__
-        expected_tgt = rel_type.__target_label__
-
-        forward_ok = (
-            pat.source_label == expected_src and pat.target_label == expected_tgt
-        )
-        reverse_ok = (
-            not rel_type.__directed__
-            and pat.source_label == expected_tgt
-            and pat.target_label == expected_src
-        )
-
-        if not forward_ok and not reverse_ok:
-            result.add(
-                ValidationIssue(
-                    code="QUERY_INVALID_ENDPOINT",
-                    severity=Severity.ERROR,
-                    entity_type=EntityType.RELATIONSHIP,
-                    entity_id=pat.relationship_type,
-                    message=f"Query pattern "
-                    f"(:{pat.source_label})-[:{pat.relationship_type}]->"
-                    f"(:{pat.target_label}) does not match model "
-                    f"(:{expected_src})-[:{pat.relationship_type}]->"
-                    f"(:{expected_tgt})",
-                    context={
-                        "expected_source": expected_src,
-                        "expected_target": expected_tgt,
-                        "actual_source": pat.source_label,
-                        "actual_target": pat.target_label,
-                    },
-                )
-            )
+        issue = _pattern_endpoint_issue(pat, graph_definition)
+        if issue is not None:
+            result.add(issue)

@@ -362,3 +362,50 @@ def test_validate_directed_cross_type_reverse_rejected(
     )
     assert not result.is_valid
     assert any(e.code == "QUERY_INVALID_ENDPOINT" for e in result.errors)
+
+
+# --- Parser exception → ValidationResult contract ---
+
+
+def test_validate_cypher_unparseable_returns_result_not_exception(
+    graph_definition: GraphDefinition,
+):
+    """A syntactically unparseable query must return a ValidationResult, not raise."""
+    from orthograph.cypher.parser import validate_cypher
+    from orthograph.diagnostics.result import ValidationResult
+
+    result = validate_cypher("THIS IS NOT CYPHER %%%", graph_definition)
+    assert isinstance(result, ValidationResult)
+
+
+def test_validate_cypher_unparseable_is_not_valid(
+    graph_definition: GraphDefinition,
+):
+    """An unparseable query must produce is_valid == False."""
+    from orthograph.cypher.parser import validate_cypher
+
+    result = validate_cypher("THIS IS NOT CYPHER %%%", graph_definition)
+    assert not result.is_valid
+
+
+def test_validate_cypher_unparseable_has_parse_error_code(
+    graph_definition: GraphDefinition,
+):
+    """An unparseable query must surface a QUERY_PARSE_ERROR issue."""
+    from orthograph.cypher.parser import validate_cypher
+
+    result = validate_cypher("THIS IS NOT CYPHER %%%", graph_definition)
+    assert any(e.code == "QUERY_PARSE_ERROR" for e in result.errors)
+
+
+def test_validate_cypher_parse_error_entity_id_contains_query(
+    graph_definition: GraphDefinition,
+):
+    """The QUERY_PARSE_ERROR issue entity_id should be the query string."""
+    from orthograph.cypher.parser import validate_cypher
+
+    query = "TOTALLY BROKEN ###"
+    result = validate_cypher(query, graph_definition)
+    parse_errors = [e for e in result.errors if e.code == "QUERY_PARSE_ERROR"]
+    assert len(parse_errors) == 1
+    assert parse_errors[0].entity_id == query

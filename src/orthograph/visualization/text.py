@@ -12,38 +12,24 @@ def _format_cardinality(spec: CardinalitySpec) -> str:
     return f"{spec.min}..{max_str}"
 
 
-def model_to_text(graph_definition: GraphDefinition) -> str:
-    """Render a GraphDefinition as a plain text table.
-
-    Shows node types with their properties (name, type, required/optional,
-    UID marker), and relationship types with endpoints and cardinality.
-    """
-    lines: list[str] = []
-
-    lines.append(f"Model: {graph_definition.name}")
-    if graph_definition.version:
-        lines.append(f"Version: {graph_definition.version}")
-    lines.append("")
-
-    # --- Node types ---
-    lines.append("Node Types")
-    lines.append("-" * 60)
-
+def _render_node_types(graph_definition: GraphDefinition) -> list[str]:
+    """Render the node-types section for model_to_text."""
+    lines: list[str] = ["Node Types", "-" * 60]
     for nt in graph_definition.node_types:
         optional_tag = " (optional)" if nt.__optional__ else ""
         lines.append(f"  {nt.__label__}{optional_tag}")
-        specs = nt.get_property_specs()
-        for name, info in specs.items():
+        for name, info in nt.get_property_specs().items():
             type_name = info.python_type.__name__
             req = "required" if info.is_required else "optional"
             uid = " [UID]" if name == nt.__uid_field__ else ""
             lines.append(f"    {name}: {type_name} ({req}){uid}")
         lines.append("")
+    return lines
 
-    # --- Relationship types ---
-    lines.append("Relationship Types")
-    lines.append("-" * 60)
 
+def _render_relationship_types(graph_definition: GraphDefinition) -> list[str]:
+    """Render the relationship-types section for model_to_text."""
+    lines: list[str] = ["Relationship Types", "-" * 60]
     for rt in graph_definition.relationship_types:
         src = rt.__source_label__
         tgt = rt.__target_label__
@@ -52,15 +38,30 @@ def model_to_text(graph_definition: GraphDefinition) -> str:
         tgt_card = _format_cardinality(rt.__target_cardinality__)
         lines.append(f"  {rt.__label__}: {src} {direction} {tgt}")
         lines.append(f"    cardinality: [{src_card}] source, [{tgt_card}] target")
-
-        specs = rt.get_property_specs()
-        if specs:
-            for name, info in specs.items():
-                type_name = info.python_type.__name__
-                req = "required" if info.is_required else "optional"
-                lines.append(f"    {name}: {type_name} ({req})")
+        for name, info in rt.get_property_specs().items():
+            type_name = info.python_type.__name__
+            req = "required" if info.is_required else "optional"
+            lines.append(f"    {name}: {type_name} ({req})")
         lines.append("")
+    return lines
 
+
+def model_to_text(graph_definition: GraphDefinition) -> str:
+    """Render a GraphDefinition as a plain text table.
+
+    Shows node types with their properties (name, type, required/optional,
+    UID marker), and relationship types with endpoints and cardinality.
+    """
+    header: list[str] = [f"Model: {graph_definition.name}"]
+    if graph_definition.version:
+        header.append(f"Version: {graph_definition.version}")
+    header.append("")
+
+    lines = (
+        header
+        + _render_node_types(graph_definition)
+        + _render_relationship_types(graph_definition)
+    )
     return "\n".join(lines)
 
 

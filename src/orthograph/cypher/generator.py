@@ -85,23 +85,7 @@ class CypherGenerator:
         if uid_field is None or uid_field not in props:
             return self.create_node(data)
 
-        uid_val = props[uid_field]
-        set_props = {k: v for k, v in props.items() if k != uid_field}
-
-        safe_label = validate_identifier(label, kind="label")
-        safe_uid_field = validate_identifier(uid_field, kind="property key")
-        query = f"MERGE (n:{safe_label} {{{safe_uid_field}: ${uid_field}}})"
-        params: dict[str, Any] = {uid_field: uid_val}
-
-        if set_props:
-            set_clauses = ", ".join(
-                f"n.{validate_identifier(k, kind='property key')} = ${k}"
-                for k in set_props
-            )
-            query += f" SET {set_clauses}"
-            params.update(set_props)
-
-        query += " RETURN n"
+        query, params = _build_merge_by_uid(label, uid_field, props)
         self._assert_valid(query)
         return query, params
 
@@ -184,35 +168,15 @@ class CypherGenerator:
         if rel_type is None:
             raise CypherUnknownLabelError(f"Unknown relationship label: {label}")
 
-        src_label = rel_type.__source_label__
-        tgt_label = rel_type.__target_label__
-        src_node_type = self.graph_definition.get_node_type(src_label)
-        tgt_node_type = self.graph_definition.get_node_type(tgt_label)
-        if src_node_type is None:
-            raise CypherUnknownLabelError(f"Unknown source node label: {src_label}")
-        if tgt_node_type is None:
-            raise CypherUnknownLabelError(f"Unknown target node label: {tgt_label}")
-        _, src_uid_field = CypherGenerator._require_uid_for_endpoint(
-            src_node_type, label, "source"
+        safe_src_label, safe_src_uid_field, safe_tgt_label, safe_tgt_uid_field = (
+            _resolve_rel_endpoints(rel_type, label, self.graph_definition)
         )
-        _, tgt_uid_field = CypherGenerator._require_uid_for_endpoint(
-            tgt_node_type, label, "target"
-        )
-
         safe_label = validate_identifier(label, kind="relationship type")
-        safe_src_label = validate_identifier(src_label, kind="label")
-        safe_tgt_label = validate_identifier(tgt_label, kind="label")
-        safe_src_uid_field = validate_identifier(src_uid_field, kind="property key")
-        safe_tgt_uid_field = validate_identifier(tgt_uid_field, kind="property key")
 
         props = {k: v for k, v in data.items() if not k.startswith("__")}
         self._check_model_properties(props, rel_type, label)
 
-        params: dict[str, Any] = {
-            "src_uid": src_uid,
-            "tgt_uid": tgt_uid,
-        }
-
+        params: dict[str, Any] = {"src_uid": src_uid, "tgt_uid": tgt_uid}
         query = (
             f"MATCH (a:{safe_src_label} {{{safe_src_uid_field}: $src_uid}}), "
             f"(b:{safe_tgt_label} {{{safe_tgt_uid_field}: $tgt_uid}}) "
@@ -222,16 +186,14 @@ class CypherGenerator:
         # is only valid in MATCH. For undirected relationship types we always
         # emit '->' (source → target as declared); the undirected semantics
         # apply at read time (MATCH), not write time.
-        arrow = "->"
-
         if props:
             prop_str = ", ".join(
                 f"{validate_identifier(k, kind='property key')}: ${k}" for k in props
             )
-            query += f"{verb} (a)-[r:{safe_label} {{{prop_str}}}]{arrow}(b)"
+            query += f"{verb} (a)-[r:{safe_label} {{{prop_str}}}]->(b)"
             params.update(props)
         else:
-            query += f"{verb} (a)-[r:{safe_label}]{arrow}(b)"
+            query += f"{verb} (a)-[r:{safe_label}]->(b)"
 
         query += " RETURN r"
         self._assert_valid(query)
@@ -357,6 +319,70 @@ class CypherGenerator:
         label = validate_identifier(node_type.__label__, kind="label")
         validate_identifier(uid_field, kind="property key")
         return label, uid_field
+
+
+def _build_merge_by_uid(
+    label: str,
+    uid_field: str,
+    props: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Build a MERGE…SET…RETURN query for a node with a known UID field.
+
+    ``props`` must contain ``uid_field``; all other props become SET assignments.
+    Returns ``(query, params)``.
+    """
+    uid_val = props[uid_field]
+    set_props = {k: v for k, v in props.items() if k != uid_field}
+
+    safe_label = validate_identifier(label, kind="label")
+    safe_uid_field = validate_identifier(uid_field, kind="property key")
+    query = f"MERGE (n:{safe_label} {{{safe_uid_field}: ${uid_field}}})"
+    params: dict[str, Any] = {uid_field: uid_val}
+
+    if set_props:
+        set_clauses = ", ".join(
+            f"n.{validate_identifier(k, kind='property key')} = ${k}" for k in set_props
+        )
+        query += f" SET {set_clauses}"
+        params.update(set_props)
+
+    return query + " RETURN n", params
+
+
+def _resolve_rel_endpoints(
+    rel_type: type[RelationshipModel],
+    rel_label: str,
+    graph_definition: GraphDefinition,
+) -> tuple[str, str, str, str]:
+    """Return (safe_src_label, safe_src_uid_field, safe_tgt_label, safe_tgt_uid_field).
+
+    Raises ``CypherUnknownLabelError`` when an endpoint node type is absent from
+    the graph definition, and ``MissingUidFieldError`` when an endpoint node type
+    has no ``__uid_field__``.
+    """
+    src_label = rel_type.__source_label__
+    tgt_label = rel_type.__target_label__
+
+    src_node_type = graph_definition.get_node_type(src_label)
+    if src_node_type is None:
+        raise CypherUnknownLabelError(f"Unknown source node label: {src_label}")
+    tgt_node_type = graph_definition.get_node_type(tgt_label)
+    if tgt_node_type is None:
+        raise CypherUnknownLabelError(f"Unknown target node label: {tgt_label}")
+
+    _, src_uid_field = CypherGenerator._require_uid_for_endpoint(
+        src_node_type, rel_label, "source"
+    )
+    _, tgt_uid_field = CypherGenerator._require_uid_for_endpoint(
+        tgt_node_type, rel_label, "target"
+    )
+
+    return (
+        validate_identifier(src_label, kind="label"),
+        validate_identifier(src_uid_field, kind="property key"),
+        validate_identifier(tgt_label, kind="label"),
+        validate_identifier(tgt_uid_field, kind="property key"),
+    )
 
 
 def _params_model(
