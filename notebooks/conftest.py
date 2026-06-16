@@ -23,6 +23,8 @@ _HERE = Path(__file__).parent
 _DB_NOTEBOOKS: dict[str, str] = {
     "03.02_neo4j_end_to_end.ipynb": "neo4j",
     "03.04_gqlalchemy_database_interaction.ipynb": "neo4j",
+    "06.01_profile_neo4j_example.ipynb": "neo4j",
+    "06.02_profile_neo4j_custom.ipynb": "neo4j",
 }
 
 

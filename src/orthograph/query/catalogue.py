@@ -11,6 +11,8 @@ Execution is separate — see ``orthograph.query.base_models``.
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pydantic import BaseModel
+
 from orthograph.query.base_models import Backend, D, P, R, ReadQuery, WriteQuery
 
 
@@ -21,6 +23,9 @@ class QueryDescription:
     Produced by ``QueryCatalogue.describe()``. ``output_schema`` is ``None``
     for writes (writes declare no ``Output``); for reads it is the declared
     Output model's JSON schema.
+
+    ``output_class`` is the actual Output class (not the JSON schema dict) for
+    queries that declare it; ``None`` for queries without an Output.
     """
 
     name: str
@@ -28,6 +33,7 @@ class QueryDescription:
     backend: Backend
     params_schema: dict[str, Any]
     output_schema: dict[str, Any] | None
+    output_class: type[BaseModel] | None
 
 
 class QueryCatalogue:
@@ -91,6 +97,16 @@ class QueryCatalogue:
         """
         return [d.name for d in self.describe(backend=backend)]
 
+    def get(self, name: str) -> QueryDescription:
+        """Return the ``QueryDescription`` for a single registered query by name.
+
+        Raises ``KeyError`` if no query with that name has been registered.
+        """
+        for desc in self.describe():
+            if desc.name == name:
+                return desc
+        raise KeyError(f"no query named {name!r} is registered")
+
     def describe(self, backend: Backend | None = None) -> list[QueryDescription]:
         """Return a QueryDescription for each registered query.
 
@@ -107,6 +123,7 @@ class QueryCatalogue:
                 backend=q.backend,
                 params_schema=q.Params.model_json_schema(),
                 output_schema=q.Output.model_json_schema(),
+                output_class=q.Output,
             )
             for q in self._reads.values()
         ]
@@ -116,7 +133,10 @@ class QueryCatalogue:
                 kind="write",
                 backend=q.backend,
                 params_schema=q.Params.model_json_schema(),
-                output_schema=None,
+                output_schema=q.Output.model_json_schema()
+                if q.Output is not None
+                else None,
+                output_class=q.Output,
             )
             for q in self._writes.values()
         )

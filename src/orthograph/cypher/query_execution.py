@@ -7,11 +7,52 @@ driver), runs the statement, and materialises each record.
 ``read()`` does not commit; ``write()`` commits.
 """
 
+from dataclasses import dataclass
 from typing import Any, Callable, cast
 
 from orthograph.cypher.exceptions import CypherSyntaxError
 from orthograph.cypher.parser import parse_cypher
 from orthograph.query.base_models import D, Executor, P, R, ReadQuery, WriteQuery
+from orthograph.query.write_result import WriteResultSummary
+
+
+@dataclass
+class CypherWriteResultSummary:
+    """Vendor-free summary of a Cypher write operation.
+
+    Wraps the ``SummaryCounters`` from ``neo4j.Result.consume().counters``
+    and satisfies the :class:`~orthograph.query.write_result.WriteResultSummary`
+    protocol, making ``interpret_result`` implementations testable without a
+    live driver.
+
+    Example::
+
+        # In a CypherWriteQuery.interpret_result implementation:
+        def interpret_result(self, raw: WriteResultSummary) -> int:
+            return raw.nodes_created
+    """
+
+    nodes_created: int = 0
+    nodes_deleted: int = 0
+    relationships_created: int = 0
+    relationships_deleted: int = 0
+    properties_set: int = 0
+
+    @classmethod
+    def from_neo4j_result(cls, result: Any) -> "CypherWriteResultSummary":
+        """Build from a neo4j ``Result`` by consuming it and reading counters."""
+        counters = result.consume().counters
+        return cls(
+            nodes_created=counters.nodes_created,
+            nodes_deleted=counters.nodes_deleted,
+            relationships_created=counters.relationships_created,
+            relationships_deleted=counters.relationships_deleted,
+            properties_set=counters.properties_set,
+        )
+
+
+# Verify at import time that the dataclass satisfies the protocol.
+assert isinstance(CypherWriteResultSummary(), WriteResultSummary)
 
 
 class CypherExecutor(Executor):
@@ -60,7 +101,17 @@ class CypherExecutor(Executor):
             return [query.materialize(dict(rec)) for rec in records]
 
     def write(self, query: WriteQuery[P, R], raw_params: Any) -> R:
-        """Validate params → build → parse Cypher → run → commit."""
+        """Validate params → build → parse Cypher → run → commit.
+
+        The driver result is consumed immediately via
+        :meth:`CypherWriteResultSummary.from_neo4j_result`, which calls
+        ``result.consume()`` and exposes only the five mutation counters
+        (``nodes_created``, ``nodes_deleted``, ``relationships_created``,
+        ``relationships_deleted``, ``properties_set``).  Any rows projected
+        by a ``RETURN`` clause in the template are intentionally discarded —
+        write queries express their result through ``interpret_result`` acting
+        on those counters, not on returned row data.
+        """
         params = cast(P, query.Params.model_validate(raw_params))
         cypher, qparams = query.build(params)
         self._validate_cypher(cypher, query.name)  # runtime syntax check
@@ -68,7 +119,8 @@ class CypherExecutor(Executor):
             tx = session.begin_transaction()
             try:
                 result = tx.run(cypher, **qparams)
-                interpreted = query.materialize(result)
+                summary = CypherWriteResultSummary.from_neo4j_result(result)
+                interpreted = query.interpret_result(summary)
                 tx.commit()
             except BaseException:
                 try:

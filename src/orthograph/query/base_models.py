@@ -12,7 +12,7 @@ No database-specific imports here.
 import inspect
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar, get_args
 
 from pydantic import BaseModel
 
@@ -70,6 +70,42 @@ def _check_name_attr(cls: type, problems: list[str]) -> None:
         problems.append(f"name must be a str, got {name!r}")
 
 
+def _extract_generic_args(cls: type, base_cls: type) -> tuple[Any, ...] | None:
+    """Extract concrete type arguments from *cls*'s own direct parameterised base.
+
+    Only inspects ``__orig_bases__`` stored **directly on** *cls* (never
+    inherited), so subclasses-of-subclasses do not pick up their parent's
+    unbound TypeVars.  Any arg that is still a ``TypeVar`` causes the whole
+    result to be discarded — callers only receive fully-bound concrete types.
+    """
+    for base in cls.__dict__.get("__orig_bases__", ()):
+        origin = getattr(base, "__origin__", None)
+        if origin is not None and issubclass(origin, base_cls):
+            args = get_args(base)
+            if args and not any(isinstance(a, TypeVar) for a in args):
+                return args
+    return None
+
+
+def _auto_populate_classvar(cls: type, attr_name: str, value: Any) -> None:
+    """Set *attr_name* on *cls* from a generic arg if not explicitly declared.
+
+    If the attribute **is** already in ``cls.__dict__`` and its value differs
+    from *value*, raise ``TypeError`` at class-definition time (conflicting
+    explicit assignment).  If it matches, accept silently.
+    """
+    if attr_name in cls.__dict__:
+        declared = cls.__dict__[attr_name]
+        if declared != value:
+            raise TypeError(
+                f"{cls.__name__}: {attr_name} is declared as {declared!r} "
+                f"but the generic argument is {value!r}; "
+                f"remove the explicit {attr_name} = ... assignment or make it match"
+            )
+    else:
+        setattr(cls, attr_name, value)
+
+
 def _enforce_query_contract(
     cls: type, *, model_attrs: tuple[str, ...], other_attrs: tuple[str, ...]
 ) -> None:
@@ -114,6 +150,12 @@ class ReadQuery(ABC, Generic[P, D]):
         # leave at least one abstractmethod unimplemented).
         if inspect.isabstract(cls):
             return
+        # T6: auto-populate Params and Output from generic args when the class
+        # directly parameterises ReadQuery[P, D] with concrete types.
+        args = _extract_generic_args(cls, ReadQuery)
+        if args and len(args) >= 2:
+            _auto_populate_classvar(cls, "Params", args[0])
+            _auto_populate_classvar(cls, "Output", args[1])
         _enforce_query_contract(
             cls, model_attrs=("Params", "Output"), other_attrs=("name", "backend")
         )
@@ -135,11 +177,16 @@ class WriteQuery(ABC, Generic[P, R]):
       - ``name``    — unique string identifier within a catalogue
       - ``backend`` — ``Backend`` enum value
 
-    WriteQuery has NO ``Output`` class variable — write results (rowcounts, ids)
-    are expressed via the ``R`` TypeVar and ``materialize()``.
+    Subclasses MAY define:
+      - ``Output``  — a Pydantic model class that describes the write result structure
+                      (defaults to ``None``)
+
+    Write results (rowcounts, ids) are expressed via the ``R`` TypeVar and
+    ``interpret_result()``.
     """
 
     Params: ClassVar[type[BaseModel]]
+    Output: ClassVar[type[BaseModel] | None] = None
     name: ClassVar[str]
     backend: ClassVar[Backend]
 
@@ -147,6 +194,10 @@ class WriteQuery(ABC, Generic[P, R]):
         super().__init_subclass__(**kwargs)
         if inspect.isabstract(cls):
             return
+        # T6: auto-populate Params from the first generic arg.
+        args = _extract_generic_args(cls, WriteQuery)
+        if args and len(args) >= 1:
+            _auto_populate_classvar(cls, "Params", args[0])
         _enforce_query_contract(
             cls, model_attrs=("Params",), other_attrs=("name", "backend")
         )
@@ -156,8 +207,17 @@ class WriteQuery(ABC, Generic[P, R]):
         """Pure, I/O-free construction of the write query object."""
 
     @abstractmethod
-    def materialize(self, raw: Any) -> R:
-        """Pure mapping of the driver's write result into the declared result type."""
+    def interpret_result(self, raw: Any) -> R:
+        """Pure mapping of a mutation summary into the declared result type.
+
+        ``raw`` is expected to satisfy the
+        :class:`~orthograph.query.write_result.WriteResultSummary` protocol
+        when invoked through :class:`~orthograph.cypher.query_execution.CypherExecutor`
+        (which passes a ``CypherWriteResultSummary`` wrapping the driver's
+        ``SummaryCounters``).  The signature accepts ``Any`` so that the abstract
+        layer stays vendor-free and test doubles may pass plain dataclasses or
+        dicts during unit testing.
+        """
 
 
 class Executor(ABC):
@@ -174,7 +234,7 @@ class Executor(ABC):
 
     @abstractmethod
     def write(self, query: WriteQuery[P, R], raw_params: Any) -> R:
-        """Validate params → build() (pure) → execute → commit → materialize."""
+        """Validate params → build() (pure) → execute → commit → interpret_result."""
 
 
 class ReadPort(ABC, Generic[P, D]):

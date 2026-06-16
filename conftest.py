@@ -6,21 +6,26 @@ registered here.  Pytest determines the rootdir from ``pyproject.toml`` and
 loads this file for every invocation — including ``pytest notebooks/`` — so
 flags and skip-logic defined here are always available.
 
+For live-database tests, pass credentials via CLI options:
+
+    pytest --neo4j --neo4j-password <password>
+    pytest --memgraph --memgraph-user <user> --memgraph-password <password>
+
 Usage:
 
     pytest                        # unit tests only (default, CI)
-    pytest --neo4j                # also run tests that need Neo4j
-    pytest --memgraph             # also run tests that need Memgraph
-    pytest --neo4j --memgraph     # run all DB-dependent tests
+    pytest --neo4j --neo4j-password <pw>      # + Neo4j live tests
+    pytest --memgraph --memgraph-password <pw>     # + Memgraph live tests
+    pytest --neo4j --neo4j-password <pw> --memgraph --memgraph-password <pw>
 
-Connection options (all have defaults that match a stock local install):
+Connection options (all via CLI, no defaults for passwords):
 
-    --neo4j-uri         bolt://localhost:7687
-    --neo4j-user        neo4j
-    --neo4j-password    password
-    --memgraph-uri      bolt://localhost:7688
-    --memgraph-user     (empty)
-    --memgraph-password (empty)
+    --neo4j-uri             bolt://localhost:7687
+    --neo4j-user            neo4j
+    --neo4j-password        (required for --neo4j; no default)
+    --memgraph-uri          bolt://localhost:7688
+    --memgraph-user         (empty by default)
+    --memgraph-password     (empty by default)
 
 Markers are declared in ``pyproject.toml`` under
 ``[tool.pytest.ini_options] markers``; they are not re-registered here to
@@ -33,7 +38,11 @@ import pytest
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Register --neo4j / --memgraph flags and their connection-detail options."""
+    """Register --neo4j / --memgraph flags and connection-detail options.
+
+    All credentials must be provided via CLI; there are no .env file defaults
+    for tests. This ensures explicit, deliberate credential passing in CI/CD.
+    """
     parser.addoption(
         "--neo4j",
         action="store_true",
@@ -58,8 +67,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     parser.addoption(
         "--neo4j-password",
-        default="password",
-        help="Neo4j password (default: password).",
+        default="",
+        help="Neo4j password (required for --neo4j; must be passed via CLI).",
     )
     parser.addoption(
         "--memgraph-uri",

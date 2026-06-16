@@ -81,10 +81,10 @@ class MoviesByYear(CypherReadQuery[ReleasedYearParams, Movie]):
     Params = ReleasedYearParams
     Output = Movie
     name = "movies_by_year"
-    cypher_template = "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
+    cypher_template = "MATCH (m:Movie {released: $released}) RETURN m"
 
     def materialize(self, raw: dict[str, Any]) -> Movie:
-        return Movie(title=raw["m.title"], released=raw["m.released"])
+        return Movie(**raw["m"])
 
 
 class MoviesByBadLabel(CypherReadQuery[TitleParams, Movie]):

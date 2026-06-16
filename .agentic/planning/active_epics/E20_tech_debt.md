@@ -48,6 +48,83 @@
 
 ---
 
+## T7: Cypher validation does not distinguish a `$param` from a backtick-escaped identifier
+
+> **Origin:** Notebook review session 2026-06-16 (`notebooks/05.01_openapi_ergonomics_assessment.ipynb`)
+> **Priority:** Medium — silent correctness gap; affects definition-time *and* runtime Cypher validation.
+> **Scope:** `src/orthograph/cypher/parser.py`, `src/orthograph/cypher/bindings.py`, `src/orthograph/cypher/base_models.py`
+> **Relates to:** Epic E18 (validation correctness).
+
+**Finding.** A `cypher_template` that wraps a parameter in backticks — e.g.
+`` MATCH (m:Movie {released: `$released`}) `` — passes **every** validation layer Orthograph
+currently has, yet is semantically wrong: in Cypher a backtick-quoted token is an *escaped
+identifier*, not a parameter, so the driver never binds `$released` and the query silently
+fails to filter (returns nothing / errors against a live driver).
+
+Verified empirically (graphglot 2026-06 build, neo4j dialect):
+
+- **graphglot parse** (`parse_cypher`) accepts both forms without error. The tokenizer reveals
+  why: `` `$released` `` lexes to a **single `VAR` token** `'$released'` (an escaped identifier
+  literally named `$released`), whereas the correct `$released` lexes to two tokens
+  `DOLLAR_SIGN` + `VAR`. Both produce structurally identical lineage graphs, so the
+  definition-time dialect parse in `_validate_declarative_cypher` cannot tell them apart.
+- **Alignment checker** (`check_placeholder_alignment` → `extract_cypher_params`,
+  `bindings.py:52`) uses the regex `\$([A-Za-z_][A-Za-z0-9_]*)`, which matches `$released`
+  regardless of surrounding backticks. So the `$param` ↔ `Params`-field 1:1 check also goes
+  green on the broken form.
+- **Runtime check** (`CypherExecutor._validate_cypher`) reuses `parse_cypher`, so it inherits
+  the same blind spot.
+
+**Net effect.** The only thing that catches the mistake is a real driver returning wrong
+results — exactly the "fail silently" failure mode the PRD exists to prevent. A consumer
+copying a backtick template from documentation gets a green definition-time validation and a
+silently broken query.
+
+**Decision surface.**
+
+1. **Lint in `_validate_declarative_cypher`** — after extracting `$param` names, scan the
+   template for the pattern `` `\$NAME` `` (a parameter immediately wrapped in backticks) and
+   raise `CypherQueryDefinitionError` with a fix hint ("remove the backticks around `$NAME`;
+   parameters must not be backtick-quoted"). Cheap, regex-only, no graphglot dependency.
+2. **Push upstream to graphglot** — ask graphglot to expose recognised parameter bindings on
+   the lineage graph (`lg.parameters` is currently `None`) so Orthograph can assert that each
+   regex-extracted `$param` corresponds to a real parameter node, not a `VAR`. More robust but
+   depends on an external roadmap.
+3. **Both** — ship the regex lint now (option 1) as a guard; track option 2 as the principled
+   fix once graphglot surfaces parameter lineage.
+
+**Recommended action (when picked up):** option 3. Land the regex lint immediately; file the
+graphglot feature request and link it here.
+
+**Related graphglot gap — `LIMIT $param` does not parse.** While fixing the backtick templates
+in the §05.01 notebook, the bundled graphglot (neo4j dialect) was found to **reject a
+parameterised `LIMIT`**: `RETURN m LIMIT $limit` raises `ParseError: Expected parameter name or
+number after $`. `SKIP $skip` parses; `LIMIT $limit`, `LIMIT toInteger($limit)`, and
+`SKIP $skip LIMIT $limit` all fail. Only a literal `LIMIT 100` parses. Consequences:
+
+- A declarative paginated `CypherReadQuery` (the natural use of `PaginatedParams`) **cannot be
+  defined** — `_validate_declarative_cypher` raises at class-definition time. The gap also bites
+  at **runtime**: `CypherExecutor.read` re-parses the built Cypher via `_validate_cypher`, so even
+  an imperative `build()` that emits `LIMIT $limit` raises `CypherSyntaxError` on every request.
+- The §05.01 notebook works around this with the **imperative `build()` escape hatch** (no
+  `cypher_template`) that **inlines `skip`/`limit` as integer literals** (`SKIP 0 LIMIT 100`),
+  which graphglot parses. This is injection-safe because `PaginatedParams` validates them as
+  bounded ints; the year filter stays a real `$released` parameter.
+- This is an upstream graphglot parser limitation, not an Orthograph bug, but it directly blocks
+  the headline pagination ergonomic. File a graphglot issue for `LIMIT <parameter>` support and
+  link it here; until then, document the imperative-`build()` workaround in the pagination guide.
+
+**Acceptance criteria:**
+- [ ] A `cypher_template` containing `` `$param` `` raises `CypherQueryDefinitionError` at
+      class-definition time with an actionable message.
+- [ ] The lint does **not** false-positive on legitimate backtick-escaped *identifiers* that
+      are not parameters (e.g. `` (n:`My Label`) ``) or on `<<name>>` identifier placeholders.
+- [ ] Regression test covers: backtick-wrapped `$param` (rejected), clean `$param` (accepted),
+      backtick-escaped label with no param (accepted).
+- [ ] `pytest` + `mypy src/` + `ruff check` green.
+
+---
+
 ## Error Hierarchy & Library Logging Discipline
 
 > **Forward note — ADR-017 (2026-06-12) re-paths this section's file targets.**

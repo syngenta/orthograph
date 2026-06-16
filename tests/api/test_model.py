@@ -198,7 +198,12 @@ def test_validate_query_unparseable_returns_result_not_exception(
 
 
 def test_validate_query_catalogue_clean(graph_definition: GraphDefinition) -> None:
-    """A catalogue of model-consistent queries produces no errors."""
+    """A catalogue of model-consistent queries produces no errors.
+
+    FindPerson uses whole-node ``RETURN p`` with ``Output = Person`` (NodeModel).
+    Under the tiered alignment check this is the VALID/no-INFO case — assert that
+    no ``QUERY_RETURN_OUTPUT_MISMATCH`` issues appear.
+    """
     from pydantic import BaseModel as PydanticBase
 
     class P(PydanticBase):
@@ -217,6 +222,9 @@ def test_validate_query_catalogue_clean(graph_definition: GraphDefinition) -> No
     query_catalogue.register_read(FindPerson())
     result = validate_query_catalogue(query_catalogue, graph_definition)
     assert result.is_valid
+    assert not any(i.code == "QUERY_RETURN_OUTPUT_MISMATCH" for i in result.issues), (
+        "Whole-node RETURN p against Person NodeModel must not emit mismatch issues"
+    )
 
 
 def test_validate_query_catalogue_drifted_label(
@@ -281,7 +289,12 @@ def _person_profile() -> GraphProfile:
 def test_validate_query_catalogue_against_profile_all_clean(
     node_only_model: GraphDefinition,
 ) -> None:
-    """Clean catalogue + matching profile => no errors from either pass."""
+    """Clean catalogue + matching profile => no errors from either pass.
+
+    Q uses whole-node ``RETURN p`` with ``Output = Person`` — verify the result
+    is valid AND that no ``QUERY_RETURN_OUTPUT_MISMATCH`` issues are emitted
+    (previously this emitted false INFO for the whole-node case).
+    """
     from pydantic import BaseModel as PydanticBase
 
     class P(PydanticBase):
@@ -302,6 +315,9 @@ def test_validate_query_catalogue_against_profile_all_clean(
         query_catalogue, _person_profile(), node_only_model
     )
     assert result.is_valid
+    assert not any(i.code == "QUERY_RETURN_OUTPUT_MISMATCH" for i in result.issues), (
+        "Whole-node RETURN p against Person NodeModel must not emit mismatch issues"
+    )
 
 
 def test_validate_query_catalogue_against_profile_merges_both_passes(

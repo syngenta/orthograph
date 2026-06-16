@@ -320,13 +320,62 @@ Option                  Default                    Description
 ======================  =========================  ================================
 ``--neo4j-uri``         ``bolt://localhost:7687``  Bolt URI for Neo4j
 ``--neo4j-user``        ``neo4j``                  Neo4j username
-``--neo4j-password``    ``password``               Neo4j password
+``--neo4j-password``    *(required via CLI)*       Neo4j password (no default)
 ``--memgraph-uri``      ``bolt://localhost:7688``  Bolt URI for Memgraph
-``--memgraph-user``     *(empty)*                  Memgraph username
-``--memgraph-password`` *(empty)*                  Memgraph password
+``--memgraph-user``     *(empty)*                  Memgraph username (no default)
+``--memgraph-password`` *(empty)*                  Memgraph password (no default)
 ======================  =========================  ================================
 
-Notebooks
+Credential Management
+~~~~~~~~~~~~~~~~~~~~~
+
+Credentials are managed **separately** for tests and notebooks:
+
+**For tests**: Use CLI arguments to pass credentials (no .env file loading).
+
+.. code-block:: shell
+
+    # Run with Neo4j
+    pytest --neo4j --neo4j-password <your-password>
+
+    # Run with Memgraph
+    pytest --memgraph --memgraph-user <user> --memgraph-password <password>
+
+    # Both
+    pytest --neo4j --neo4j-password <pw> --memgraph --memgraph-password <pw>
+
+This approach is CI/CD-friendly: credentials are never stored in the repo, and
+secrets can be injected via environment variables or CI secrets management.
+Tests have zero knowledge of `.env` files — credentials are always explicit.
+
+**For notebooks**: Credentials are loaded from ``notebooks/.env``.
+
+1. Copy the template:
+
+   .. code-block:: shell
+
+      cp notebooks/.env_default notebooks/.env
+
+2. Edit ``notebooks/.env`` with your database connection details.
+3. The ``.env`` file is git-ignored and will never be committed.
+
+Notebooks that require a live database (``03.02_neo4j_end_to_end.ipynb``,
+``03.04_gqlalchemy_database_interaction.ipynb``) use the ``env_helper.py``
+module to load credentials from ``notebooks/.env``.
+
+Example notebook cell:
+
+.. code-block:: python
+
+    from env_helper import load_env
+
+    neo4j_uri = load_env("NEO4J_URI", "bolt://localhost:7687")
+    neo4j_user = load_env("NEO4J_USER", "neo4j")
+    neo4j_password = load_env("NEO4J_PASSWORD", "password")
+
+    driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+
+Connection options
 ~~~~~~~~~
 
 The ``notebooks/`` directory contains executable reference notebooks. Run them via
@@ -338,7 +387,15 @@ The ``notebooks/`` directory contains executable reference notebooks. Run them v
    pytest notebooks/ --nbval-lax --neo4j      # + Neo4j notebooks
 
 Notebooks that require a live database are excluded from collection unless the
-corresponding flag is passed.
+corresponding flag is passed. The following notebooks require a running Neo4j instance:
+
+* ``03.02_neo4j_end_to_end.ipynb``
+* ``03.04_gqlalchemy_database_interaction.ipynb``
+* ``06.01_profile_neo4j_example.ipynb``
+* ``06.02_profile_neo4j_custom.ipynb``
+
+Some notebooks also require optional dependencies (e.g., ``fastapi``, ``httpx`` for the OpenAPI
+notebook). These are installed with the ``notebooks`` extra.
 
 Adding a new live-DB test
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -360,7 +417,16 @@ per test run). The ``neo4j_clean`` / ``memgraph_clean`` fixtures are function-sc
 wipe the database before and after each test.
 
 For a DB-requiring notebook, add an entry to ``_DB_NOTEBOOKS`` in
-``notebooks/conftest.py``.
+``notebooks/conftest.py``:
+
+.. code-block:: python
+
+    _DB_NOTEBOOKS: dict[str, str] = {
+        "your_notebook_name.ipynb": "neo4j",  # or "memgraph"
+    }
+
+This ensures the notebook is skipped in CI by default and only runs when the corresponding
+flag is passed (e.g., ``pytest notebooks/ --nbval-lax --neo4j``).
 
 Full matrix
 ~~~~~~~~~~~

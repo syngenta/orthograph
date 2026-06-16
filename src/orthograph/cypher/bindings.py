@@ -23,6 +23,11 @@ class NoParams(BaseModel):
     """Canonical empty value-parameter model.
 
     Declare ``Params = NoParams`` for queries that take no ``$value`` parameters.
+
+    **Import path:**
+    ```python
+    from orthograph.cypher.bindings import NoParams
+    ```
     """
 
 
@@ -30,6 +35,11 @@ class NoIdentifiers(BaseModel):
     """Canonical empty identifiers model — the default at the Cypher query bases.
 
     A query with no ``Identifiers`` and no ``<<placeholder>>`` renders unchanged.
+
+    **Import path:**
+    ```python
+    from orthograph.cypher.bindings import NoIdentifiers
+    ```
     """
 
 

@@ -4,6 +4,7 @@ Uses a strategy pattern for the parser backend. Default: graphglot.
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Literal, Protocol, runtime_checkable
 
 from graphglot.dialect import Dialect
@@ -13,6 +14,33 @@ from graphglot.lineage.models import BindingKind, LineageGraph
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue, ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
+
+
+class ReturnKind(str, Enum):
+    """Classification of a projected RETURN column."""
+
+    SCALAR = "SCALAR"
+    WHOLE_NODE = "WHOLE_NODE"
+    WHOLE_REL = "WHOLE_REL"
+
+
+@dataclass(frozen=True)
+class ReturnColumn:
+    """A single classified column from a Cypher RETURN clause.
+
+    Attributes:
+        name:  The projected column name (alias if present, else variable name
+               or property name).
+        kind:  Whether this is a scalar property projection, a whole-node
+               return, or a whole-relationship return.
+        label: For ``WHOLE_NODE`` / ``WHOLE_REL`` columns, the resolved label
+               or relationship type (e.g. ``"Movie"`` or ``"ACTED_IN"``).
+               ``None`` for ``SCALAR`` columns.
+    """
+
+    name: str
+    kind: ReturnKind
+    label: str | None
 
 
 @dataclass(frozen=True)
@@ -167,6 +195,117 @@ class GraphglotParser:
             return "write"
         return "read"
 
+    def extract_return_columns(self, query: str) -> list[ReturnColumn] | None:
+        """Extract and classify projected columns from *query*'s RETURN clause.
+
+        Returns a list of :class:`ReturnColumn` instances (one per projected
+        column), or ``None`` when the alignment check should be skipped
+        (``RETURN *``, aggregation, or a parse failure).
+
+        Each column is classified as:
+        * ``SCALAR`` — a property projection (``m.prop`` or ``m.prop AS alias``).
+        * ``WHOLE_NODE`` — a whole-node return (``RETURN m`` where ``m`` is a
+          node binding); carries the resolved label.
+        * ``WHOLE_REL`` — a whole-relationship return (``RETURN r`` where ``r``
+          is an edge binding); carries the resolved relationship type.
+        """
+        if not query or not query.strip():
+            return None
+        try:
+            ast = self._dialect.parse(query)
+            lg = LineageAnalyzer().analyze(ast[0])
+        except Exception:
+            return None
+        return self._extract_return_columns(lg)
+
+    def _extract_return_columns(self, lg: LineageGraph) -> list[ReturnColumn] | None:
+        """Classify each RETURN output column.
+
+        Returns ``None`` to signal that the alignment check should be skipped,
+        which happens when:
+
+        * The RETURN clause projects nothing (``RETURN *`` — graphglot emits
+          zero output nodes for wildcard projections).
+        * Any output field is flagged as aggregated (e.g. ``count(m)``).
+
+        For each output node the method resolves its upstream neighbour:
+        * A ``PropertyRef`` neighbour → ``SCALAR`` column.
+        * A ``Binding`` with ``kind == NODE`` → ``WHOLE_NODE`` column carrying the
+          resolved label.
+        * A ``Binding`` with ``kind == EDGE`` → ``WHOLE_REL`` column carrying the
+          resolved relationship type.
+        Columns with no resolvable neighbour (e.g. literal expressions) are
+        silently omitted; the caller is free to treat a shorter-than-expected list
+        as an unverifiable case.
+        """
+        output_ids = list(lg.outputs)
+
+        # RETURN * — graphglot emits no output nodes for wildcard projections.
+        if not output_ids:
+            return None
+
+        columns: list[ReturnColumn] = []
+        for oid in output_ids:
+            node = lg.nodes[oid]
+
+            # Any aggregation present → skip the whole check.
+            if node.is_aggregated:
+                return None
+
+            # Determine the alias (if any) — used as the column name for scalars
+            # and aliased whole-node/whole-rel projections.
+            alias: str | None = node.alias if node.alias else None
+
+            # Walk the edges to find the connected upstream node.
+            for edge in lg.edges:
+                if edge.source_id == oid or edge.target_id == oid:
+                    other_id = (
+                        edge.target_id if edge.source_id == oid else edge.source_id
+                    )
+                    other = lg.nodes.get(other_id)
+                    if other is None:
+                        continue
+
+                    if hasattr(other, "property_name"):
+                        # Scalar property projection.
+                        col_name = alias or other.property_name
+                        columns.append(
+                            ReturnColumn(
+                                name=col_name, kind=ReturnKind.SCALAR, label=None
+                            )
+                        )
+                        break
+
+                    if hasattr(other, "kind"):
+                        # Binding — whole-node or whole-rel.
+                        label_str = (
+                            str(other.label_expression)
+                            if other.label_expression
+                            else None
+                        )
+                        col_name = alias or (other.name if other.name else "")
+                        if not col_name:
+                            break
+                        if other.kind == BindingKind.NODE:
+                            columns.append(
+                                ReturnColumn(
+                                    name=col_name,
+                                    kind=ReturnKind.WHOLE_NODE,
+                                    label=label_str,
+                                )
+                            )
+                        elif other.kind == BindingKind.EDGE:
+                            columns.append(
+                                ReturnColumn(
+                                    name=col_name,
+                                    kind=ReturnKind.WHOLE_REL,
+                                    label=label_str,
+                                )
+                            )
+                        break
+
+        return columns
+
 
 # --- Module-level default parser ---
 
@@ -182,6 +321,23 @@ def parse_cypher(
         raise ValueError("Query string must not be empty")
     p = parser or _DEFAULT_PARSER
     return p.parse(query)
+
+
+def extract_return_columns(query: str) -> list[ReturnColumn] | None:
+    """Extract and classify projected columns from a Cypher RETURN clause.
+
+    Returns a list of :class:`ReturnColumn` instances (one per projected
+    column), classified as ``SCALAR``, ``WHOLE_NODE``, or ``WHOLE_REL``.
+    Returns ``None`` when the alignment check should be skipped:
+
+    * ``RETURN *`` — graphglot emits no output nodes for wildcard projections.
+    * Any aggregation function is detected (e.g. ``count(m)``).
+
+    Only works with the default :class:`GraphglotParser`.
+    """
+    if not isinstance(_DEFAULT_PARSER, GraphglotParser):
+        return None
+    return _DEFAULT_PARSER.extract_return_columns(query)
 
 
 def validate_cypher(

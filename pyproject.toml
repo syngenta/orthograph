@@ -66,6 +66,8 @@ all = [
 notebooks = [
     "ipykernel>=6.0",
     "nbval>=0.11",
+    "fastapi>=0.100",
+    "httpx>=0.24",
 ]
 
 # Support for documentation generation with Sphinx

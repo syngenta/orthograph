@@ -748,11 +748,11 @@ class _FakeResult:
 def test_create_query_materialize_reads_nodes_created(
     graph_definition: GraphDefinition,
 ):
-    """create_query's materialize reads nodes_created from the driver summary."""
+    """create_query's interpret_result reads nodes_created from the driver summary."""
     gen = CypherGenerator(graph_definition)
     query = gen.create_query(Person)
     result = _FakeResult(_FakeCounters(nodes_created=1))
-    assert query.materialize(result) == 1
+    assert query.interpret_result(result) == 1
 
 
 def test_merge_query_materialize_reads_nodes_created(graph_definition: GraphDefinition):
@@ -760,28 +760,28 @@ def test_merge_query_materialize_reads_nodes_created(graph_definition: GraphDefi
     gen = CypherGenerator(graph_definition)
     query = gen.merge_query(Person)
     matched_existing = _FakeResult(_FakeCounters(nodes_created=0))
-    assert query.materialize(matched_existing) == 0
+    assert query.interpret_result(matched_existing) == 0
     created_new = _FakeResult(_FakeCounters(nodes_created=1))
-    assert query.materialize(created_new) == 1
+    assert query.interpret_result(created_new) == 1
 
 
 def test_delete_by_uid_query_materialize_reads_nodes_deleted(
     graph_definition: GraphDefinition,
 ):
-    """delete_by_uid_query's materialize reads nodes_deleted from the summary."""
+    """delete_by_uid_query's interpret_result reads nodes_deleted from the summary."""
     gen = CypherGenerator(graph_definition)
     query = gen.delete_by_uid_query(Person)
     result = _FakeResult(_FakeCounters(nodes_deleted=1))
-    assert query.materialize(result) == 1
+    assert query.interpret_result(result) == 1
 
 
 def test_materialize_accepts_mapping_shaped_result(graph_definition: GraphDefinition):
     """A mapping carrying the counter key is accepted (test-double convenience)."""
     gen = CypherGenerator(graph_definition)
     create = gen.create_query(Person)
-    assert create.materialize({"nodes_created": 1}) == 1
+    assert create.interpret_result({"nodes_created": 1}) == 1
     delete = gen.delete_by_uid_query(Person)
-    assert delete.materialize({"nodes_deleted": 1}) == 1
+    assert delete.interpret_result({"nodes_deleted": 1}) == 1
 
 
 # --- Model validation at generation time -----------------------------------

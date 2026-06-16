@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -146,8 +147,33 @@ class CreateMovie(CypherWriteQuery[ReleasedYearParams, int]):
     name = "db_create_movie"
     cypher_template = "CREATE (m:Movie {released: $released})"
 
-    def materialize(self, raw: Any) -> int:
-        return int(raw["created"])
+    def interpret_result(self, raw: Any) -> int:
+        return int(raw.nodes_created)
+
+
+@dataclass
+class FakeCounters:
+    nodes_created: int = 0
+    nodes_deleted: int = 0
+    relationships_created: int = 0
+    relationships_deleted: int = 0
+    properties_set: int = 0
+
+
+@dataclass
+class FakeSummary:
+    counters: FakeCounters = field(default_factory=FakeCounters)
+
+
+@dataclass
+class FakeWriteResult:
+    _summary: FakeSummary = field(default_factory=FakeSummary)
+
+    def consume(self) -> FakeSummary:
+        return self._summary
+
+    def __iter__(self):
+        return iter([])
 
 
 class FakeTransaction:
@@ -168,10 +194,11 @@ class FakeGraphSession:
     def __init__(
         self,
         records: list[dict[str, Any]] | None = None,
-        write_result: dict[str, Any] | None = None,
+        nodes_created: int = 0,
     ) -> None:
         self._records = records or []
-        self._write_result = write_result
+        self._nodes_created = nodes_created
+        self._is_write = nodes_created > 0
         self.run_calls: list[tuple[str, dict[str, Any]]] = []
         self.committed: bool = False
         self.rolled_back: bool = False
@@ -187,8 +214,10 @@ class FakeGraphSession:
 
     def run(self, cypher: str, **params: Any) -> Any:
         self.run_calls.append((cypher, params))
-        if self._write_result is not None:
-            return self._write_result
+        if self._is_write:
+            return FakeWriteResult(
+                FakeSummary(FakeCounters(nodes_created=self._nodes_created))
+            )
         return list(self._records)
 
 
@@ -216,7 +245,7 @@ def test_query_via_memgraph_name() -> None:
 
 
 def test_execute_dispatches_to_cypher_executor() -> None:
-    session = FakeGraphSession(write_result={"created": 1})
+    session = FakeGraphSession(nodes_created=1)
     result = execute("neo4j", lambda: session, CreateMovie(), {"released": 1999})
     assert result == 1
     assert session.committed is True

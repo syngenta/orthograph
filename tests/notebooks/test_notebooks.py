@@ -44,6 +44,7 @@ ALL_NOTEBOOKS = [
     NOTEBOOKS_DIR / "04.02_compare_two_profiles.ipynb",
     NOTEBOOKS_DIR / "04.03_compare_two_definitions.ipynb",
     NOTEBOOKS_DIR / "04.04_profile_vs_definition_revisited.ipynb",
+    NOTEBOOKS_DIR / "05.01_openapi_ergonomics_assessment.ipynb",
 ]
 
 # Pattern that matches the old (removed) bare ``compare`` import.

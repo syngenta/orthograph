@@ -57,6 +57,12 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E27 | Symmetric Comparison — Compare Any Two Graph Descriptions | Medium | **done** (2026-06-15) |
 | E28 | Testing Strategy — Activation Harness, Shared-Contract Layer, Shared Fixtures & CI | Medium | planned (independent; consolidates E21+E22+E26; delegation-ready tasks) |
 | E29 | `__uid_field__` Hardening — definition-time validation, nullable rejection, phantom-key fallback removal | Medium | **done** (2026-06-15) |
+| E30 | Query Contract Decisions — E31 precursor decision session | — | **done** (2026-06-16; produced E31) |
+| E31 | Query Contract Ergonomics — Implementation | High | in progress |
+| E32 | Bulk Write Query | Medium | planned |
+| E33 | Query Contract Ergonomics v2 — `row_mapper` / `materialize` alternative + write return expansion | High | planned (blocked by E31; **Q1 superseded by E34 — ADR-025, `row_mapper` rejected; the default-`materialize` alternative was also withdrawn — `materialize` stays explicit**; Q2 superseded by E35; grill via `.agentic/reviews/E33_grill_prompt.md`) |
+| E34 | RETURN→Output Alignment Correctness & ~~`materialize` Default~~ | High | **partially reverted** (T1+T2 static-alignment **stand and ship**; T3 ADR-025 amended — `row_mapper` stays rejected but the **default `materialize` is withdrawn**; T4 **reverted** — auto-classifying default removed, `materialize` stays an explicit required one-liner; T5/T6 N/A) |
+| E35 | Write Query Return-Row Echo — surface `RETURN` rows from `write()` | High | planned (blocked by E34; ADR-026 gated; supersedes E33 Q2) |
 
 ---
 
@@ -173,6 +179,8 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E20 — Technical Debt](active_epics/E20_tech_debt.md)
 - [E23 — Inspector Backend-Behaviour Injection Interface](active_epics/E23_inspector_backend_interface.md)
 - [E24 — Synthetic Graph Data Generation](active_epics/E24_synthetic_graph_data_generation.md)
+- [E34 — RETURN→Output Alignment Correctness & `materialize` Default](active_epics/E34_return_output_alignment_correctness.md)
+- [E35 — Write Query Return-Row Echo](active_epics/E35_write_query_return_rows.md)
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 

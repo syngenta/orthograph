@@ -34,6 +34,7 @@ single-argument signature::
     # -> ("MATCH (n:`Person`) RETURN n", {})
 """
 
+import inspect
 import warnings
 from abc import abstractmethod
 from typing import Any, ClassVar, Generic, cast
@@ -50,7 +51,16 @@ from orthograph.cypher.bindings import (
 )
 from orthograph.cypher.exceptions import CypherQueryDefinitionError
 from orthograph.cypher.parser import parse_cypher
-from orthograph.query.base_models import Backend, D, P, R, ReadQuery, WriteQuery
+from orthograph.query.base_models import (
+    Backend,
+    D,
+    P,
+    R,
+    ReadQuery,
+    WriteQuery,
+    _auto_populate_classvar,
+    _extract_generic_args,
+)
 
 
 # Dummy identifier swapped in for ``<<name>>`` placeholders before the dialect
@@ -125,8 +135,24 @@ class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
 
     Imperative style — omit ``cypher_template``, override ``build()``.
 
-    Identifier values are bound at construction via an ``Identifiers`` model
-    and spliced into ``<<name>>`` placeholders by the default ``build()``.
+    **Optional class variables:**
+
+    * ``Identifiers`` — a BaseModel class (defaults to ``NoIdentifiers``). When set,
+      identifier values (like labels, relationship types, or property names) are
+      bound at construction via an ``Identifiers`` model instance. The ``<<name>>``
+      placeholders in the ``cypher_template`` are replaced with safe, validated
+      identifier values (validated against Cypher syntax rules before substitution)
+      by the default ``build()`` method::
+
+          class NodesByLabel(CypherReadQuery[NoParams, Movie]):
+              Identifiers = LabelIdentifiers  # declares label: str
+              cypher_template = "MATCH (n:`<<label>>`) RETURN n"
+
+              def materialize(self, raw): ...
+
+          query = NodesByLabel(identifiers={"label": "Person"})
+          # Renders to: ("MATCH (n:`Person`) RETURN n", {})
+
     ``backend`` is fixed to ``CYPHER``.
     """
 
@@ -140,6 +166,13 @@ class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
         self._identifiers = type(self).Identifiers.model_validate(identifiers)
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
+        # T6: auto-populate Params/Output from CypherReadQuery[P, D] generic args
+        # *before* super().__init_subclass__ runs ReadQuery's contract enforcement.
+        if not inspect.isabstract(cls):
+            args = _extract_generic_args(cls, CypherReadQuery)
+            if args and len(args) >= 2:
+                _auto_populate_classvar(cls, "Params", args[0])
+                _auto_populate_classvar(cls, "Output", args[1])
         super().__init_subclass__(**kwargs)
         _validate_declarative_cypher(cls)
 
@@ -168,6 +201,14 @@ class CypherWriteQuery(WriteQuery[P, R], Generic[P, R]):
 
     Supports the same declarative and imperative styles, and the same
     ``Identifiers``/``<<placeholder>>`` mechanism as :class:`CypherReadQuery`.
+
+    **Optional class variables:**
+
+    * ``Identifiers`` — a BaseModel class (defaults to ``NoIdentifiers``). When set,
+      identifier values (like labels, relationship types, or property names) are
+      bound at construction. The ``<<name>>`` placeholders in the ``cypher_template``
+      are replaced with safe, validated identifier values before execution.
+
     ``build()`` returns ``(cypher, params)``.  ``backend`` is fixed to ``CYPHER``.
     """
 
@@ -181,6 +222,12 @@ class CypherWriteQuery(WriteQuery[P, R], Generic[P, R]):
         self._identifiers = type(self).Identifiers.model_validate(identifiers)
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
+        # T6: auto-populate Params from CypherWriteQuery[P, R] generic arg
+        # *before* super().__init_subclass__ runs WriteQuery's contract enforcement.
+        if not inspect.isabstract(cls):
+            args = _extract_generic_args(cls, CypherWriteQuery)
+            if args and len(args) >= 1:
+                _auto_populate_classvar(cls, "Params", args[0])
         super().__init_subclass__(**kwargs)
         _validate_declarative_cypher(cls)
 
@@ -200,5 +247,5 @@ class CypherWriteQuery(WriteQuery[P, R], Generic[P, R]):
         return rendered, params.model_dump()
 
     @abstractmethod
-    def materialize(self, raw: Any) -> R:
+    def interpret_result(self, raw: Any) -> R:
         """Pure mapping of the driver's write result into the result type."""

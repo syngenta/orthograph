@@ -409,3 +409,112 @@ def test_validate_cypher_parse_error_entity_id_contains_query(
     parse_errors = [e for e in result.errors if e.code == "QUERY_PARSE_ERROR"]
     assert len(parse_errors) == 1
     assert parse_errors[0].entity_id == query
+
+
+# --- extract_return_columns classification tests (T1) ---
+
+
+def test_extract_return_columns_whole_node():
+    """RETURN m → single WHOLE_NODE column with label 'Movie'."""
+    from orthograph.cypher.parser import ReturnKind, extract_return_columns
+
+    result = extract_return_columns("MATCH (m:Movie) RETURN m")
+    assert result is not None
+    assert len(result) == 1
+    col = result[0]
+    assert col.name == "m"
+    assert col.kind == ReturnKind.WHOLE_NODE
+    assert col.label == "Movie"
+
+
+def test_extract_return_columns_multiple_nodes_and_rel():
+    """RETURN p, r, m → three columns: p/Person, r/ACTED_IN, m/Movie."""
+    from orthograph.cypher.parser import ReturnKind, extract_return_columns
+
+    result = extract_return_columns(
+        "MATCH (p:Person)-[r:ACTED_IN]->(m:Movie) RETURN p, r, m"
+    )
+    assert result is not None
+    assert len(result) == 3
+
+    by_name = {c.name: c for c in result}
+    assert by_name["p"].kind == ReturnKind.WHOLE_NODE
+    assert by_name["p"].label == "Person"
+    assert by_name["r"].kind == ReturnKind.WHOLE_REL
+    assert by_name["r"].label == "ACTED_IN"
+    assert by_name["m"].kind == ReturnKind.WHOLE_NODE
+    assert by_name["m"].label == "Movie"
+
+
+def test_extract_return_columns_scalar_with_aliases():
+    """RETURN m.title AS title, m.released AS released → two SCALAR columns."""
+    from orthograph.cypher.parser import ReturnKind, extract_return_columns
+
+    result = extract_return_columns(
+        "MATCH (m:Movie) RETURN m.title AS title, m.released AS released"
+    )
+    assert result is not None
+    assert len(result) == 2
+    by_name = {c.name: c for c in result}
+    assert by_name["title"].kind == ReturnKind.SCALAR
+    assert by_name["title"].label is None
+    assert by_name["released"].kind == ReturnKind.SCALAR
+    assert by_name["released"].label is None
+
+
+def test_extract_return_columns_scalar_no_alias():
+    """RETURN m.title (no alias) → SCALAR column named 'title'."""
+    from orthograph.cypher.parser import ReturnKind, extract_return_columns
+
+    result = extract_return_columns("MATCH (m:Movie) RETURN m.title")
+    assert result is not None
+    assert len(result) == 1
+    col = result[0]
+    assert col.name == "title"
+    assert col.kind == ReturnKind.SCALAR
+    assert col.label is None
+
+
+def test_extract_return_columns_aliased_whole_node():
+    """RETURN m AS movie → WHOLE_NODE named 'movie', label 'Movie'."""
+    from orthograph.cypher.parser import ReturnKind, extract_return_columns
+
+    result = extract_return_columns("MATCH (m:Movie) RETURN m AS movie")
+    assert result is not None
+    assert len(result) == 1
+    col = result[0]
+    assert col.name == "movie"
+    assert col.kind == ReturnKind.WHOLE_NODE
+    assert col.label == "Movie"
+
+
+def test_extract_return_columns_star_returns_none():
+    """RETURN * → None (alignment check should be skipped)."""
+    from orthograph.cypher.parser import extract_return_columns
+
+    result = extract_return_columns("MATCH (m:Movie) RETURN *")
+    assert result is None
+
+
+def test_extract_return_columns_aggregation_returns_none():
+    """RETURN count(m) AS c → None (aggregation skips the check)."""
+    from orthograph.cypher.parser import extract_return_columns
+
+    result = extract_return_columns("MATCH (m:Movie) RETURN count(m) AS c")
+    assert result is None
+
+
+def test_extract_return_columns_mixed_node_and_scalar():
+    """RETURN p, m.title AS t → one WHOLE_NODE + one SCALAR."""
+    from orthograph.cypher.parser import ReturnKind, extract_return_columns
+
+    result = extract_return_columns(
+        "MATCH (p:Person)-[r:ACTED_IN]->(m:Movie) RETURN p, m.title AS t"
+    )
+    assert result is not None
+    assert len(result) == 2
+    by_name = {c.name: c for c in result}
+    assert by_name["p"].kind == ReturnKind.WHOLE_NODE
+    assert by_name["p"].label == "Person"
+    assert by_name["t"].kind == ReturnKind.SCALAR
+    assert by_name["t"].label is None

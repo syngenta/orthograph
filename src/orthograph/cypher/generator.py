@@ -445,7 +445,7 @@ def _write_query(
     ``raw`` carrying the counter key directly is also accepted for test doubles.
     """
 
-    def materialize(self: Any, raw: Any) -> int:
+    def interpret_result(self: Any, raw: Any) -> int:
         # Mapping-shaped result (test doubles): read the counter key directly.
         if isinstance(raw, dict):
             return int(raw[counter])
@@ -460,7 +460,7 @@ def _write_query(
             "Params": params_model,
             "name": name,
             "cypher_template": cypher,
-            "materialize": materialize,
+            "interpret_result": interpret_result,
         },
     )
     return cast(CypherWriteQuery[BaseModel, int], cls())

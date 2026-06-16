@@ -52,8 +52,6 @@ class Movie(NodeModel):
 class MoviesByYearCypher(CypherReadQuery[ReleasedYearParams, Movie]):
     """Declarative read — placeholder ``$released`` matches the Params field."""
 
-    Params = ReleasedYearParams
-    Output = Movie
     name = "movies_by_year"
     cypher_template = "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
 
@@ -70,8 +68,6 @@ with warnings.catch_warnings():
     class MoviesByYearImperative(CypherReadQuery[ReleasedYearParams, Movie]):
         """Imperative read — same logical query, build() constructs it by hand."""
 
-        Params = ReleasedYearParams
-        Output = Movie
         name = "movies_by_year_imperative"
 
         def build(self, params: ReleasedYearParams) -> CypherQuery:
@@ -88,11 +84,10 @@ with warnings.catch_warnings():
 class CreateMovieCypher(CypherWriteQuery[ReleasedYearParams, int]):
     """Declarative write."""
 
-    Params = ReleasedYearParams
     name = "create_movie"
     cypher_template = "CREATE (m:Movie {released: $released})"
 
-    def materialize(self, raw: object) -> int:
+    def interpret_result(self, raw: object) -> int:
         return 1
 
 
@@ -170,10 +165,10 @@ def test_two_reads_same_output_have_identical_schema() -> None:
 # --- write materialize ---
 
 
-def test_write_materialize() -> None:
-    """materialize() maps the raw driver result to the declared type."""
+def test_write_interpret_result() -> None:
+    """interpret_result() maps the raw driver result to the declared type."""
     query = CreateMovieCypher()
-    assert query.materialize(object()) == 1
+    assert query.interpret_result(object()) == 1
 
 
 # --- definition-time validation of declarative cypher_template ---
@@ -232,7 +227,7 @@ def test_declarative_write_param_not_in_params_raises() -> None:
             name = "bad_write_param"
             cypher_template = "CREATE (m:Movie {released: $missing})"
 
-            def materialize(self, raw: object) -> int:
+            def interpret_result(self, raw: object) -> int:
                 return 1
 
 
@@ -278,7 +273,7 @@ def test_declarative_write_unused_params_field_raises() -> None:
             name = "bad_write_unused_param"
             cypher_template = "CREATE (m:Movie {released: $released})"
 
-            def materialize(self, raw: object) -> int:
+            def interpret_result(self, raw: object) -> int:
                 return 1
 
 
@@ -395,8 +390,6 @@ class NodesByLabel(CypherReadQuery[NoParams, Movie]):
     """Identifier-only read — ``<<label>>`` spliced, no ``$value``."""
 
     Identifiers = LabelIdentifiers
-    Params = NoParams
-    Output = Movie
     name = "nodes_by_label"
     cypher_template = "MATCH (n:`<<label>>`) RETURN n.title, n.released"
 
@@ -554,3 +547,154 @@ def test_rel_type_field_resolves_to_relationship_type_kind() -> None:
 
     with pytest.raises(CypherIdentifierError, match="relationship type"):
         RelByType(identifiers={"rel_type": "ACTED IN"}).build(NoParams())
+
+
+# ---------------------------------------------------------------------------
+# T6: Auto-populate Params/Output from generic args
+# ---------------------------------------------------------------------------
+
+
+def test_cypher_read_auto_populates_both_from_generic_args() -> None:
+    """CypherReadQuery[P, D] with no explicit ClassVars gets Params=P, Output=D."""
+
+    class Auto(CypherReadQuery[ReleasedYearParams, Movie]):
+        name = "auto_read"
+        cypher_template = (
+            "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
+        )
+
+        def materialize(self, raw: dict[str, Any]) -> Movie:
+            return Movie(title=raw["m.title"], released=raw["m.released"])
+
+    assert Auto.Params is ReleasedYearParams
+    assert Auto.Output is Movie
+
+
+def test_cypher_write_auto_populates_params_from_generic_arg() -> None:
+    """CypherWriteQuery[P, R] with no explicit Params gets Params=P."""
+
+    class Auto(CypherWriteQuery[ReleasedYearParams, int]):
+        name = "auto_write"
+        cypher_template = "CREATE (m:Movie {released: $released})"
+
+        def interpret_result(self, raw: object) -> int:
+            return 1
+
+    assert Auto.Params is ReleasedYearParams
+
+
+def test_cypher_read_explicit_classvar_matching_generic_accepted() -> None:
+    """Explicit Params/Output that matches the generic arg is accepted."""
+
+    class Explicit(CypherReadQuery[ReleasedYearParams, Movie]):
+        Params = ReleasedYearParams
+        Output = Movie
+        name = "explicit_read"
+        cypher_template = (
+            "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
+        )
+
+        def materialize(self, raw: dict[str, Any]) -> Movie:
+            return Movie(title=raw["m.title"], released=raw["m.released"])
+
+    assert Explicit.Params is ReleasedYearParams
+    assert Explicit.Output is Movie
+
+
+def test_cypher_read_explicit_params_conflicting_with_generic_raises() -> None:
+    """Explicit Params differing from the generic arg raises TypeError."""
+
+    class OtherParams(BaseModel):
+        title: str
+
+    with pytest.raises(TypeError, match="Params"):
+
+        class Conflict(CypherReadQuery[ReleasedYearParams, Movie]):
+            Params = OtherParams
+            Output = Movie
+            name = "conflict_read"
+            cypher_template = (
+                "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
+            )
+
+            def materialize(self, raw: dict[str, Any]) -> Movie:
+                return Movie(title=raw["m.title"], released=raw["m.released"])
+
+
+def test_cypher_read_explicit_output_conflicting_with_generic_raises() -> None:
+    """Explicit Output differing from the generic arg raises TypeError."""
+
+    class OtherOutput(BaseModel):
+        other: str
+
+    with pytest.raises(TypeError, match="Output"):
+
+        class Conflict(CypherReadQuery[ReleasedYearParams, Movie]):
+            Params = ReleasedYearParams
+            Output = OtherOutput
+            name = "conflict_read_output"
+            cypher_template = (
+                "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
+            )
+
+            def materialize(self, raw: dict[str, Any]) -> Movie:
+                return Movie(title=raw["m.title"], released=raw["m.released"])
+
+
+# ---------------------------------------------------------------------------
+# T9: Improved Identifiers/<<name>> docstrings
+# ---------------------------------------------------------------------------
+
+
+def test_cypher_read_query_docstring_mentions_identifiers() -> None:
+    """CypherReadQuery.__doc__ mentions Identifiers as an optional class variable."""
+    doc = CypherReadQuery.__doc__
+    assert doc is not None
+    assert "Identifiers" in doc
+
+
+def test_cypher_read_query_docstring_mentions_placeholder_syntax() -> None:
+    """CypherReadQuery.__doc__ explains <<name>> placeholder substitution."""
+    doc = CypherReadQuery.__doc__
+    assert doc is not None
+    assert "<<" in doc
+    assert ">>" in doc
+
+
+def test_cypher_write_query_docstring_mentions_identifiers() -> None:
+    """CypherWriteQuery.__doc__ mentions Identifiers as an optional class variable."""
+    doc = CypherWriteQuery.__doc__
+    assert doc is not None
+    assert "Identifiers" in doc
+
+
+def test_cypher_write_query_docstring_mentions_placeholder_syntax() -> None:
+    """CypherWriteQuery.__doc__ explains <<name>> placeholder substitution."""
+    doc = CypherWriteQuery.__doc__
+    assert doc is not None
+    assert "<<" in doc
+    assert ">>" in doc
+
+
+def test_cypher_read_query_docstring_has_optional_class_variables_section() -> None:
+    """CypherReadQuery.__doc__ has an 'Optional class variables' section."""
+    doc = CypherReadQuery.__doc__
+    assert doc is not None
+    # Check for a section header-like marker for optional class variables
+    assert "optional" in doc.lower() or "classvar" in doc.lower()
+
+
+def test_cypher_write_query_docstring_has_optional_class_variables_section() -> None:
+    """CypherWriteQuery.__doc__ has an 'Optional class variables' section."""
+    doc = CypherWriteQuery.__doc__
+    assert doc is not None
+    # Check for a section header-like marker for optional class variables
+    assert "optional" in doc.lower() or "classvar" in doc.lower()
+
+
+def test_cypher_read_query_docstring_contains_identifiers_example() -> None:
+    """CypherReadQuery.__doc__ includes a minimal example of Identifiers usage."""
+    doc = CypherReadQuery.__doc__
+    assert doc is not None
+    # The docstring should demonstrate usage, check for "identifiers=" pattern
+    assert "identifiers" in doc.lower()

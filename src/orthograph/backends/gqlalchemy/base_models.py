@@ -4,7 +4,7 @@
 ``Identifiers`` field values are validated via ``validated_label`` before being
 passed to ``node(labels=...)`` or ``.to(relationship_type=...)``.
 ``Params`` values go into ``.where(...)`` bindings.
-``materialize()`` is abstract on both read and write bases.
+``materialize()`` is abstract for reads; ``interpret_result()`` is abstract for writes.
 """
 
 from abc import abstractmethod
@@ -60,5 +60,5 @@ class GqlAlchemyWriteQuery(WriteQuery[P, R], Generic[P, R]):
         """Author-implemented: construct and return a GQLAlchemy builder object."""
 
     @abstractmethod
-    def materialize(self, raw: Any) -> R:
+    def interpret_result(self, raw: Any) -> R:
         """Pure mapping of the driver's write result into the result type."""

@@ -1,0 +1,7 @@
+# Scratch folder for notebook outputs
+# All files are gitignored except .gitkeep and .gitignore
+
+# Ignore all files
+*
+!.gitkeep
+!.gitignore

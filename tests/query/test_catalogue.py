@@ -59,8 +59,21 @@ class CreateSample(WriteQuery[ProtocolParams, int]):
     def build(self, params: ProtocolParams) -> tuple[str, dict[str, Any]]:
         return ("CREATE (s:Sample {protocol_id: $pid})", {"pid": params.protocol_id})
 
-    def materialize(self, raw: object) -> int:
+    def interpret_result(self, raw: object) -> int:
         return 1
+
+
+class CreateSampleWithOutput(WriteQuery[ProtocolParams, dict[str, Any]]):
+    Params = ProtocolParams
+    Output = SampleOutput
+    name = "create_sample_with_output"
+    backend = Backend.CYPHER
+
+    def build(self, params: ProtocolParams) -> tuple[str, dict[str, Any]]:
+        return ("CREATE (s:Sample {protocol_id: $pid})", {"pid": params.protocol_id})
+
+    def interpret_result(self, raw: object) -> dict[str, Any]:
+        return {"sample_id": "S001", "label": "new"}
 
 
 def test_import_catalogue_module() -> None:
@@ -137,6 +150,16 @@ def test_write_output_schema_is_none() -> None:
     assert write_desc.params_schema == ProtocolParams.model_json_schema()
 
 
+def test_write_with_explicit_output_has_schema() -> None:
+    """A write that declares an Output has its schema in the description."""
+    query_catalogue = QueryCatalogue()
+    query_catalogue.register_write(CreateSampleWithOutput())
+
+    (write_desc,) = query_catalogue.describe()
+    assert write_desc.output_schema == SampleOutput.model_json_schema()
+    assert write_desc.params_schema == ProtocolParams.model_json_schema()
+
+
 def test_duplicate_read_name_raises_value_error() -> None:
     """Registering two reads with the same name raises ValueError."""
     query_catalogue = QueryCatalogue()
@@ -164,7 +187,7 @@ def test_read_and_write_sharing_a_name_raises_value_error() -> None:
         def build(self, params: ProtocolParams) -> tuple[str, dict[str, Any]]:
             return ("CREATE (s:Sample)", {})
 
-        def materialize(self, raw: object) -> int:
+        def interpret_result(self, raw: object) -> int:
             return 1
 
     query_catalogue = QueryCatalogue()
@@ -267,3 +290,97 @@ def test_queries_filtered_by_backend() -> None:
     sql = SamplesByProtocolSql()  # SQLALCHEMY
     query_catalogue.register_read(sql)
     assert query_catalogue.queries(backend=Backend.SQLALCHEMY) == [sql]
+
+
+def test_read_output_class_is_the_actual_class() -> None:
+    """A read's output_class is the Output model class (not the JSON schema dict)."""
+    query_catalogue = QueryCatalogue()
+    query_catalogue.register_read(SamplesByProtocol())
+
+    (read_desc,) = query_catalogue.describe()
+    assert read_desc.output_class is SampleOutput
+    assert isinstance(read_desc.output_class, type)
+    assert issubclass(read_desc.output_class, BaseModel)
+
+
+def test_write_without_output_has_none_output_class() -> None:
+    """A write without Output has output_class=None."""
+    query_catalogue = QueryCatalogue()
+    query_catalogue.register_write(CreateSample())
+
+    (write_desc,) = query_catalogue.describe()
+    assert write_desc.output_class is None
+
+
+def test_write_with_output_has_output_class() -> None:
+    """A write with explicit Output has output_class set to the Output model."""
+    query_catalogue = QueryCatalogue()
+    query_catalogue.register_write(CreateSampleWithOutput())
+
+    (write_desc,) = query_catalogue.describe()
+    assert write_desc.output_class is SampleOutput
+    assert isinstance(write_desc.output_class, type)
+    assert issubclass(write_desc.output_class, BaseModel)
+
+
+def test_output_class_separate_from_output_schema() -> None:
+    """output_class (the class) and output_schema (the dict) are both present."""
+    query_catalogue = QueryCatalogue()
+    query_catalogue.register_read(SamplesByProtocol())
+
+    (read_desc,) = query_catalogue.describe()
+    assert read_desc.output_class is SampleOutput
+    assert read_desc.output_schema == SampleOutput.model_json_schema()
+    assert isinstance(read_desc.output_schema, dict)
+    assert isinstance(read_desc.output_class, type)
+
+
+# ---------------------------------------------------------------------------
+# get(name) — single-query lookup
+# ---------------------------------------------------------------------------
+
+
+def test_get_returns_description_for_registered_read() -> None:
+    """get(name) returns the QueryDescription for a registered read query."""
+    query_catalogue = QueryCatalogue()
+    query_catalogue.register_read(SamplesByProtocol())
+
+    desc = query_catalogue.get("samples_by_protocol")
+    assert desc.name == "samples_by_protocol"
+    assert desc.kind == "read"
+    assert desc.output_class is SampleOutput
+
+
+def test_get_returns_description_for_registered_write() -> None:
+    """get(name) returns the QueryDescription for a registered write query."""
+    query_catalogue = QueryCatalogue()
+    query_catalogue.register_write(CreateSample())
+
+    desc = query_catalogue.get("create_sample")
+    assert desc.name == "create_sample"
+    assert desc.kind == "write"
+
+
+def test_get_raises_key_error_for_unknown_name() -> None:
+    """get(name) raises KeyError when the name is not registered."""
+    query_catalogue = QueryCatalogue()
+    query_catalogue.register_read(SamplesByProtocol())
+
+    with pytest.raises(KeyError, match="no_such_query"):
+        query_catalogue.get("no_such_query")
+
+
+def test_get_raises_key_error_on_empty_catalogue() -> None:
+    """get(name) raises KeyError on a catalogue with no registered queries."""
+    with pytest.raises(KeyError):
+        QueryCatalogue().get("anything")
+
+
+def test_get_result_matches_describe_for_same_name() -> None:
+    """get(name) returns the same object as the matching entry in describe()."""
+    query_catalogue = QueryCatalogue()
+    query_catalogue.register_read(SamplesByProtocol())
+    query_catalogue.register_write(CreateSample())
+
+    assert query_catalogue.get("samples_by_protocol") == query_catalogue.describe()[0]
+    assert query_catalogue.get("create_sample") == query_catalogue.describe()[1]

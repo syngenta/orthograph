@@ -123,7 +123,7 @@ class CreatePerson(GqlAlchemyWriteQuery[NameParams, int]):
 
         return create().node(labels="Person", variable="n").return_(results="n")
 
-    def materialize(self, raw: object) -> int:
+    def interpret_result(self, raw: object) -> int:
         return 1
 
 
@@ -208,4 +208,4 @@ def test_write_build_returns_builder_and_backend_tag() -> None:
     b = q.build(NameParams(name="Alice"))
     assert not isinstance(b, tuple)
     assert hasattr(b, "construct_query")
-    assert q.materialize(object()) == 1
+    assert q.interpret_result(object()) == 1
