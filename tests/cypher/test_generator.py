@@ -360,7 +360,13 @@ def test_create_relationship_rejects_injected_property_key(
 # match_node / match_relationship / generate_constraints take model-bound
 # types, so injection must come through a malicious __label__ / __uid_field__
 # on the model rather than caller-supplied data. Labels are not validated at
-# class-definition time, so these types can be constructed directly.
+# class-definition time, so those types can be constructed directly.
+# __uid_field__ IS validated at class-definition time (E29 T1), so a malicious
+# __uid_field__ value (e.g. "uid) REMOVE n //") is caught before the generator
+# is reached. The reason it is always caught: such a string can never be a
+# valid Python identifier, so the "field not declared" check (Check A) rejects
+# it first — the identifier-grammar guard inside the generator is therefore
+# unreachable for this path and is NOT the primary line of defence here.
 
 
 class _InjectedLabelNode(NodeModel):
@@ -390,11 +396,22 @@ class _InjectedRel(RelationshipModel):
     __target_label__ = "Tgt"
 
 
-class _InjectedUidNode(NodeModel):
-    __label__ = "Thing"
-    __uid_field__ = "uid) REMOVE n //"
+def test_generate_constraints_rejects_injected_uid_field():
+    """A malicious __uid_field__ is now caught at class-definition time (E29 T1).
 
-    name: str
+    Before E29 T1, the CypherIdentifierError was raised inside generate_constraints.
+    After E29 T1, MissingClassVarError fires when the class body is evaluated,
+    so the generator is never reached.
+    """
+    from orthograph.graph_definition.exceptions import MissingClassVarError
+
+    with pytest.raises(MissingClassVarError):
+
+        class _InjectedUidNode(NodeModel):
+            __label__ = "Thing"
+            __uid_field__ = "uid) REMOVE n //"
+
+            name: str
 
 
 def test_match_node_rejects_injected_label():
@@ -417,16 +434,6 @@ def test_match_relationship_rejects_injected_relationship_type():
     gen = CypherGenerator(graph_definition)
     with pytest.raises(CypherIdentifierError, match="relationship type"):
         gen.match_relationship(_InjectedRel)
-
-
-def test_generate_constraints_rejects_injected_uid_field():
-    """A malicious __uid_field__ raises before the constraint string is built."""
-    graph_definition = GraphDefinition(
-        name="m", node_types=[_InjectedUidNode], relationship_types=[]
-    )
-    gen = CypherGenerator(graph_definition)
-    with pytest.raises(CypherIdentifierError, match="property key"):
-        gen.generate_constraints()
 
 
 # --- merge_node no-UID fallback (T2) ---
@@ -1076,19 +1083,22 @@ def test_audit_match_relationship_rejects_injected_rel_type():
 # ---- generate_constraints: injected uid field ----
 
 
-class _InjectedAuditUid(NodeModel):
-    __label__ = "AuditNode"
-    __uid_field__ = "uid) REMOVE n //"
-
-    uid: str
-
-
 def test_audit_generate_constraints_rejects_injected_uid_field():
-    """generate_constraints: malicious __uid_field__ raises before any DDL."""
-    m = GraphDefinition(name="a", node_types=[_InjectedAuditUid], relationship_types=[])
-    gen = CypherGenerator(m)
-    with pytest.raises(CypherIdentifierError, match="property key"):
-        gen.generate_constraints()
+    """generate_constraints: malicious __uid_field__ is caught
+    at definition time (E29 T1).
+
+    Before E29 T1, CypherIdentifierError was raised inside generate_constraints.
+    After E29 T1, MissingClassVarError fires at class-definition time.
+    """
+    from orthograph.graph_definition.exceptions import MissingClassVarError
+
+    with pytest.raises(MissingClassVarError):
+
+        class _InjectedAuditUid(NodeModel):
+            __label__ = "AuditNode"
+            __uid_field__ = "uid) REMOVE n //"
+
+            uid: str
 
 
 # ---- Typed-query methods: injected label at synthesis time ----
@@ -1139,3 +1149,113 @@ def test_audit_delete_by_uid_query_rejects_injected_label():
     gen = CypherGenerator(m)
     with pytest.raises(CypherIdentifierError, match="label"):
         gen.delete_by_uid_query(_InjectedAuditTypedLabel)
+
+
+# --- T2: phantom-key fallback elimination -----------------------------------
+
+
+class _NoUidSource(NodeModel):
+    __label__ = "NoUidSrc"
+    __uid_field__ = None
+
+    name: str
+
+
+class _NoUidTarget(NodeModel):
+    __label__ = "NoUidTgt"
+    __uid_field__ = None
+
+    name: str
+
+
+class _GoodNode(NodeModel):
+    __label__ = "GoodNode"
+    __uid_field__ = "name"
+
+    name: str
+
+
+class _RelWithNoUidSource(RelationshipModel):
+    __label__ = "REL_NO_SRC_UID"
+    __source_label__ = "NoUidSrc"
+    __target_label__ = "GoodNode"
+
+
+class _RelWithNoUidTarget(RelationshipModel):
+    __label__ = "REL_NO_TGT_UID"
+    __source_label__ = "GoodNode"
+    __target_label__ = "NoUidTgt"
+
+
+def test_create_relationship_raises_when_source_has_no_uid_field():
+    """create_relationship raises MissingUidFieldError naming the relationship
+    and 'source' when the source node type has no __uid_field__."""
+    m = GraphDefinition(
+        name="m",
+        node_types=[_NoUidSource, _GoodNode],
+        relationship_types=[_RelWithNoUidSource],
+    )
+    gen = CypherGenerator(m)
+    with pytest.raises(MissingUidFieldError, match="source"):
+        gen.create_relationship(
+            {
+                "__label__": "REL_NO_SRC_UID",
+                "__source_uid__": "x",
+                "__target_uid__": "y",
+            }
+        )
+
+
+def test_create_relationship_raises_when_target_has_no_uid_field():
+    """create_relationship raises MissingUidFieldError naming the relationship
+    and 'target' when the target node type has no __uid_field__."""
+    m = GraphDefinition(
+        name="m",
+        node_types=[_GoodNode, _NoUidTarget],
+        relationship_types=[_RelWithNoUidTarget],
+    )
+    gen = CypherGenerator(m)
+    with pytest.raises(MissingUidFieldError, match="target"):
+        gen.create_relationship(
+            {
+                "__label__": "REL_NO_TGT_UID",
+                "__source_uid__": "x",
+                "__target_uid__": "y",
+            }
+        )
+
+
+def test_merge_relationship_raises_when_source_has_no_uid_field():
+    """merge_relationship raises MissingUidFieldError naming 'source'."""
+    m = GraphDefinition(
+        name="m",
+        node_types=[_NoUidSource, _GoodNode],
+        relationship_types=[_RelWithNoUidSource],
+    )
+    gen = CypherGenerator(m)
+    with pytest.raises(MissingUidFieldError, match="source"):
+        gen.merge_relationship(
+            {
+                "__label__": "REL_NO_SRC_UID",
+                "__source_uid__": "x",
+                "__target_uid__": "y",
+            }
+        )
+
+
+def test_merge_relationship_raises_when_target_has_no_uid_field():
+    """merge_relationship raises MissingUidFieldError naming 'target'."""
+    m = GraphDefinition(
+        name="m",
+        node_types=[_GoodNode, _NoUidTarget],
+        relationship_types=[_RelWithNoUidTarget],
+    )
+    gen = CypherGenerator(m)
+    with pytest.raises(MissingUidFieldError, match="target"):
+        gen.merge_relationship(
+            {
+                "__label__": "REL_NO_TGT_UID",
+                "__source_uid__": "x",
+                "__target_uid__": "y",
+            }
+        )

@@ -56,6 +56,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E26 | CI Containerised E2E — Live-Database Tests in the Pipeline | — | **RETIRED → E28** |
 | E27 | Symmetric Comparison — Compare Any Two Graph Descriptions | Medium | **done** (2026-06-15) |
 | E28 | Testing Strategy — Activation Harness, Shared-Contract Layer, Shared Fixtures & CI | Medium | planned (independent; consolidates E21+E22+E26; delegation-ready tasks) |
+| E29 | `__uid_field__` Hardening — definition-time validation, nullable rejection, phantom-key fallback removal | Medium | **done** (2026-06-15) |
 
 ---
 
@@ -74,6 +75,7 @@ INDEPENDENT — can start immediately:
   E27  Symmetric Comparison (independent; generalises comparison/ to compare any two operands)
   E28  Testing Strategy (independent; consolidates E21+E22+E26 — activation harness, shared-contract
        layer, shared test fixtures, containerised CI; Wave A tasks need no live DB)
+  E29  __uid_field__ Hardening (independent; T1 + T2 can be executed individually)
 
 AFTER E23:
   E24  Synthetic Graph Data Generation (profile-driven mode requires consistent GraphProfile
@@ -171,7 +173,6 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E20 — Technical Debt](active_epics/E20_tech_debt.md)
 - [E23 — Inspector Backend-Behaviour Injection Interface](active_epics/E23_inspector_backend_interface.md)
 - [E24 — Synthetic Graph Data Generation](active_epics/E24_synthetic_graph_data_generation.md)
-- [E27 — Symmetric Comparison — Compare Any Two Graph Descriptions](active_epics/E27_symmetric_comparison.md)
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 
@@ -180,7 +181,8 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E16 — Query Catalogue Unified](archived_epics/E16_query_catalogue_unified.md) *(done 2026-06-10)*
 - [E17 — CypherGenerator Hardening](archived_epics/E17_cypher_generator_hardening.md) *(done 2026-06-10)*
 - [E25 — Capability Seams & Vendor-Backend Isolation (Refactor)](archived_epics/E25_capability_seams_backend_isolation.md) *(done 2026-06-11)*
-- [E27 — Symmetric Comparison — Compare Any Two Graph Descriptions](active_epics/E27_symmetric_comparison.md) *(done 2026-06-15)*
+- [E27 — Symmetric Comparison — Compare Any Two Graph Descriptions](archived_epics/E27_symmetric_comparison.md) *(done 2026-06-15)*
+- [E29 — `__uid_field__` Hardening](archived_epics/E29_uid_field_hardening.md) *(done 2026-06-15)*
 
 **Retired (superseded by E16):**
 - [E6 — Cypher Query Catalogue](archived_epics/E6_query_catalogue.md)

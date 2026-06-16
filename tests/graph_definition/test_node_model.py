@@ -1,6 +1,6 @@
 """Tests for orthograph.graph_definition.node_model -- NodeModel base class."""
 
-from typing import Optional
+from typing import ClassVar, Optional
 
 import pytest
 from pydantic import Field
@@ -88,6 +88,174 @@ def test_node_model_requires_label():
 
         class BadNode(NodeModel):
             name: str
+
+
+# --- __uid_field__ definition-time validation tests (E29 T1) ---
+
+
+def test_uid_field_typo_raises_at_definition_time():
+    """__uid_field__ pointing to a non-existent property raises MissingClassVarError."""
+    with pytest.raises(MissingClassVarError) as exc_info:
+
+        class BadFieldName(NodeModel):
+            __label__ = "BadFieldName"
+            __uid_field__ = "naem"
+
+            name: str
+
+    msg = str(exc_info.value)
+    assert "BadFieldName" in msg
+    assert "naem" in msg
+    assert "name" in msg  # declared property must appear in error
+
+
+def test_uid_field_nullable_raises_at_definition_time():
+    """__uid_field__ pointing to a nullable field raises MissingClassVarError."""
+    with pytest.raises(MissingClassVarError) as exc_info:
+
+        class NullableUidNode(NodeModel):
+            __label__ = "NullableUidNode"
+            __uid_field__ = "name"
+
+            name: str | None = None
+
+    msg = str(exc_info.value)
+    assert "NullableUidNode" in msg
+    assert "name" in msg
+    assert "required" in msg.lower() or "optional" in msg.lower()
+
+
+def test_uid_field_nullable_optional_syntax_raises():
+    """Optional[str] variant of nullable uid also raises MissingClassVarError."""
+    with pytest.raises(MissingClassVarError):
+
+        class NullableOptional(NodeModel):
+            __label__ = "NullableOptional"
+            __uid_field__ = "title"
+
+            title: Optional[str] = None
+
+
+def test_uid_field_valid_does_not_raise():
+    """A valid __uid_field__ pointing to a required
+    (non-nullable) field causes no error."""
+
+    class ValidNode(NodeModel):
+        __label__ = "ValidNode"
+        __uid_field__ = "name"
+
+        name: str
+        description: Optional[str] = None
+
+    assert ValidNode.__uid_field__ == "name"
+
+
+def test_no_uid_field_is_unaffected():
+    """A subclass with no __uid_field__ set is not affected by the new guard."""
+
+    class NoUidNode(NodeModel):
+        __label__ = "NoUidNode"
+
+        name: str
+
+    assert NoUidNode.__uid_field__ is None
+
+
+# --- Inheritance gap regression tests (E29 T1 follow-up) ---
+
+
+def test_child_re_annotating_uid_field_as_nullable_raises():
+    """A child class that inherits __uid_field__ but re-annotates the targeted
+    property as nullable must raise MissingClassVarError at definition time.
+
+    Before the fix, __init_subclass__ only validated when __uid_field__ was in
+    cls.__dict__. A child that omits __uid_field__ but overrides the annotation
+    to str | None would silently bypass the guard.
+    """
+
+    class ParentNode(NodeModel):
+        __label__ = "Parent"
+        __uid_field__ = "id"
+        id: str
+
+    with pytest.raises(MissingClassVarError) as exc_info:
+
+        class ChildNode(ParentNode):
+            __label__ = "Child"
+            id: str | None = None  # type: ignore[assignment]  # re-annotated as nullable — must be caught
+
+    msg = str(exc_info.value)
+    assert "ChildNode" in msg
+    assert "id" in msg
+
+
+def test_child_re_annotating_uid_field_with_optional_syntax_raises():
+    """Optional[str] variant of the inheritance-gap re-annotation also raises."""
+
+    class ParentNode2(NodeModel):
+        __label__ = "Parent2"
+        __uid_field__ = "key"
+        key: str
+
+    with pytest.raises(MissingClassVarError):
+
+        class ChildNode2(ParentNode2):
+            __label__ = "Child2"
+            key: Optional[str] = None  # type: ignore[assignment]
+
+
+def test_child_that_does_not_override_uid_annotation_is_fine():
+    """A child class that inherits __uid_field__ and does NOT re-annotate the
+    UID property remains valid — the guard must not fire for it."""
+
+    class ParentNode3(NodeModel):
+        __label__ = "Parent3"
+        __uid_field__ = "uid"
+        uid: str
+
+    class ChildNode3(ParentNode3):
+        __label__ = "Child3"
+        extra: int = 0
+
+    assert ChildNode3.__uid_field__ == "uid"
+
+
+def test_child_overriding_non_uid_annotation_is_fine():
+    """A child class that re-annotates a non-UID property does not trigger the
+    uid-field guard."""
+
+    class ParentNode4(NodeModel):
+        __label__ = "Parent4"
+        __uid_field__ = "uid"
+        uid: str
+        description: str
+
+    class ChildNode4(ParentNode4):
+        __label__ = "Child4"
+        description: Optional[str] = None  # type: ignore[assignment]  # non-UID field → fine
+
+    assert ChildNode4.__uid_field__ == "uid"
+
+
+def test_child_explicit_uid_field_none_clears_inherited_uid():
+    """A child that explicitly sets __uid_field__ = None to clear an inherited
+    UID must NOT raise — the explicit None should be honoured, not treated as
+    "not set" and fall through to the inherited value."""
+
+    class ParentNode5(NodeModel):
+        __label__ = "Parent5"
+        __uid_field__: ClassVar[str | None] = "uid"
+        uid: str
+
+    class ChildNode5(ParentNode5):
+        __label__ = "Child5"
+        __uid_field__: ClassVar[str | None] = (
+            None  # intentionally clears the inherited UID
+        )
+        # widening str → str|None to clear UID constraint
+        uid: Optional[str] = None  # type: ignore[assignment]
+
+    assert ChildNode5.__uid_field__ is None
 
 
 # --- NodeModel introspection tests ---

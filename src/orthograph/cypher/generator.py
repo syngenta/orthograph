@@ -192,8 +192,12 @@ class CypherGenerator:
             raise CypherUnknownLabelError(f"Unknown source node label: {src_label}")
         if tgt_node_type is None:
             raise CypherUnknownLabelError(f"Unknown target node label: {tgt_label}")
-        src_uid_field = src_node_type.__uid_field__ or "uid"
-        tgt_uid_field = tgt_node_type.__uid_field__ or "uid"
+        _, src_uid_field = CypherGenerator._require_uid_for_endpoint(
+            src_node_type, label, "source"
+        )
+        _, tgt_uid_field = CypherGenerator._require_uid_for_endpoint(
+            tgt_node_type, label, "target"
+        )
 
         safe_label = validate_identifier(label, kind="relationship type")
         safe_src_label = validate_identifier(src_label, kind="label")
@@ -326,6 +330,29 @@ class CypherGenerator:
             raise MissingUidFieldError(
                 f"Cannot generate a UID-keyed query for {node_type.__label__!r}: "
                 "node type declares no __uid_field__"
+            )
+        label = validate_identifier(node_type.__label__, kind="label")
+        validate_identifier(uid_field, kind="property key")
+        return label, uid_field
+
+    @staticmethod
+    def _require_uid_for_endpoint(
+        node_type: type[NodeModel],
+        rel_label: str,
+        role: str,
+    ) -> tuple[str, str]:
+        """Return ``(label, uid_field)`` for a relationship endpoint node type.
+
+        Raises ``MissingUidFieldError`` naming the relationship and the failing
+        endpoint role (``"source"`` or ``"target"``) if the node type has no
+        ``__uid_field__``.
+        """
+        uid_field = node_type.__uid_field__
+        if uid_field is None:
+            raise MissingUidFieldError(
+                f"Cannot generate a relationship query for {rel_label!r}: "
+                f"the {role} node type {node_type.__label__!r} "
+                "declares no __uid_field__."
             )
         label = validate_identifier(node_type.__label__, kind="label")
         validate_identifier(uid_field, kind="property key")
