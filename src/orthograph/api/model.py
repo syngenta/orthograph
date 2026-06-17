@@ -14,12 +14,22 @@ from typing import Any
 
 import orthograph.cypher.validation as _cypher_validation
 from orthograph.comparison.rules import Rule
+from orthograph.cypher.exceptions import (
+    CypherCatalogueLoadError,
+    CypherQuerySpecError,
+)
 from orthograph.cypher.parser import validate_cypher
+from orthograph.cypher.query_spec import CypherQuerySpec
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
 from orthograph.graph_definition.validation import GraphValidator
 from orthograph.graph_profile.models import GraphProfile
+from orthograph.io.query_catalogue_yaml import (
+    list_catalogue_queries,
+    load_query_catalogue_file,
+    load_query_catalogue_string,
+)
 from orthograph.io.yaml import load_yaml_file, load_yaml_string, save_yaml_file
 from orthograph.query.catalogue import QueryCatalogue
 
@@ -105,3 +115,49 @@ def validate_query_catalogue_against_profile(
         graph_definition=graph_definition,
         rules=rules,
     )
+
+
+def load_query_catalogue(source: str | Path) -> list[CypherQuerySpec]:
+    """Load Cypher query specs from a YAML string or file.
+
+    A :class:`pathlib.Path` is read as a file; a :class:`str` is treated as
+    YAML content unless the string resolves to an existing file path (in which
+    case the file is read).
+
+    The YAML top-level must be a list. Each entry supports both legacy
+    field names (``query_name`` / ``query``) and standard names
+    (``name`` / ``cypher``).
+
+    Returns a list of :class:`~orthograph.cypher.query_spec.CypherQuerySpec`
+    instances, one per entry, in order.
+
+    Raises
+    ------
+    FileNotFoundError
+        When ``source`` is a :class:`Path` that does not exist.
+    CypherCatalogueLoadError
+        When the YAML is malformed, the top-level is not a list, or any
+        entry is missing a required field.
+    """
+    if isinstance(source, Path):
+        return load_query_catalogue_file(path=source)
+    return load_query_catalogue_string(content=source)
+
+
+__all__ = [
+    # graph definition I/O
+    "load",
+    "save",
+    # in-memory data validation
+    "validate",
+    # Cypher query validation
+    "validate_query",
+    "validate_query_catalogue",
+    "validate_query_catalogue_against_profile",
+    # query spec catalogue
+    "load_query_catalogue",
+    "list_catalogue_queries",
+    "CypherQuerySpec",
+    "CypherQuerySpecError",
+    "CypherCatalogueLoadError",
+]

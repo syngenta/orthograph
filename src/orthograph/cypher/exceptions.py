@@ -53,3 +53,20 @@ class CypherModelValidationError(CypherError):
             f"Generated Cypher failed model validation "
             f"({len(issues)} issue(s)):\n" + "\n".join(lines)
         )
+
+
+class CypherQuerySpecError(CypherError):
+    """A :class:`~orthograph.cypher.query_spec.CypherQuerySpec` is misconfigured
+    or called with invalid arguments.
+
+    Covers: overlapping required/optional args, Params model missing declared
+    fields, missing required call arguments, unknown call arguments.
+    """
+
+
+class CypherCatalogueLoadError(CypherError):
+    """A query catalogue YAML file cannot be loaded.
+
+    Covers: malformed YAML, wrong top-level type (not a list), missing
+    required fields in an entry.
+    """
