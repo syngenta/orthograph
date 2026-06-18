@@ -21,10 +21,10 @@ _HERE = Path(__file__).parent
 
 # Map each DB-requiring notebook to the CLI flag that enables it.
 _DB_NOTEBOOKS: dict[str, str] = {
-    "03.02_neo4j_end_to_end.ipynb": "neo4j",
-    "03.04_gqlalchemy_database_interaction.ipynb": "neo4j",
-    "06.01_profile_neo4j_example.ipynb": "neo4j",
-    "06.02_profile_neo4j_custom.ipynb": "neo4j",
+    "03.03_cypher_query_usage.ipynb": "neo4j",
+    "04.02_neo4j_backend.ipynb": "neo4j",
+    "04.03_gqlalchemy_backend.ipynb": "neo4j",
+    "04.06_cypher_query_definitions.ipynb": "neo4j",
 }
 
 

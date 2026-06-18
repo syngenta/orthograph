@@ -1,40 +1,17 @@
 """Tests for orthograph.backends.memgraph.inspector."""
 
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from orthograph.backends.memgraph.inspector import MemgraphInspector, validate_database
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_definition.models import NodeModel, RelationshipModel
-
-from .conftest import mock_execute_query
+from tests.backends.conftest import mock_execute_query
+from tests.fixtures.conftest import ActedIn, Movie, Person
 
 
 # --- Fixtures ---
-
-
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-    name: str
-    age: int
-    email: Optional[str] = None
-
-
-class Movie(NodeModel):
-    __label__ = "Movie"
-    __uid_field__ = "title"
-    title: str
-    year: int
-
-
-class ActedIn(RelationshipModel):
-    __label__ = "ACTED_IN"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-    role: str
 
 
 @pytest.fixture()

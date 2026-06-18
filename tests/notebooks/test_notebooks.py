@@ -24,27 +24,31 @@ import pytest
 
 NOTEBOOKS_DIR = Path(__file__).resolve().parent.parent.parent / "notebooks"
 
-# All notebooks in the project, grouped by section.
+# All notebooks in the project, grouped by module.
 ALL_NOTEBOOKS = [
-    # 01 -- Core
+    # Module 01 -- Schema Design & Fundamentals
     NOTEBOOKS_DIR / "01.01_create_a_graph_definition.ipynb",
     NOTEBOOKS_DIR / "01.02_validating_graph_data.ipynb",
     NOTEBOOKS_DIR / "01.03_optionality_and_cardinality.ipynb",
-    NOTEBOOKS_DIR / "01.04_visualization.ipynb",
-    # 02 -- Serialization / IO
+    # Module 02 -- Schema Portability & Visualization
     NOTEBOOKS_DIR / "02.01_yaml_configuration.ipynb",
-    NOTEBOOKS_DIR / "02.02_cypher_query_generation.ipynb",
-    # 03 -- Extensions
-    NOTEBOOKS_DIR / "03.01_networkx_inspection_and_validation.ipynb",
-    NOTEBOOKS_DIR / "03.02_neo4j_end_to_end.ipynb",
-    NOTEBOOKS_DIR / "03.03_gqlalchemy_integration.ipynb",
-    NOTEBOOKS_DIR / "03.04_gqlalchemy_database_interaction.ipynb",
-    # 04 -- Query Catalogue / Comparison
-    NOTEBOOKS_DIR / "04.01_typed_cypher_queries.ipynb",
-    NOTEBOOKS_DIR / "04.02_compare_two_profiles.ipynb",
-    NOTEBOOKS_DIR / "04.03_compare_two_definitions.ipynb",
-    NOTEBOOKS_DIR / "04.04_profile_vs_definition_revisited.ipynb",
-    NOTEBOOKS_DIR / "05.01_openapi_ergonomics_assessment.ipynb",
+    NOTEBOOKS_DIR / "02.02_visualization.ipynb",
+    # Module 03 -- Cypher & Query Contracts
+    NOTEBOOKS_DIR / "03.01_cypher_generation.ipynb",
+    NOTEBOOKS_DIR / "03.02_cypher_query_definitions.ipynb",
+    NOTEBOOKS_DIR / "03.03_cypher_query_usage.ipynb",
+    NOTEBOOKS_DIR / "03.04_typed_query_contracts.ipynb",
+    NOTEBOOKS_DIR / "03.05_result_shapes_and_materialization.ipynb",
+    # Module 04 -- Backend Integration
+    NOTEBOOKS_DIR / "04.01_networkx_backend.ipynb",
+    NOTEBOOKS_DIR / "04.02_neo4j_backend.ipynb",
+    NOTEBOOKS_DIR / "04.03_gqlalchemy_backend.ipynb",
+    # Module 05 -- Comparison & Drift Detection
+    NOTEBOOKS_DIR / "05.01_profile_vs_definition.ipynb",
+    NOTEBOOKS_DIR / "05.02_profile_vs_profile.ipynb",
+    NOTEBOOKS_DIR / "05.03_definition_vs_definition.ipynb",
+    # Module 06 -- Framework Integration
+    NOTEBOOKS_DIR / "06.01_fastapi_integration.ipynb",
 ]
 
 # Pattern that matches the old (removed) bare ``compare`` import.

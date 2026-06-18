@@ -1,59 +1,22 @@
 """Tests for orthograph.cypher.parser."""
 
-from typing import Optional
-
 import pytest
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
     NodeModel,
     RelationshipModel,
 )
+from tests.fixtures.conftest import ActedIn, City, LivesIn, Movie, Person
 
 
-# --- Fixtures ---
-
-
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-    name: str
-    age: int
-    email: Optional[str] = None
-
-
-class Movie(NodeModel):
-    __label__ = "Movie"
-    __uid_field__ = "title"
-    title: str
-    year: int
-
-
-class City(NodeModel):
-    __label__ = "City"
-    __uid_field__ = "name"
-    name: str
+# --- Custom fixtures (specific to this test file) ---
 
 
 class Company(NodeModel):
     __label__ = "Company"
     __uid_field__ = "name"
     name: str
-
-
-class ActedIn(RelationshipModel):
-    __label__ = "ACTED_IN"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-    role: str
-
-
-class LivesIn(RelationshipModel):
-    __label__ = "LIVES_IN"
-    __source_label__ = "Person"
-    __target_label__ = "City"
-    __source_cardinality__ = Cardinality.ONE
 
 
 class FriendOf(RelationshipModel):

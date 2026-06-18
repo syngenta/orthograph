@@ -1,53 +1,64 @@
-"""YAML loader for Cypher query spec catalogues.
+"""YAML loader for Cypher query catalogues.
 
 Loads a YAML file or string containing a list of query definitions and
-returns a list of :class:`~orthograph.cypher.query_spec.CypherQuerySpec`
-instances.
+returns a list of :class:`~orthograph.cypher.query.CypherQuery` instances.
 
 YAML format
 -----------
 The top-level structure must be a YAML list. Each entry is a mapping with the
 following fields:
 
-**Required** (one of two naming conventions accepted):
+**Required:**
 
-+-------------------------------+-------------------------------------------+
-| Legacy field name             | Orthograph standard                       |
-+===============================+===========================================+
-| ``query_name``                | ``name``                                  |
-+-------------------------------+-------------------------------------------+
-| ``query``                     | ``cypher``                                |
-+-------------------------------+-------------------------------------------+
-
-Both naming conventions are accepted for flexibility:
-
-* Existing YAML files with legacy field names load without modification.
-* New files written with standard names are equally valid.
++--------------------+-------------------------------------------------------+
+| Field              | Description                                           |
++====================+=======================================================+
+| ``name`` /         | Unique query identifier. ``query_name`` is accepted   |
+| ``query_name``     | as a legacy alias.                                    |
++--------------------+-------------------------------------------------------+
+| ``cypher_template``| Raw Cypher string with ``$param`` and ``<<id>>``      |
+|                    | placeholders. No aliases accepted.                    |
++--------------------+-------------------------------------------------------+
+| ``params_schema``  | JSON-Schema object describing ``$value`` parameters.  |
+|                    | Pass ``{type: object, properties: {}}`` for zero-arg  |
+|                    | queries (equivalent to ``NoParams``).                 |
++--------------------+-------------------------------------------------------+
 
 **Optional:**
 
-* ``query_args_required`` — list of parameter names (default: ``[]``)
-* ``query_args_optional`` — list of parameter names (default: ``[]``)
-* ``description``         — human-readable string
+* ``identifiers_schema`` — JSON-Schema object for ``<<name>>`` identifier
+  slots. Omit entirely when no identifier splicing is needed.
+* ``description``        — human-readable string.
 
-Example (legacy field names)::
-
-    - query_name: find_movie
-      query: "MATCH (m:Movie {movie_id: $movie_id}) RETURN m"
-      query_args_required: [movie_id]
-      description: "Find a movie by its stable movie_id."
-
-    - query_name: movies_by_festival
-      query: |
-        MATCH (f:Festival {id: $festival_id})-[:HAS_MOVIE]->(m:Movie)
-        RETURN m
-      query_args_required: [festival_id]
-
-Example (Orthograph standard names)::
+Example::
 
     - name: find_movie
-      cypher: "MATCH (m:Movie {movie_id: $movie_id}) RETURN m"
-      query_args_required: [movie_id]
+      cypher_template: "MATCH (m:Movie {movie_id: $movie_id}) RETURN m"
+      description: "Find a movie by its stable movie_id."
+      params_schema:
+        title: FindMovieParams
+        type: object
+        properties:
+          movie_id: {type: string, title: MovieId}
+        required: [movie_id]
+
+    - name: movies_by_year
+      cypher_template: >-
+        MATCH (m:Movie {released: $released})
+        RETURN m.title LIMIT $limit
+      params_schema:
+        title: MoviesByYearParams
+        type: object
+        properties:
+          released: {type: integer, title: Released}
+          limit:    {type: integer, title: Limit, default: 10}
+        required: [released]
+
+    - name: count_movies
+      cypher_template: "MATCH (m:Movie) RETURN count(m) AS total"
+      params_schema:
+        type: object
+        properties: {}
 """
 
 from __future__ import annotations
@@ -57,13 +68,15 @@ from typing import Any
 
 import yaml
 
+from orthograph.cypher.bindings import NoIdentifiers, NoParams
 from orthograph.cypher.exceptions import CypherCatalogueLoadError
-from orthograph.cypher.query_spec import CypherQuerySpec
+from orthograph.cypher.query import CypherQuery
+from orthograph.cypher.schema_codec import model_from_json_schema
 
 
 def load_query_catalogue_string(
     content: str,
-) -> list[CypherQuerySpec]:
+) -> list[CypherQuery]:
     """Load query specs from a YAML string.
 
     Parameters
@@ -73,7 +86,7 @@ def load_query_catalogue_string(
 
     Returns
     -------
-    list[CypherQuerySpec]
+    list[CypherQuery]
         One instance per entry in the list, in order.
 
     Raises
@@ -92,7 +105,7 @@ def load_query_catalogue_string(
 
 def load_query_catalogue_file(
     path: str | Path,
-) -> list[CypherQuerySpec]:
+) -> list[CypherQuery]:
     """Load query specs from a YAML file.
 
     Parameters
@@ -102,7 +115,7 @@ def load_query_catalogue_file(
 
     Returns
     -------
-    list[CypherQuerySpec]
+    list[CypherQuery]
         One instance per entry in the file, in order.
 
     Raises
@@ -167,8 +180,8 @@ def list_catalogue_queries(source: str | Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _build_queries(data: Any) -> list[CypherQuerySpec]:
-    """Build CypherQuerySpec instances from parsed YAML data."""
+def _build_queries(data: Any) -> list[CypherQuery]:
+    """Build CypherQuery instances from parsed YAML data."""
     if data is None:
         # safe_load("[]") returns [] but safe_load("") returns None
         return []
@@ -180,43 +193,59 @@ def _build_queries(data: Any) -> list[CypherQuerySpec]:
             "Wrap your query entries in a YAML list (start each entry with '- ')."
         )
 
-    queries: list[CypherQuerySpec] = []
+    queries: list[CypherQuery] = []
     for index, entry in enumerate(data):
         queries.append(_build_one(entry, index))
     return queries
 
 
-def _build_one(entry: Any, index: int) -> CypherQuerySpec:
-    """Parse a single YAML mapping into a CypherQuerySpec."""
+def _build_one(entry: Any, index: int) -> CypherQuery:
+    """Parse a single YAML mapping into a CypherQuery."""
     if not isinstance(entry, dict):
         raise CypherCatalogueLoadError(
             f"Entry at index {index} is not a mapping (got {type(entry).__name__!r}). "
             "Each query entry must be a YAML mapping."
         )
 
-    # Accept both legacy field names and Orthograph standard names.
+    # Accept legacy query_name alias for name.
     name = entry.get("query_name") or entry.get("name")
-    cypher = entry.get("query") or entry.get("cypher")
+    cypher_template = entry.get("cypher_template")
 
     if not name:
         raise CypherCatalogueLoadError(
             f"Entry at index {index} is missing a required field. "
             "Provide either 'query_name' (legacy) or 'name' (standard)."
         )
-    if not cypher:
+    if not cypher_template:
         raise CypherCatalogueLoadError(
-            f"Entry at index {index} (query_name={name!r}) is missing a required "
-            "field. Provide either 'query' (legacy) or 'cypher' (standard)."
+            f"Entry at index {index} (name={name!r}) is missing the required "
+            "field 'cypher_template'."
         )
 
-    query_args_required: list[str] = list(entry.get("query_args_required") or [])
-    query_args_optional: list[str] = list(entry.get("query_args_optional") or [])
+    # params_schema is required; absent or empty → NoParams.
+    params_schema: dict[str, Any] | None = entry.get("params_schema")
+    if params_schema:
+        Params = model_from_json_schema(
+            params_schema, model_name=params_schema.get("title")
+        )
+    else:
+        Params = NoParams
+
+    # identifiers_schema is optional; absent → NoIdentifiers.
+    identifiers_schema: dict[str, Any] | None = entry.get("identifiers_schema")
+    if identifiers_schema:
+        Identifiers = model_from_json_schema(
+            identifiers_schema, model_name=identifiers_schema.get("title")
+        )
+    else:
+        Identifiers = NoIdentifiers
+
     description: str | None = entry.get("description")
 
-    return CypherQuerySpec(
+    return CypherQuery(
         name=name,
-        cypher=cypher,
-        query_args_required=query_args_required,
-        query_args_optional=query_args_optional,
+        cypher_template=cypher_template,
         description=description,
+        Params=Params,
+        Identifiers=Identifiers,
     )

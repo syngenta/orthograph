@@ -24,6 +24,7 @@ from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel
 from orthograph.graph_profile.models import GraphProfile
+from tests.fixtures.conftest import Person
 
 
 # ---------------------------------------------------------------------------
@@ -31,10 +32,12 @@ from orthograph.graph_profile.models import GraphProfile
 # ---------------------------------------------------------------------------
 
 
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-    name: str
+# Test-specific Movie model with 'released' field instead of 'year'
+class Movie(NodeModel):
+    __label__ = "Movie"
+    __uid_field__ = "title"
+    title: str
+    released: int
 
 
 @pytest.fixture()
@@ -125,11 +128,7 @@ class ReleasedYearParams(BaseModel):
     released: int
 
 
-class Movie(NodeModel):
-    __label__ = "Movie"
-    __uid_field__ = "title"
-    title: str
-    released: int
+# Note: Movie imported from tests.fixtures.conftest
 
 
 class MoviesByYear(CypherReadQuery[ReleasedYearParams, Movie]):

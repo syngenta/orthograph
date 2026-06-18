@@ -16,10 +16,10 @@ import orthograph.cypher.validation as _cypher_validation
 from orthograph.comparison.rules import Rule
 from orthograph.cypher.exceptions import (
     CypherCatalogueLoadError,
-    CypherQuerySpecError,
+    CypherQueryError,
 )
 from orthograph.cypher.parser import validate_cypher
-from orthograph.cypher.query_spec import CypherQuerySpec
+from orthograph.cypher.query import CypherQuery
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
@@ -117,18 +117,18 @@ def validate_query_catalogue_against_profile(
     )
 
 
-def load_query_catalogue(source: str | Path) -> list[CypherQuerySpec]:
+def load_query_catalogue(source: str | Path) -> list[CypherQuery]:
     """Load Cypher query specs from a YAML string or file.
 
     A :class:`pathlib.Path` is read as a file; a :class:`str` is treated as
     YAML content unless the string resolves to an existing file path (in which
     case the file is read).
 
-    The YAML top-level must be a list. Each entry supports both legacy
-    field names (``query_name`` / ``query``) and standard names
-    (``name`` / ``cypher``).
+    The YAML top-level must be a list. Each entry requires ``name``,
+    ``cypher_template``, and ``params_schema`` (with optional ``identifiers_schema``
+    and ``description``).
 
-    Returns a list of :class:`~orthograph.cypher.query_spec.CypherQuerySpec`
+    Returns a list of :class:`~orthograph.cypher.query.CypherQuery`
     instances, one per entry, in order.
 
     Raises
@@ -157,7 +157,7 @@ __all__ = [
     # query spec catalogue
     "load_query_catalogue",
     "list_catalogue_queries",
-    "CypherQuerySpec",
-    "CypherQuerySpecError",
+    "CypherQuery",
+    "CypherQueryError",
     "CypherCatalogueLoadError",
 ]

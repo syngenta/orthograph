@@ -55,8 +55,8 @@ class CypherModelValidationError(CypherError):
         )
 
 
-class CypherQuerySpecError(CypherError):
-    """A :class:`~orthograph.cypher.query_spec.CypherQuerySpec` is misconfigured
+class CypherQueryError(CypherError):
+    """A :class:`~orthograph.cypher.query.CypherQuery` is misconfigured
     or called with invalid arguments.
 
     Covers: overlapping required/optional args, Params model missing declared

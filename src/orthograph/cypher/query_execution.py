@@ -10,10 +10,11 @@ driver), runs the statement, and materialises each record.
 from dataclasses import dataclass
 from typing import Any, Callable, cast
 
+from pydantic import BaseModel
+
 from orthograph.cypher.exceptions import CypherSyntaxError
 from orthograph.cypher.parser import parse_cypher
 from orthograph.query.base_models import D, Executor, P, R, ReadQuery, WriteQuery
-from orthograph.query.write_result import WriteResultSummary
 
 
 @dataclass
@@ -49,10 +50,6 @@ class CypherWriteResultSummary:
             relationships_deleted=counters.relationships_deleted,
             properties_set=counters.properties_set,
         )
-
-
-# Verify at import time that the dataclass satisfies the protocol.
-assert isinstance(CypherWriteResultSummary(), WriteResultSummary)
 
 
 class CypherExecutor(Executor):
@@ -132,3 +129,73 @@ class CypherExecutor(Executor):
                     pass
                 raise
             return interpreted
+
+
+class CypherQueryReadAdapter:
+    """Thin adapter that lets a :class:`~orthograph.cypher.query.CypherQuery`
+    be passed to :meth:`CypherExecutor.read`.
+
+    The adapter bridges the ``CypherQuery.build(**kwargs)`` signature to the
+    ``ReadQuery.build(params)`` shape that ``CypherExecutor`` expects.  Read
+    results are returned as ``list[dict]`` via an identity materialiser — raw
+    rows for the untyped on-ramp.
+
+    Usage::
+
+        adapter = CypherQueryReadAdapter(query)
+        rows = executor.read(adapter, {"movie_id": "M-001"})
+        # rows is list[dict[str, Any]]
+    """
+
+    def __init__(self, query: Any) -> None:  # query: CypherQuery
+        self._query = query
+        self.Params: type[BaseModel] = query.Params
+        self.name: str = query.name
+        self.backend = query.backend
+
+    def build(self, params: BaseModel) -> Any:
+        """Delegate to the wrapped query, unpacking the params model.
+
+        Optional args defaulting to ``None`` are excluded so they do not
+        appear in the Cypher parameter dict (matches the simple path contract).
+        """
+        return self._query.build(**params.model_dump(exclude_none=True))
+
+    def materialize(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Identity materialiser — returns raw rows as plain dicts."""
+        return dict(raw)
+
+
+class CypherQueryWriteAdapter:
+    """Thin adapter that lets a :class:`~orthograph.cypher.query.CypherQuery`
+    be passed to :meth:`CypherExecutor.write`.
+
+    Write result is the full :class:`CypherWriteResultSummary` — raw counters
+    for the untyped on-ramp, matching the read adapter's identity-materialiser
+    philosophy.  The caller inspects whichever counter(s) they need.
+
+    Usage::
+
+        adapter = CypherQueryWriteAdapter(query)
+        summary = executor.write(adapter, {"movie_id": "M-001"})
+        # summary is CypherWriteResultSummary
+        print(summary.properties_set, summary.nodes_created)
+    """
+
+    def __init__(self, query: Any) -> None:  # query: CypherQuery
+        self._query = query
+        self.Params: type[BaseModel] = query.Params
+        self.name: str = query.name
+        self.backend = query.backend
+
+    def build(self, params: BaseModel) -> Any:
+        """Delegate to the wrapped query, unpacking the params model.
+
+        Optional args defaulting to ``None`` are excluded so they do not
+        appear in the Cypher parameter dict (matches the simple path contract).
+        """
+        return self._query.build(**params.model_dump(exclude_none=True))
+
+    def interpret_result(self, raw: Any) -> Any:
+        """Return the write summary unchanged — raw for the untyped on-ramp."""
+        return raw

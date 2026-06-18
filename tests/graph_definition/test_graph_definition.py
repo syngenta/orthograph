@@ -406,3 +406,83 @@ def test_directed_not_affected_by_undirected_logic():
     # Person should not see ACTED_IN as incoming
     incoming_person = graph_definition.get_incoming_relationship_types(Person)
     assert all(r.__label__ != "ACTED_IN" for r in incoming_person)
+
+
+# --- Immutability tests ---
+
+
+def test_graph_definition_is_frozen_after_construction():
+    """GraphDefinition should be immutable after __init__ completes."""
+    graph_definition = GraphDefinition(
+        name="Filmography",
+        node_types=[Person, Movie],
+        relationship_types=[ActedIn],
+    )
+
+    # Attempting to modify any attribute should raise AttributeError
+    with pytest.raises(AttributeError, match="GraphDefinition is frozen"):
+        graph_definition.name = "OtherName"
+
+
+def test_graph_definition_cannot_modify_version():
+    """Modifying version after construction should raise AttributeError."""
+    graph_definition = GraphDefinition(
+        name="Test",
+        version="1.0.0",
+        node_types=[Person],
+        relationship_types=[],
+    )
+
+    with pytest.raises(AttributeError, match="GraphDefinition is frozen"):
+        graph_definition.version = "2.0.0"
+
+
+def test_graph_definition_cannot_modify_node_types():
+    """Modifying node_types list after construction should raise AttributeError."""
+    graph_definition = GraphDefinition(
+        name="Filmography",
+        node_types=[Person, Movie],
+        relationship_types=[],
+    )
+
+    with pytest.raises(AttributeError, match="GraphDefinition is frozen"):
+        graph_definition.node_types = []
+
+
+def test_graph_definition_cannot_modify_relationship_types():
+    """Modifying relationship_types after construction should raise AttributeError."""
+    graph_definition = GraphDefinition(
+        name="Filmography",
+        node_types=[Person, Movie],
+        relationship_types=[ActedIn],
+    )
+
+    with pytest.raises(AttributeError, match="GraphDefinition is frozen"):
+        graph_definition.relationship_types = []
+
+
+def test_graph_definition_cannot_add_private_attributes():
+    """Adding new attributes after construction should raise AttributeError."""
+    graph_definition = GraphDefinition(
+        name="Filmography",
+        node_types=[Person],
+        relationship_types=[],
+    )
+
+    with pytest.raises(AttributeError, match="GraphDefinition is frozen"):
+        graph_definition.custom_field = "value"
+
+
+def test_graph_definition_attributes_accessible_before_freeze():
+    """Attributes should be readable even though they are frozen."""
+    graph_definition = GraphDefinition(
+        name="Filmography",
+        version="1.0.0",
+        node_types=[Person, Movie],
+        relationship_types=[ActedIn, Directed],
+    )
+
+    assert graph_definition.name == "Filmography"
+    assert graph_definition.version == "1.0.0"
+    assert len(graph_definition.node_types) == 2
+    assert len(graph_definition.relationship_types) == 2

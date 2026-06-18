@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from orthograph.cypher.base_models import CypherReadQuery
-from orthograph.cypher.bindings import CypherQuery, NoParams
+from orthograph.cypher.bindings import CypherQueryData, NoParams
 from orthograph.graph_profile.queries.shared import (
     InspectCardinalityQuery,
     InspectEndpointLabelsQuery,
@@ -83,8 +83,8 @@ with _warnings.catch_warnings():
             " YIELD nodeType, nodeLabels, mandatory, propertyName, propertyTypes"
         )
 
-        def build(self, params: NoParams) -> CypherQuery:
-            return self._CYPHER, {}
+        def build(self, params: NoParams) -> CypherQueryData:
+            return CypherQueryData(self._CYPHER, {})
 
         def materialize(self, raw: Any) -> MemgraphNodePropertyRow:
             types = raw.get("propertyTypes", [])
@@ -110,8 +110,8 @@ with _warnings.catch_warnings():
             " YIELD relType, mandatory, propertyName, propertyTypes"
         )
 
-        def build(self, params: NoParams) -> CypherQuery:
-            return self._CYPHER, {}
+        def build(self, params: NoParams) -> CypherQueryData:
+            return CypherQueryData(self._CYPHER, {})
 
         def materialize(self, raw: Any) -> MemgraphRelPropertyRow:
             types = raw.get("propertyTypes", [])
@@ -133,8 +133,8 @@ with _warnings.catch_warnings():
         name = "memgraph.inspect.constraints"
         _CYPHER = "SHOW CONSTRAINT INFO"
 
-        def build(self, params: NoParams) -> CypherQuery:
-            return self._CYPHER, {}
+        def build(self, params: NoParams) -> CypherQueryData:
+            return CypherQueryData(self._CYPHER, {})
 
         def materialize(self, raw: Any) -> MemgraphConstraintRow:
             return MemgraphConstraintRow(

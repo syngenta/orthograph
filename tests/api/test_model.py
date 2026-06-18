@@ -16,13 +16,14 @@ from orthograph.api.model import (
 from orthograph.cypher.base_models import CypherReadQuery
 from orthograph.cypher.bindings import NoParams
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_definition.models import NodeModel, RelationshipModel
+from orthograph.graph_definition.models import RelationshipModel
 from orthograph.graph_profile.models import (
     GraphProfile,
     NodeTypeProfile,
     PropertyProfile,
 )
 from orthograph.query.catalogue import QueryCatalogue
+from tests.fixtures.conftest import Person
 
 
 # ---------------------------------------------------------------------------
@@ -43,13 +44,6 @@ relationship_types:
     target: Person
     directed: true
 """
-
-
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-    name: str
-    age: int
 
 
 class Knows(RelationshipModel):

@@ -12,14 +12,19 @@ from pydantic import BaseModel
 from orthograph.comparison.engine import compare_profile_to_definition
 from orthograph.comparison.rules import Rule
 from orthograph.cypher.bindings import (
+    NoIdentifiers,
+    _check_model_alignment,
     extract_cypher_identifiers,
+    extract_cypher_params,
 )
 from orthograph.cypher.parser import (
     ReturnColumn,
     ReturnKind,
     extract_return_columns,
+    parse_cypher,
     validate_cypher,
 )
+from orthograph.cypher.query import CypherQuery
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue, ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
@@ -203,6 +208,104 @@ def _check_identifier_injection(
     return []
 
 
+def validate_cypher_spec(
+    *,
+    cypher: str,
+    params_fields: set[str],
+    query_name: str,
+    identifier_fields: set[str] | None = None,
+    graph_definition: GraphDefinition | None = None,
+    output_model: type[BaseModel] | None = None,
+) -> ValidationResult:
+    """Validate a Cypher query spec from primitives (no class or instance required).
+
+    Shared validation core used by both the simple path (``CypherQuery``) and the
+    typed path (``validate_query_catalogue``).  Composes only existing helpers:
+
+    * Syntactic parse via ``parse_cypher`` → ``QUERY_PARSE_ERROR`` on failure.
+    * ``$param`` ↔ ``params_fields`` and ``<<id>>`` ↔ ``identifier_fields``
+      alignment → ``QUERY_PARAM_ALIGNMENT_ERROR`` on mismatch.
+    * Semantic / domain check via ``validate_cypher`` when
+      ``graph_definition is not None``.
+    * RETURN→Output alignment via ``extract_return_columns`` +
+      ``_check_return_output_alignment`` when ``output_model is not None``.
+    * Identifier-injection INFO via ``_check_identifier_injection``.
+    """
+    result = ValidationResult()
+
+    # --- 1. Syntactic parse ---
+    try:
+        parse_cypher(cypher)
+    except Exception as exc:
+        result.add(
+            ValidationIssue(
+                code="QUERY_PARSE_ERROR",
+                severity=Severity.ERROR,
+                entity_type=EntityType.QUERY,
+                entity_id=query_name,
+                message=f"Query '{query_name}' could not be parsed: {exc}",
+            )
+        )
+        return result
+
+    # --- 2. $param alignment ---
+    used_params = extract_cypher_params(cypher)
+    for problem in _check_model_alignment(
+        declared=params_fields,
+        used=used_params,
+        fmt_placeholder=lambda n: f"${n}",
+        template_label="parameter(s)",
+        model_name=query_name,
+    ):
+        result.add(
+            ValidationIssue(
+                code="QUERY_PARAM_ALIGNMENT_ERROR",
+                severity=Severity.ERROR,
+                entity_type=EntityType.QUERY,
+                entity_id=query_name,
+                message=f"Query '{query_name}': {problem}",
+            )
+        )
+
+    # --- 3. <<id>> alignment ---
+    used_ids = extract_cypher_identifiers(cypher)
+    for problem in _check_model_alignment(
+        declared=identifier_fields or set(),
+        used=used_ids,
+        fmt_placeholder=lambda n: f"<<{n}>>",
+        template_label="identifier placeholder(s)",
+        model_name=query_name,
+    ):
+        result.add(
+            ValidationIssue(
+                code="QUERY_PARAM_ALIGNMENT_ERROR",
+                severity=Severity.ERROR,
+                entity_type=EntityType.QUERY,
+                entity_id=query_name,
+                message=f"Query '{query_name}': {problem}",
+            )
+        )
+
+    # --- 4. Identifier-injection INFO ---
+    for issue in _check_identifier_injection(cypher, query_name):
+        result.add(issue)
+
+    # --- 5. Semantic / domain check ---
+    if graph_definition is not None:
+        result.merge(validate_cypher(cypher, graph_definition))
+
+    # --- 6. RETURN→Output alignment ---
+    if output_model is not None:
+        return_cols = extract_return_columns(cypher)
+        if return_cols is not None:
+            for issue in _check_return_output_alignment(
+                return_cols, output_model, query_name
+            ):
+                result.add(issue)
+
+    return result
+
+
 def validate_query_catalogue(
     query_catalogue: QueryCatalogue,
     graph_definition: GraphDefinition,
@@ -238,6 +341,24 @@ def validate_query_catalogue(
             )
             continue
 
+        # --- Simple CypherQuery branch (YAML / direct-instantiation path) ---
+        if isinstance(query, CypherQuery):
+            params_fields: set[str] = set(query.Params.model_fields)
+            identifier_fields_simple: set[str] = set(
+                (query.Identifiers or NoIdentifiers).model_fields
+            )
+            result.merge(
+                validate_cypher_spec(
+                    cypher=query.cypher_template,
+                    params_fields=params_fields,
+                    query_name=query.name,
+                    identifier_fields=identifier_fields_simple,
+                    graph_definition=graph_definition,
+                    output_model=None,
+                )
+            )
+            continue
+
         template = getattr(type(query), "cypher_template", None)
         if template is None:
             result.add(
@@ -268,21 +389,34 @@ def validate_query_catalogue(
             )
             continue
 
-        result.merge(validate_cypher(template, graph_definition))
-
-        # RETURN → Output column alignment check — read queries only.
-        # WriteQuery also carries an optional Output ClassVar, but writes expose
-        # only mutation counters (not rows), so the alignment check does not
-        # apply to them.
-        if isinstance(query, ReadQuery):
-            output_cls: type[BaseModel] | None = getattr(type(query), "Output", None)
-            if output_cls is not None:
-                return_cols = extract_return_columns(template)
-                if return_cols is not None:
-                    for issue in _check_return_output_alignment(
-                        return_cols, output_cls, query.name
-                    ):
-                        result.add(issue)
+        params_cls = getattr(type(query), "Params", None)
+        params_fields_typed: set[str] = (
+            set(params_cls.model_fields)
+            if isinstance(params_cls, type) and issubclass(params_cls, BaseModel)
+            else set()
+        )
+        identifiers_cls = getattr(type(query), "Identifiers", None)
+        identifier_fields: set[str] = (
+            set(identifiers_cls.model_fields)
+            if isinstance(identifiers_cls, type)
+            and issubclass(identifiers_cls, BaseModel)
+            else set()
+        )
+        output_cls: type[BaseModel] | None = (
+            getattr(type(query), "Output", None)
+            if isinstance(query, ReadQuery)
+            else None
+        )
+        result.merge(
+            validate_cypher_spec(
+                cypher=template,
+                params_fields=params_fields_typed,
+                query_name=query.name,
+                identifier_fields=identifier_fields,
+                graph_definition=graph_definition,
+                output_model=output_cls,
+            )
+        )
 
     return result
 

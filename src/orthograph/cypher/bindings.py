@@ -7,7 +7,7 @@ and 1:1 field-to-placeholder alignment checks.  No graphglot dependency here.
 
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel
 
@@ -15,8 +15,14 @@ from orthograph.cypher.exceptions import CypherQueryDefinitionError
 from orthograph.cypher.identifiers import validate_identifier
 
 
-CypherQuery = tuple[str, dict[str, Any]]
-"""A built Cypher query: the Cypher string and its parameter dict."""
+class CypherQueryData(NamedTuple):
+    """A built Cypher query ready to execute: the Cypher string and its
+    parameter dict. This is NOT a query result — results are produced by an
+    executor materialising records. Unpacks as ``cypher, params = ...``.
+    """
+
+    cypher: str
+    params: dict[str, Any]
 
 
 class NoParams(BaseModel):
@@ -108,30 +114,31 @@ def render_with_identifiers(cypher: str, identifiers: BaseModel) -> str:
 
 
 def _check_model_alignment(
-    model: type[BaseModel],
+    declared: set[str],
     used: set[str],
     fmt_placeholder: Callable[[str], str],
     template_label: str,
+    model_name: str = "model",
 ) -> list[str]:
-    """Return alignment problems between *used* placeholder names and *model* fields.
+    """Return alignment problems between *used* placeholder names and *declared* names.
 
     ``fmt_placeholder`` converts a bare name to its syntax (e.g. ``"$name"`` or
     ``"<<name>>"``). ``template_label`` is used in the human-readable message
     (e.g. ``"parameter(s)"`` or ``"identifier placeholder(s)"``).
+    ``model_name`` is used in error messages to identify the source model.
     """
-    declared = set(model.model_fields.keys())
     problems: list[str] = []
     missing = used - declared
     if missing:
         problems.append(
             f"cypher_template uses {template_label} "
             f"{sorted(fmt_placeholder(m) for m in missing)} not declared on "
-            f"{model.__name__}"
+            f"{model_name}"
         )
     unused = declared - used
     if unused:
         problems.append(
-            f"{model.__name__} declares field(s) "
+            f"{model_name} declares field(s) "
             f"{sorted(fmt_placeholder(u) for u in unused)} with no matching "
             f"placeholder in cypher_template"
         )
@@ -152,10 +159,11 @@ def check_placeholder_alignment(cls: type, cypher: str) -> list[str]:
     if isinstance(params_model, type) and issubclass(params_model, BaseModel):
         problems.extend(
             _check_model_alignment(
-                params_model,
+                declared=set(params_model.model_fields),
                 used=extract_cypher_params(cypher),
                 fmt_placeholder=lambda n: f"${n}",
                 template_label="parameter(s)",
+                model_name=params_model.__name__,
             )
         )
 
@@ -163,10 +171,11 @@ def check_placeholder_alignment(cls: type, cypher: str) -> list[str]:
     if isinstance(identifiers_model, type) and issubclass(identifiers_model, BaseModel):
         problems.extend(
             _check_model_alignment(
-                identifiers_model,
+                declared=set(identifiers_model.model_fields),
                 used=extract_cypher_identifiers(cypher),
                 fmt_placeholder=lambda n: f"<<{n}>>",
                 template_label="identifier placeholder(s)",
+                model_name=identifiers_model.__name__,
             )
         )
 

@@ -24,7 +24,7 @@ from orthograph.cypher.base_models import (
     CypherWriteQuery,
 )
 from orthograph.cypher.bindings import (
-    CypherQuery,
+    CypherQueryData,
     NoIdentifiers,
     NoParams,
 )
@@ -35,14 +35,15 @@ from orthograph.cypher.exceptions import (
 from orthograph.graph_definition.models import NodeModel
 
 
-class ReleasedYearParams(BaseModel):
-    released: int
-
-
+# Test-specific Movie model with 'released' field instead of 'year'
 class Movie(NodeModel):
     __label__ = "Movie"
     __uid_field__ = "title"
     title: str
+    released: int
+
+
+class ReleasedYearParams(BaseModel):
     released: int
 
 
@@ -70,8 +71,8 @@ with warnings.catch_warnings():
 
         name = "movies_by_year_imperative"
 
-        def build(self, params: ReleasedYearParams) -> CypherQuery:
-            return (
+        def build(self, params: ReleasedYearParams) -> CypherQueryData:
+            return CypherQueryData(
                 "MATCH (m:Movie {released: $year}) "
                 "RETURN m.title AS t, m.released AS y",
                 {"year": params.released},
@@ -345,8 +346,8 @@ def test_imperative_definition_emits_user_warning() -> None:
             Output = Movie
             name = "warned_read"
 
-            def build(self, params: ReleasedYearParams) -> CypherQuery:
-                return (
+            def build(self, params: ReleasedYearParams) -> CypherQueryData:
+                return CypherQueryData(
                     "MATCH (m:Movie) RETURN m.title, m.released",
                     {},
                 )
@@ -367,8 +368,8 @@ def test_imperative_warning_points_to_caller_not_framework() -> None:
             Output = Movie
             name = "warned_read_stack"
 
-            def build(self, params: ReleasedYearParams) -> CypherQuery:
-                return ("MATCH (m:Movie) RETURN m.title, m.released", {})
+            def build(self, params: ReleasedYearParams) -> CypherQueryData:
+                return CypherQueryData("MATCH (m:Movie) RETURN m.title, m.released", {})
 
             def materialize(self, raw: dict[str, Any]) -> Movie:
                 return Movie(title=raw["m.title"], released=raw["m.released"])

@@ -6,36 +6,7 @@ import pytest
 from orthograph.backends.networkx.conversion import schema_to_networkx
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
-
-
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-
-    name: str
-    age: int
-
-
-class Movie(NodeModel):
-    __label__ = "Movie"
-    __uid_field__ = "title"
-
-    title: str
-    year: int
-
-
-class ActedIn(RelationshipModel):
-    __label__ = "ACTED_IN"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-
-    role: str
-
-
-class Directed(RelationshipModel):
-    __label__ = "DIRECTED"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
+from tests.fixtures.conftest import ActedIn, Directed, Movie, Person
 
 
 @pytest.fixture()

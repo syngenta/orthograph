@@ -119,8 +119,8 @@ push = true
 # --------------------------------------------------------------------------- #
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-v --strict-markers --tb=short"
+testpaths = ["tests", "notebooks"]
+addopts = "-v --strict-markers --tb=short --nbval-lax"
 markers = [
     "slow: marks tests as slow",
     "neo4j: requires a live Neo4j instance (run with --neo4j)",

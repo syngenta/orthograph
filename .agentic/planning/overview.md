@@ -63,6 +63,10 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E33 | Query Contract Ergonomics v2 — `row_mapper` / `materialize` alternative + write return expansion | High | planned (blocked by E31; **Q1 superseded by E34 — ADR-025, `row_mapper` rejected; the default-`materialize` alternative was also withdrawn — `materialize` stays explicit**; Q2 superseded by E35; grill via `.agentic/reviews/E33_grill_prompt.md`) |
 | E34 | RETURN→Output Alignment Correctness & ~~`materialize` Default~~ | High | **partially reverted** (T1+T2 static-alignment **stand and ship**; T3 ADR-025 amended — `row_mapper` stays rejected but the **default `materialize` is withdrawn**; T4 **reverted** — auto-classifying default removed, `materialize` stays an explicit required one-liner; T5/T6 N/A) |
 | E35 | Write Query Return-Row Echo — surface `RETURN` rows from `write()` | High | planned (blocked by E34; ADR-026 gated; supersedes E33 Q2) |
+| E36 | CypherQuery Naming Convergence + Class-Based Query Definitions | Medium | **done** (2026-06-17) |
+| E37 | Simple Cypher Query — Shared Validation, Catalogue Parity, and Executor | Medium | **done** (2026-06-17) |
+| E38 | CypherQuery Signature Collapse — `Params` + `Identifiers` Only | Medium | **done** (2026-06-18; collapsed three parameter representations to single typed source) |
+| E39 | Async Query Runner — `AsyncExecutor` & Caller-Owned Transactions | High | planned (independent; ADR-028; query-runner async for the MP-backend consumer) |
 
 ---
 
@@ -82,6 +86,9 @@ INDEPENDENT — can start immediately:
   E28  Testing Strategy (independent; consolidates E21+E22+E26 — activation harness, shared-contract
        layer, shared test fixtures, containerised CI; Wave A tasks need no live DB)
   E29  __uid_field__ Hardening (independent; T1 + T2 can be executed individually)
+  E39  Async Query Runner (independent; ADR-028; Wave 0 realigns sync write() to caller-owned
+       transactions, Wave 1 adds the parallel AsyncExecutor path; query runner only — inspection
+       stays sync)
 
 AFTER E23:
   E24  Synthetic Graph Data Generation (profile-driven mode requires consistent GraphProfile
@@ -181,6 +188,7 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E24 — Synthetic Graph Data Generation](active_epics/E24_synthetic_graph_data_generation.md)
 - [E34 — RETURN→Output Alignment Correctness & `materialize` Default](active_epics/E34_return_output_alignment_correctness.md)
 - [E35 — Write Query Return-Row Echo](active_epics/E35_write_query_return_rows.md)
+- [E39 — Async Query Runner](active_epics/E39_async_query_runner.md)
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 
@@ -191,6 +199,9 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E25 — Capability Seams & Vendor-Backend Isolation (Refactor)](archived_epics/E25_capability_seams_backend_isolation.md) *(done 2026-06-11)*
 - [E27 — Symmetric Comparison — Compare Any Two Graph Descriptions](archived_epics/E27_symmetric_comparison.md) *(done 2026-06-15)*
 - [E29 — `__uid_field__` Hardening](archived_epics/E29_uid_field_hardening.md) *(done 2026-06-15)*
+- [E36 — CypherQuery Naming Convergence + Class-Based Query Definitions](archived_epics/E36_cypher_query_naming_and_spec_class.md) *(done 2026-06-17)*
+- [E37 — Simple Cypher Query — Shared Validation, Catalogue Parity, and Executor](archived_epics/E37_simple_cypher_query_shared_validation.md) *(done 2026-06-17; `CypherQueryBase` fate is a separate follow-on discussion)*
+- [E38 — CypherQuery Signature Collapse — `Params` + `Identifiers` Only](archived_epics/E38_cypher_query_params_collapse.md) *(done 2026-06-18; collapsed three-into-one via JSON-Schema round-trip and ADR-027)*
 
 **Retired (superseded by E16):**
 - [E6 — Cypher Query Catalogue](archived_epics/E6_query_catalogue.md)
@@ -218,7 +229,7 @@ Items explicitly out of scope for the current phase.
 | Property value constraints (min/max/regex/enum) | Deferred |
 | Schema composition / inheritance | Deferred |
 | CLI tool | Future |
-| Async driver support | Deferred |
+| Async driver support | Query runner delivered (E39 / ADR-028 — `AsyncExecutor`, `query_async`/`execute_async`, caller-owned transactions); async inspection (`inspect`/`validate`) deferred |
 | Historical profile storage / trend analysis | Monitoring platform concern |
 | Rich output models (nested, computed projections) | Post-pilot, after flat types validated |
 | Mixed catalogue (all three backends in one registry) + Catalogue-vs-Repository boundary | Requires scoping session → ADR. See "Scoping task" below. |

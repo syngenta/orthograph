@@ -23,7 +23,8 @@ import pytest
 from pydantic import BaseModel
 
 from orthograph.cypher.base_models import CypherReadQuery, CypherWriteQuery
-from orthograph.cypher.bindings import CypherQuery
+from orthograph.cypher.bindings import CypherQueryData, NoIdentifiers
+from orthograph.cypher.query import CypherQuery
 from orthograph.cypher.validation import validate_query_catalogue
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.graph_definition.graph_definition import GraphDefinition
@@ -131,8 +132,8 @@ def test_imperative_query_reported_unverifiable_with_reason(
             Output = Movie
             name = "imperative_read"
 
-            def build(self, params: ReleasedYearParams) -> CypherQuery:
-                return ("MATCH (m:Movie) RETURN m", {})
+            def build(self, params: ReleasedYearParams) -> CypherQueryData:
+                return CypherQueryData("MATCH (m:Movie) RETURN m", {})
 
             def materialize(self, raw: dict[str, Any]) -> Movie:
                 return Movie(title="x", released=0)
@@ -195,8 +196,8 @@ def test_mixed_catalogue_reports_each_query(graph_definition: GraphDefinition) -
             Output = Movie
             name = "imperative_read_2"
 
-            def build(self, params: ReleasedYearParams) -> CypherQuery:
-                return ("MATCH (m:Movie) RETURN m", {})
+            def build(self, params: ReleasedYearParams) -> CypherQueryData:
+                return CypherQueryData("MATCH (m:Movie) RETURN m", {})
 
             def materialize(self, raw: dict[str, Any]) -> Movie:
                 return Movie(title="x", released=0)
@@ -645,3 +646,201 @@ def test_inspect_cardinality_query_emits_identifier_injection_issue(
     )
     # Check that the issue message mentions the query name
     assert any("inspect.cardinality" in i.message for i in injection_issues)
+
+
+# ---------------------------------------------------------------------------
+# E37.3: CypherQuery registration and catalogue validation
+# ---------------------------------------------------------------------------
+
+
+def test_cypher_query_registers_in_catalogue() -> None:
+    """A CypherQuery can be registered in a QueryCatalogue without error."""
+    from pydantic import BaseModel
+
+    class FindMovieParams(BaseModel):
+        released: int
+
+    query = CypherQuery(
+        name="find_movie",
+        cypher_template="MATCH (m:Movie {released: $released}) RETURN m",
+        Params=FindMovieParams,
+        Identifiers=NoIdentifiers,
+    )
+    catalogue = QueryCatalogue()
+    returned = catalogue.register_cypher_query(query)
+    assert returned is query
+    assert "find_movie" in catalogue.names()
+
+
+def test_cypher_query_duplicate_name_raises() -> None:
+    """Registering a CypherQuery with a duplicate name raises ValueError."""
+    from orthograph.cypher.bindings import NoParams
+
+    query = CypherQuery(
+        name="dup",
+        cypher_template="MATCH (m:Movie) RETURN m",
+        Params=NoParams,
+        Identifiers=NoIdentifiers,
+    )
+    catalogue = QueryCatalogue()
+    catalogue.register_cypher_query(query)
+    with pytest.raises(ValueError, match="dup"):
+        catalogue.register_cypher_query(query)
+
+
+def test_yaml_cypher_query_domain_error_via_catalogue(
+    graph_definition: GraphDefinition,
+) -> None:
+    """YAML-loaded CypherQuery with a renamed label produces QUERY_UNKNOWN_NODE_LABEL.
+
+    This is the documented MP Phase-1 scenario: a YAML query referencing a label
+    that was renamed in the graph model is caught statically at CI time.
+    """
+    # 'Film' is not in the graph_definition (which knows only 'Movie').
+    from pydantic import BaseModel
+
+    class FindFilmParams(BaseModel):
+        released: int
+
+    query = CypherQuery(
+        name="find_film",
+        cypher_template="MATCH (f:Film {released: $released}) RETURN f",
+        Params=FindFilmParams,
+        Identifiers=NoIdentifiers,
+    )
+    catalogue = QueryCatalogue()
+    catalogue.register_cypher_query(query)
+
+    result = validate_query_catalogue(catalogue, graph_definition)
+
+    label_errors = [i for i in result.issues if i.code == "QUERY_UNKNOWN_NODE_LABEL"]
+    assert len(label_errors) >= 1, (
+        f"Expected QUERY_UNKNOWN_NODE_LABEL "
+        f"for unknown label 'Film'; got: {result.issues}"
+    )
+    assert any("Film" in i.message for i in label_errors)
+    assert not result.is_valid
+
+
+def test_yaml_cypher_query_valid_label_no_errors(
+    graph_definition: GraphDefinition,
+) -> None:
+    """A YAML CypherQuery referencing a valid label validates clean."""
+    from pydantic import BaseModel
+
+    class FindMovieSimpleParams(BaseModel):
+        released: int
+
+    query = CypherQuery(
+        name="find_movie_simple",
+        cypher_template="MATCH (m:Movie {released: $released}) RETURN m",
+        Params=FindMovieSimpleParams,
+        Identifiers=NoIdentifiers,
+    )
+    catalogue = QueryCatalogue()
+    catalogue.register_cypher_query(query)
+
+    result = validate_query_catalogue(catalogue, graph_definition)
+
+    assert result.errors == [], f"Expected no errors; got: {result.errors}"
+    assert result.is_valid
+
+
+def test_cypher_query_stale_param_caught_via_catalogue(
+    graph_definition: GraphDefinition,
+) -> None:
+    """A CypherQuery with an undeclared $param is caught by catalogue validation."""
+    from pydantic import BaseModel
+
+    class StaleParamParams(BaseModel):
+        released: int
+
+    query = CypherQuery(
+        name="stale_param",
+        cypher_template="MATCH (m:Movie {released: $released, title: $title}) RETURN m",
+        Params=StaleParamParams,
+        # 'title' used in cypher_template but not declared on Params → alignment error
+        Identifiers=NoIdentifiers,
+    )
+    catalogue = QueryCatalogue()
+    catalogue.register_cypher_query(query)
+
+    result = validate_query_catalogue(catalogue, graph_definition)
+
+    alignment_errors = [
+        i for i in result.issues if i.code == "QUERY_PARAM_ALIGNMENT_ERROR"
+    ]
+    assert len(alignment_errors) >= 1, (
+        f"Expected QUERY_PARAM_ALIGNMENT_ERROR "
+        f"for undeclared $title; got: {result.issues}"
+    )
+    assert not result.is_valid
+
+
+def test_registered_cypher_query_appears_alongside_typed_query(
+    graph_definition: GraphDefinition,
+) -> None:
+    """A registered CypherQuery appears
+    in validate_query_catalogue alongside typed queries."""
+    typed_query = MoviesByYear()
+    from pydantic import BaseModel
+
+    class FindFilmBadParams(BaseModel):
+        released: int
+
+    simple_query = CypherQuery(
+        name="find_film_bad",
+        cypher_template="MATCH (f:Film {released: $released}) RETURN f",
+        Params=FindFilmBadParams,
+        Identifiers=NoIdentifiers,
+    )
+    catalogue = QueryCatalogue()
+    catalogue.register_read(typed_query)
+    catalogue.register_cypher_query(simple_query)
+
+    result = validate_query_catalogue(catalogue, graph_definition)
+
+    # Typed query is valid; simple query produces the domain error for 'Film'.
+    label_errors = [i for i in result.issues if i.code == "QUERY_UNKNOWN_NODE_LABEL"]
+    assert len(label_errors) >= 1, (
+        f"Expected QUERY_UNKNOWN_NODE_LABEL from simple query; got: {result.issues}"
+    )
+    assert any("Film" in i.message for i in label_errors)
+    assert not result.is_valid
+
+
+# ---------------------------------------------------------------------------
+# E37.5.6 — typed-path regression: E37.1 re-expression is behaviour-preserving
+# ---------------------------------------------------------------------------
+
+
+def test_typed_query_validation_emits_identical_codes_after_e37_refactor(
+    graph_definition: GraphDefinition,
+) -> None:
+    """Typed-path validation emits identical codes after the E37.1 validate_cypher_spec refactor.
+
+    Proves the re-expression of validate_query_catalogue's typed branch onto the
+    shared validate_cypher_spec core is behaviour-preserving: a model-consistent
+    query is still clean, and a bad-label query still produces QUERY_UNKNOWN_NODE_LABEL.
+    """  # NOQA E501
+    # Clean typed query → no errors.
+    catalogue_clean = QueryCatalogue()
+    catalogue_clean.register_read(MoviesByYear())
+    result_clean = validate_query_catalogue(catalogue_clean, graph_definition)
+    assert result_clean.is_valid, (
+        f"Clean typed query should produce no errors; got: {result_clean.issues}"
+    )
+    assert result_clean.errors == []
+
+    # Bad-label typed query → QUERY_UNKNOWN_NODE_LABEL error.
+    catalogue_bad = QueryCatalogue()
+    catalogue_bad.register_read(MoviesByTitleBadLabel())
+    result_bad = validate_query_catalogue(catalogue_bad, graph_definition)
+    label_errors = [
+        i for i in result_bad.issues if i.code == "QUERY_UNKNOWN_NODE_LABEL"
+    ]
+    assert len(label_errors) >= 1, (
+        f"Bad-label typed query must produce "
+        f"QUERY_UNKNOWN_NODE_LABEL; got: {result_bad.issues}"
+    )
+    assert not result_bad.is_valid

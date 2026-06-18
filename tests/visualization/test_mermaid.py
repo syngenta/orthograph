@@ -13,37 +13,13 @@ from orthograph.visualization.mermaid import (
     display_mermaid,
     model_to_mermaid,
 )
+from tests.fixtures.conftest import ActedIn, Directed, Movie, Person
 
 
 # --- Model definitions for tests ---
 
 
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-    name: str
-    age: int
-
-
-class Movie(NodeModel):
-    __label__ = "Movie"
-    __uid_field__ = "title"
-    title: str
-    year: int
-
-
-class ActedIn(RelationshipModel):
-    __label__ = "ACTED_IN"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-    role: str
-
-
-class Directed(RelationshipModel):
-    __label__ = "DIRECTED"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-    __directed__ = True
+# Note: Person, Movie, ActedIn, Directed imported from tests.fixtures.conftest
 
 
 class FriendOf(RelationshipModel):

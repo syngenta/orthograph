@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from orthograph.cypher.base_models import CypherReadQuery
 from orthograph.cypher.bindings import (
-    CypherQuery,
+    CypherQueryData,
     NoParams,
     render_with_identifiers,
 )
@@ -115,8 +115,8 @@ with _warnings.catch_warnings():
             " labelsOrTypes, properties, propertyType"
         )
 
-        def build(self, params: NoParams) -> CypherQuery:
-            return self._CYPHER, {}
+        def build(self, params: NoParams) -> CypherQueryData:
+            return CypherQueryData(self._CYPHER, {})
 
         def materialize(self, raw: Any) -> ConstraintInfo:
             return ConstraintInfo(
@@ -151,7 +151,7 @@ with _warnings.catch_warnings():
         name = "neo4j.inspect.apoc.node_properties"
         Identifiers = NodeLabelIdentifiers
 
-        def build(self, params: NoParams) -> CypherQuery:
+        def build(self, params: NoParams) -> CypherQueryData:
             label = render_with_identifiers(
                 "<<label>>",
                 self._identifiers,  # validates identifier
@@ -164,7 +164,7 @@ with _warnings.catch_warnings():
                 " RETURN propertyName, propertyTypes, mandatory,"
                 " propertyObservations, totalObservations"
             )
-            return cypher, {}
+            return CypherQueryData(cypher, {})
 
         def materialize(self, raw: Any) -> NodePropertyRow:
             types = raw.get("propertyTypes", [])
@@ -188,7 +188,7 @@ with _warnings.catch_warnings():
         name = "neo4j.inspect.apoc.rel_properties"
         Identifiers = RelTypeIdentifiers
 
-        def build(self, params: NoParams) -> CypherQuery:
+        def build(self, params: NoParams) -> CypherQueryData:
             rel_type = render_with_identifiers(
                 "<<rel_type>>",
                 self._identifiers,  # validates identifier
@@ -201,7 +201,7 @@ with _warnings.catch_warnings():
                 " RETURN propertyName, propertyTypes, mandatory,"
                 " propertyObservations, totalObservations"
             )
-            return cypher, {}
+            return CypherQueryData(cypher, {})
 
         def materialize(self, raw: Any) -> NodePropertyRow:
             types = raw.get("propertyTypes", [])

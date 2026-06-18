@@ -17,6 +17,9 @@ class GraphDefinition:
 
     Validates structural consistency at construction and raises
     :class:`~orthograph.diagnostics.result.GraphValidationError` on errors.
+
+    **Thread-safe and immutable:** All state is set during construction and
+    cannot be modified after initialization. Safe for concurrent read access.
     """
 
     def __init__(
@@ -26,6 +29,9 @@ class GraphDefinition:
         relationship_types: list[type[RelationshipModel]],
         version: str | None = None,
     ) -> None:
+        # Use object.__setattr__ to bypass the freeze check during construction
+        object.__setattr__(self, "_initialized", False)
+
         self.name = name
         self.version = version
 
@@ -45,6 +51,18 @@ class GraphDefinition:
         errors = result.errors
         if errors:
             raise GraphValidationError(errors)
+
+        # Mark initialization complete; all future assignments will be blocked
+        object.__setattr__(self, "_initialized", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Prevent attribute modification after initialization."""
+        if object.__getattribute__(self, "_initialized"):
+            raise AttributeError(
+                f"GraphDefinition is frozen after initialization; "
+                f"cannot set attribute '{name}'"
+            )
+        object.__setattr__(self, name, value)
 
     # --- Lookup ---
 

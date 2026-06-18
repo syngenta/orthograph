@@ -17,62 +17,13 @@ from orthograph.cypher.exceptions import (
 from orthograph.cypher.generator import CypherGenerator
 from orthograph.graph_definition.exceptions import MissingUidFieldError
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_definition.models import (
-    Cardinality,
-    NodeModel,
-    RelationshipModel,
-)
+from orthograph.graph_definition.models import NodeModel, RelationshipModel
 from orthograph.query.base_models import Backend
 from orthograph.query.catalogue import QueryCatalogue
+from tests.fixtures.conftest import ActedIn, City, Directed, LivesIn, Movie, Person
 
 
 # --- Fixtures ---
-
-
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-
-    name: str
-    age: int
-    email: Optional[str] = None
-
-
-class Movie(NodeModel):
-    __label__ = "Movie"
-    __uid_field__ = "title"
-
-    title: str
-    year: int
-
-
-class City(NodeModel):
-    __label__ = "City"
-    __uid_field__ = "name"
-
-    name: str
-
-
-class ActedIn(RelationshipModel):
-    __label__ = "ACTED_IN"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-
-    role: str
-
-
-class Directed(RelationshipModel):
-    __label__ = "DIRECTED"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-
-
-class LivesIn(RelationshipModel):
-    __label__ = "LIVES_IN"
-    __source_label__ = "Person"
-    __target_label__ = "City"
-    __source_cardinality__ = Cardinality.ONE
-    __target_cardinality__ = Cardinality.ZERO_OR_MORE
 
 
 @pytest.fixture()

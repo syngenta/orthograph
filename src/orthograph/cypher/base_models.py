@@ -43,7 +43,7 @@ from graphglot.error import GraphGlotError
 from pydantic import BaseModel
 
 from orthograph.cypher.bindings import (
-    CypherQuery,
+    CypherQueryData,
     NoIdentifiers,
     check_placeholder_alignment,
     render_with_identifiers,
@@ -176,7 +176,7 @@ class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
         super().__init_subclass__(**kwargs)
         _validate_declarative_cypher(cls)
 
-    def build(self, params: P) -> CypherQuery:
+    def build(self, params: P) -> CypherQueryData:
         """Return ``(rendered_cypher, params.model_dump())``.
 
         Identifier values bound at construction are validated and spliced into
@@ -189,7 +189,7 @@ class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
                 "override build()"
             )
         rendered = render_with_identifiers(cast(str, cypher), self._identifiers)
-        return rendered, params.model_dump()
+        return CypherQueryData(rendered, params.model_dump())
 
     @abstractmethod
     def materialize(self, raw: Any) -> D:
@@ -231,7 +231,7 @@ class CypherWriteQuery(WriteQuery[P, R], Generic[P, R]):
         super().__init_subclass__(**kwargs)
         _validate_declarative_cypher(cls)
 
-    def build(self, params: P) -> CypherQuery:
+    def build(self, params: P) -> CypherQueryData:
         """Return ``(rendered_cypher, params.model_dump())``.
 
         Identifier values bound at construction are validated and spliced into
@@ -244,7 +244,7 @@ class CypherWriteQuery(WriteQuery[P, R], Generic[P, R]):
                 "override build()"
             )
         rendered = render_with_identifiers(cast(str, cypher), self._identifiers)
-        return rendered, params.model_dump()
+        return CypherQueryData(rendered, params.model_dump())
 
     @abstractmethod
     def interpret_result(self, raw: Any) -> R:

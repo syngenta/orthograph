@@ -1,7 +1,6 @@
 """Tests for orthograph.visualization.text."""
 
 from datetime import datetime
-from typing import Optional
 
 import pytest
 
@@ -10,7 +9,6 @@ from orthograph.diagnostics.result import ValidationIssue, ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
     Cardinality,
-    NodeModel,
     RelationshipModel,
 )
 from orthograph.graph_profile.models import (
@@ -21,41 +19,21 @@ from orthograph.graph_profile.models import (
     RelationshipTypeProfile,
 )
 from orthograph.visualization.text import model_to_text, profile_to_text, result_to_text
+from tests.fixtures.conftest import ActedIn, City, LivesIn, Movie, Person
 
 
 # --- Model definitions ---
 
 
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-    name: str
-    age: int
-    email: Optional[str] = None
+class CustomActedIn(RelationshipModel):
+    """Test-specific variant with different cardinalities than shared model."""
 
-
-class Movie(NodeModel):
-    __label__ = "Movie"
-    __uid_field__ = "title"
-    title: str
-    year: int
-
-
-class ActedIn(RelationshipModel):
     __label__ = "ACTED_IN"
     __source_label__ = "Person"
     __target_label__ = "Movie"
     __source_cardinality__ = Cardinality.ZERO_OR_MORE
     __target_cardinality__ = Cardinality.ONE_OR_MORE
     role: str
-
-
-class LivesIn(RelationshipModel):
-    __label__ = "LIVES_IN"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-    __source_cardinality__ = Cardinality.ONE
-    __directed__ = False
 
 
 # --- Fixtures ---
@@ -67,7 +45,7 @@ def graph_definition() -> GraphDefinition:
         name="Film",
         version="1.0",
         node_types=[Person, Movie],
-        relationship_types=[ActedIn],
+        relationship_types=[CustomActedIn],
     )
 
 
@@ -203,7 +181,7 @@ def test_model_to_text_cardinality(graph_definition: GraphDefinition):
 def test_model_to_text_relationship_direction():
     m = GraphDefinition(
         name="Test",
-        node_types=[Person, Movie],
+        node_types=[Person, Movie, City],
         relationship_types=[LivesIn],
     )
     text = model_to_text(m)
