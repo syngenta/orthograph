@@ -415,12 +415,23 @@ class InvalidEndpointRule:
 @dataclass
 class CardinalityViolationRule:
     """Emits ``CARDINALITY_VIOLATION`` (ERROR) when the observed minimum degree
-    falls outside the declared ``CardinalitySpec`` bounds."""
+    falls outside the declared ``CardinalitySpec`` bounds.
+
+    When the declared source cardinality is a
+    :class:`~orthograph.graph_definition.models.ConditionalCardinality`,
+    per-pair bounds cannot be verified from aggregate stats; emits
+    ``CARDINALITY_UNVERIFIABLE`` (INFO) instead and returns without the
+    aggregate check.  Per-pair enforcement is delivered by E41 / ADR-030.
+    """
 
     key: str = "rel.cardinality"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        from orthograph.graph_definition.models import RelationshipModel
+        from orthograph.graph_definition.models import (
+            ConditionalCardinality,
+            RelationshipModel,
+            representative_spec,
+        )
         from orthograph.graph_profile.models import RelationshipTypeProfile
 
         rt_class = context.left
@@ -435,11 +446,27 @@ class CardinalityViolationRule:
             return
 
         label: str = context.address
+
+        if isinstance(rt_class.__source_cardinality__, ConditionalCardinality):
+            yield ValidationIssue(
+                code="CARDINALITY_UNVERIFIABLE",
+                severity=Severity.INFO,
+                entity_type=EntityType.RELATIONSHIP,
+                entity_id=label,
+                message=(
+                    f"Relationship '{label}' has a conditional source cardinality; "
+                    "aggregate stats cannot confirm per-pair bounds "
+                    "(E41 / ADR-030 delivers per-pair stats)"
+                ),
+            )
+            return
+
         stats = rel_profile.cardinality_stats
-        src_card = rt_class.__source_cardinality__
+        # E40.3: collapse a possibly-conditional value to a concrete spec
+        # (E40.7 tracks per-endpoint resolution).
+        src_card = representative_spec(rt_class.source_cardinality())
 
         if not src_card.contains(stats.min_degree):
-            max_str = "N" if src_card.max is None else str(src_card.max)
             yield ValidationIssue(
                 code="CARDINALITY_VIOLATION",
                 severity=Severity.ERROR,
@@ -448,7 +475,7 @@ class CardinalityViolationRule:
                 message=(
                     f"Relationship '{label}' has min degree "
                     f"{stats.min_degree}, expected "
-                    f"{src_card.min}..{max_str}"
+                    f"{src_card.notation}"
                 ),
                 context={
                     "observed_min": stats.min_degree,

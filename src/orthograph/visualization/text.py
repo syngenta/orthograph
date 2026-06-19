@@ -2,14 +2,34 @@
 
 from orthograph.diagnostics.result import ValidationIssue, ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_definition.models import CardinalitySpec
+from orthograph.graph_definition.models import CardinalitySpec, ConditionalCardinality
 from orthograph.graph_profile.models import GraphProfile
 
 
-def _format_cardinality(spec: CardinalitySpec) -> str:
-    """Format a CardinalitySpec as a compact string (e.g., '0..1', '1..*')."""
-    max_str = "*" if spec.max is None else str(spec.max)
-    return f"{spec.min}..{max_str}"
+def _format_conditional(card: ConditionalCardinality) -> str:
+    """Format a ConditionalCardinality as a compact summary string.
+
+    Example: `{(source,target):1..2; (split,nothing):0..0; default:0..*}`.
+    """
+    rule_parts: list[str] = []
+    for rule in card.rules:
+        source_vals = dict(rule.source.conditions) if rule.source.conditions else "*"
+        target_vals = dict(rule.target.conditions) if rule.target.conditions else "*"
+        rule_parts.append(f"({source_vals},{target_vals}):{rule.spec.notation}")
+
+    all_parts = rule_parts + [f"default:{card.default.notation}"]
+    return "{" + "; ".join(all_parts) + "}"
+
+
+def _format_cardinality(spec: CardinalitySpec | ConditionalCardinality) -> str:
+    """Format a CardinalitySpec or ConditionalCardinality as a compact string.
+
+    For CardinalitySpec: '0..1', '1..*', etc.
+    For ConditionalCardinality: compact summary with rules and default.
+    """
+    if isinstance(spec, ConditionalCardinality):
+        return _format_conditional(spec)
+    return spec.notation
 
 
 def _render_node_types(graph_definition: GraphDefinition) -> list[str]:
@@ -34,8 +54,8 @@ def _render_relationship_types(graph_definition: GraphDefinition) -> list[str]:
         src = rt.__source_label__
         tgt = rt.__target_label__
         direction = "-->" if rt.__directed__ else "---"
-        src_card = _format_cardinality(rt.__source_cardinality__)
-        tgt_card = _format_cardinality(rt.__target_cardinality__)
+        src_card = _format_cardinality(rt.source_cardinality())
+        tgt_card = _format_cardinality(rt.target_cardinality())
         lines.append(f"  {rt.__label__}: {src} {direction} {tgt}")
         lines.append(f"    cardinality: [{src_card}] source, [{tgt_card}] target")
         for name, info in rt.get_property_specs().items():

@@ -41,8 +41,11 @@ from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
+    CardinalitySpec,
+    ConditionalCardinality,
+    ConditionalRule,
     NodeModel,
+    PropMatch,
     RelationshipModel,
 )
 from orthograph.graph_profile.models import (
@@ -257,7 +260,7 @@ class _ActedIn(RelationshipModel):
     __label__ = "ACTED_IN"
     __source_label__ = "Person"
     __target_label__ = "Movie"
-    __source_cardinality__ = Cardinality.ONE_OR_MORE
+    __source_cardinality__ = "1..*"
 
 
 _STD_MODEL = GraphDefinition(
@@ -960,3 +963,134 @@ def test_case_b_extension_via_injection():
         f"Expected exactly 2 issues total; got {len(result.issues)}: "
         + str([(i.code, i.entity_id) for i in result.issues])
     )
+
+
+# ===========================================================================
+# E40.7 — CardinalityViolationRule: conditional side → CARDINALITY_UNVERIFIABLE
+# ===========================================================================
+
+
+class _OperationNode(NodeModel):
+    """Discriminated operation node for conditional cardinality tests."""
+
+    __label__ = "Operation"
+    kind: str
+
+
+class _SampleNode(NodeModel):
+    """Sample node for conditional cardinality tests."""
+
+    __label__ = "Sample"
+    kind: str
+
+
+class _HasOutputConditional(RelationshipModel):
+    """HAS_OUTPUT with a conditional source cardinality (E40.7 fixture)."""
+
+    __label__ = "HAS_OUTPUT"
+    __source_label__ = "Operation"
+    __target_label__ = "Sample"
+    __source_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "subsampling"}),
+                target=PropMatch({"kind": "subsampling"}),
+                spec=CardinalitySpec(min=1, max=2),
+            ),
+        ),
+        default="0..*",
+    )
+
+
+_E407_MODEL = GraphDefinition(
+    name="e407_test",
+    node_types=[_OperationNode, _SampleNode],
+    relationship_types=[_HasOutputConditional],
+)
+
+_E407_PROFILE = GraphProfile(
+    source="e407_test",
+    node_type_profiles={
+        "Operation": NodeTypeProfile(label="Operation", count=1),
+        "Sample": NodeTypeProfile(label="Sample", count=2),
+    },
+    rel_type_profiles={
+        "HAS_OUTPUT": RelationshipTypeProfile(
+            rel_type="HAS_OUTPUT",
+            count=2,
+            source_labels={"Operation"},
+            target_labels={"Sample"},
+            cardinality_stats=CardinalityStats(
+                min_degree=1, max_degree=2, avg_degree=1.5, sample_size=1
+            ),
+        ),
+    },
+)
+
+
+def _e407_ctx(**kwargs: Any) -> RuleContext:
+    """Build a RuleContext with E40.7 model + profile."""
+    return RuleContext(
+        left_graph=DefinitionView(_E407_MODEL),
+        right_graph=ProfileView(_E407_PROFILE),
+        **kwargs,
+    )
+
+
+def test_cardinality_violation_rule_conditional_yields_unverifiable():
+    """Scope: CardinalityViolationRule yields exactly one CARDINALITY_UNVERIFIABLE
+    (INFO) when the declared source cardinality is ConditionalCardinality."""
+    rule = CardinalityViolationRule()
+    rtp = RelationshipTypeProfile(
+        rel_type="HAS_OUTPUT",
+        count=2,
+        source_labels={"Operation"},
+        target_labels={"Sample"},
+        cardinality_stats=CardinalityStats(
+            min_degree=1, max_degree=2, avg_degree=1.5, sample_size=1
+        ),
+    )
+    ctx = _e407_ctx(address="HAS_OUTPUT", left=_HasOutputConditional, right=rtp)
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "CARDINALITY_UNVERIFIABLE"
+    assert issues[0].severity == Severity.INFO
+    assert issues[0].entity_type == EntityType.RELATIONSHIP
+    assert issues[0].entity_id == "HAS_OUTPUT"
+
+
+def test_cardinality_violation_rule_conditional_no_cardinality_violation():
+    """Scope: CardinalityViolationRule never emits CARDINALITY_VIOLATION when
+    the declared cardinality is conditional — only CARDINALITY_UNVERIFIABLE."""
+    rule = CardinalityViolationRule()
+    rtp = RelationshipTypeProfile(
+        rel_type="HAS_OUTPUT",
+        count=0,
+        source_labels={"Operation"},
+        target_labels={"Sample"},
+        cardinality_stats=CardinalityStats(
+            min_degree=0, max_degree=0, avg_degree=0.0, sample_size=0
+        ),
+    )
+    ctx = _e407_ctx(address="HAS_OUTPUT", left=_HasOutputConditional, right=rtp)
+    codes = [i.code for i in rule(ctx)]
+    assert "CARDINALITY_VIOLATION" not in codes
+
+
+def test_cardinality_violation_rule_constant_unchanged_regression():
+    """Scope: CardinalityViolationRule still emits CARDINALITY_VIOLATION for a
+    constant-spec declared cardinality (regression guard for E40.7)."""
+    rule = CardinalityViolationRule()
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN",
+        count=2,
+        source_labels={"Person"},
+        target_labels={"Movie"},
+        cardinality_stats=CardinalityStats(
+            min_degree=0, max_degree=3, avg_degree=1.5, sample_size=2
+        ),
+    )
+    ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "CARDINALITY_VIOLATION"

@@ -7,9 +7,11 @@ import yaml
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
     CardinalitySpec,
+    ConditionalCardinality,
+    ConditionalRule,
     NodeModel,
+    PropMatch,
     RelationshipModel,
 )
 
@@ -180,14 +182,56 @@ def _resolve_yaml_type(prop_spec: Any) -> type:
 
 
 def _parse_cardinality(
-    spec: dict[str, Any] | None,
-) -> CardinalitySpec:
-    """Parse a cardinality spec from YAML."""
+    spec: "str | dict[str, Any] | None",
+) -> CardinalitySpec | ConditionalCardinality:
+    """Parse a cardinality spec from YAML.
+
+    Accepts:
+    - ``None`` → default ``0..*``
+    - a notation string (``"1..*"``) → parsed via :meth:`CardinalitySpec.parse`
+    - the legacy flat ``{min, max}`` dict form (backward-compat)
+    - the conditional form ``{conditional: {rules: [...], default: ...}}``
+    """
     if spec is None:
-        return Cardinality.ZERO_OR_MORE
+        return CardinalitySpec(min=0, max=None)
+    if isinstance(spec, str):
+        return CardinalitySpec.parse(spec)
+    if "conditional" in spec:
+        return _parse_conditional_cardinality(spec["conditional"])
     min_val = spec.get("min", 0)
     max_val = spec.get("max")  # None means unbounded
     return CardinalitySpec(min=min_val, max=max_val)
+
+
+def _parse_conditional_cardinality(
+    data: dict[str, Any],
+) -> ConditionalCardinality:
+    """Parse the ``conditional`` sub-map into a :class:`ConditionalCardinality`.
+
+    The ``default`` and per-rule bound leaves may be either a notation string
+    (``"1..*"``) or the legacy ``{min, max}`` dict (backward-compat read path).
+    """
+    default = _parse_cardinality(data["default"])
+    assert isinstance(default, CardinalitySpec)
+    rules: list[ConditionalRule] = []
+    for entry in data.get("rules", []):
+        when = entry.get("when", {})
+        source_conds = when.get("source", {}) or {}
+        target_conds = when.get("target", {}) or {}
+        # Rule bound: notation string takes precedence; fall back to min/max keys.
+        if "spec" in entry:
+            rule_spec = _parse_cardinality(entry["spec"])
+        else:
+            rule_spec = CardinalitySpec(min=entry.get("min", 0), max=entry.get("max"))
+        assert isinstance(rule_spec, CardinalitySpec)
+        rules.append(
+            ConditionalRule(
+                source=PropMatch(source_conds),
+                target=PropMatch(target_conds),
+                spec=rule_spec,
+            )
+        )
+    return ConditionalCardinality(rules=tuple(rules), default=default)
 
 
 def _serialize_model(graph_definition: GraphDefinition) -> dict[str, Any]:
@@ -245,16 +289,8 @@ def _serialize_rel_type(
     if not rt.__optional__:
         spec["optional"] = False
 
-    src_card = rt.__source_cardinality__
-    tgt_card = rt.__target_cardinality__
-    spec["source_cardinality"] = {
-        "min": src_card.min,
-        "max": src_card.max,
-    }
-    spec["target_cardinality"] = {
-        "min": tgt_card.min,
-        "max": tgt_card.max,
-    }
+    spec["source_cardinality"] = _serialize_cardinality(rt.source_cardinality())
+    spec["target_cardinality"] = _serialize_cardinality(rt.target_cardinality())
 
     props: dict[str, Any] = {}
     prop_specs = rt.get_property_specs()
@@ -268,6 +304,42 @@ def _serialize_rel_type(
         spec["properties"] = props
 
     return spec
+
+
+def _serialize_cardinality(
+    cardinality: CardinalitySpec | ConditionalCardinality,
+) -> "str | dict[str, Any]":
+    """Serialize a cardinality value to a YAML-compatible form.
+
+    Flat :class:`CardinalitySpec` emits a notation string (``"1..*"``).
+    :class:`ConditionalCardinality` emits the ``{conditional: ...}`` dict.
+    """
+    if isinstance(cardinality, ConditionalCardinality):
+        return {"conditional": _serialize_conditional_cardinality(cardinality)}
+    return cardinality.notation
+
+
+def _serialize_conditional_cardinality(
+    card: ConditionalCardinality,
+) -> dict[str, Any]:
+    """Serialize a ConditionalCardinality to the YAML conditional sub-map.
+
+    Per-rule bound leaves and the default are emitted as notation strings.
+    """
+    rules: list[dict[str, Any]] = []
+    for rule in card.rules:
+        entry: dict[str, Any] = {
+            "when": {
+                "source": dict(rule.source.conditions),
+                "target": dict(rule.target.conditions),
+            },
+            "spec": rule.spec.notation,
+        }
+        rules.append(entry)
+    return {
+        "rules": rules,
+        "default": card.default.notation,
+    }
 
 
 def _reverse_type_map(python_type: type) -> str:

@@ -4,6 +4,8 @@
 **Status:** Accepted
 **Category:** architecture
 
+> **Superseded in part by [ADR-031](031-unify-cardinality-on-uml-notation.md) (2026-06-19).** The cardinality-naming portions below (§ Optionality level 3; § Cardinality) are superseded: cardinality is now authored as UML notation (`"1..*"`), and the `Cardinality.*` named constants are removed. The rest of this ADR stands.
+
 ## Context
 
 Initial design session for Orthograph. Established the foundational concepts,

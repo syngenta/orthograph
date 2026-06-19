@@ -13,7 +13,6 @@ from orthograph.comparison.engine import compare_profile_to_definition
 from orthograph.cypher.generator import CypherGenerator
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
     NodeModel,
     RelationshipModel,
 )
@@ -69,35 +68,35 @@ class Reactant(RelationshipModel):
     __label__ = "REACTANT"
     __source_label__ = "Molecule"
     __target_label__ = "ChemicalEquation"
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
+    __source_cardinality__ = "0..*"
 
 
 class Product(RelationshipModel):
     __label__ = "PRODUCT"
     __source_label__ = "ChemicalEquation"
     __target_label__ = "Molecule"
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
+    __source_cardinality__ = "0..*"
 
 
 class HasTemplate(RelationshipModel):
     __label__ = "HAS_TEMPLATE"
     __source_label__ = "ChemicalEquation"
     __target_label__ = "Template"
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
+    __source_cardinality__ = "0..*"
 
 
 class HasStep(RelationshipModel):
     __label__ = "HAS_STEP"
     __source_label__ = "Reaction"
     __target_label__ = "Step"
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
+    __source_cardinality__ = "0..*"
 
 
 class HasCE(RelationshipModel):
     __label__ = "HAS_CE"
     __source_label__ = "Step"
     __target_label__ = "ChemicalEquation"
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
+    __source_cardinality__ = "0..*"
 
 
 @pytest.fixture()

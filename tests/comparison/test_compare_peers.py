@@ -17,7 +17,6 @@ from orthograph.comparison.engine import compare_definitions, compare_profiles
 from orthograph.diagnostics.classification import Severity
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
     NodeModel,
     RelationshipModel,
 )
@@ -459,14 +458,14 @@ class _LivesInStrict(RelationshipModel):
     __label__ = "LIVES_IN"
     __source_label__ = "Person"
     __target_label__ = "City"
-    __source_cardinality__ = Cardinality.ONE
+    __source_cardinality__ = "1..1"
 
 
 class _LivesInLoose(RelationshipModel):
     __label__ = "LIVES_IN"
     __source_label__ = "Person"
     __target_label__ = "City"
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
+    __source_cardinality__ = "0..*"
 
 
 _GD_STRICT = GraphDefinition(

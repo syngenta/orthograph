@@ -4,6 +4,8 @@
 **Status:** Accepted
 **Category:** core
 
+> **Superseded in part by [ADR-031](031-unify-cardinality-on-uml-notation.md) (2026-06-19).** The two-orthogonal-axes model (`__optional__` vs cardinality) below stands. The named-constant / `EXACTLY` authoring portions are superseded: cardinality is now authored as UML notation (`"0..*"`, `"1..*"`) and the `Cardinality.*` constants and `EXACTLY` are removed.
+
 ## Context
 
 User feedback questioned whether `ZERO_OR_MORE` (0..*) is semantically valid,

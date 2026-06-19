@@ -1,10 +1,4 @@
-"""
-Shared filmography domain model for tutorial notebooks.
-
-All notebooks that demonstrate the foundational concepts
-(01.01, 01.02, 01.03, 02.01, 03.01, 03.02, 03.03)
-import this module to avoid boilerplate duplication.
-"""
+"""Shared filmography domain model for tutorial notebooks."""
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (

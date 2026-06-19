@@ -9,7 +9,6 @@ import pytest
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
     NodeModel,
     RelationshipModel,
 )
@@ -39,7 +38,7 @@ class ActedInRel(RelationshipModel):
     __label__ = "ACTED_IN"
     __source_label__ = "Person"
     __target_label__ = "Movie"
-    __target_cardinality__ = Cardinality.ONE_OR_MORE
+    __target_cardinality__ = "1..*"
     role: str
 
 

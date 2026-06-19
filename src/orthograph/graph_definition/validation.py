@@ -1,7 +1,8 @@
 """GraphValidator -- validates graph data against a GraphDefinition."""
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
@@ -9,7 +10,13 @@ from pydantic import ValidationError as PydanticValidationError
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue, ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_definition.models import NodeModel, RelationshipModel
+from orthograph.graph_definition.models import (
+    CardinalitySpec,
+    ConditionalCardinality,
+    NodeModel,
+    RelationshipModel,
+    representative_spec,
+)
 
 
 # Type alias for the (label, src_uid, tgt_uid, props) tuple used internally
@@ -17,6 +24,29 @@ _RelRecord = tuple[str, str, str, dict[str, Any]]
 
 # Degree counters: maps (uid, rel_label) → count
 _DegreeCounts = dict[tuple[str, str], int]
+
+# A partition value: the absolute (source-label-node, target-label-node)
+# discriminator key/value pairs, each side sorted by key so equal partitions
+# share one identity (ADR-032 §1, §1a — absolute convention, both endpoints).
+_EndpointProps = tuple[tuple[str, object], ...]
+_Partition = tuple[_EndpointProps, _EndpointProps]
+
+# Partitioned counts: maps (uid, rel_label) → {partition → count}. Populated
+# only for relationship sides whose cardinality is ConditionalCardinality.
+_PartitionCounts = dict[tuple[str, str], dict[_Partition, int]]
+
+
+@dataclass(frozen=True)
+class _IndexedNode:
+    """A validated node's identity and properties, indexed by uid.
+
+    Internal currency for referential-integrity and conditional-cardinality
+    checks; never crosses the public API boundary.
+    """
+
+    label: str
+    uid: str
+    props: Mapping[str, object] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -140,14 +170,17 @@ def _cardinality_violation_issue(
     count: int,
 ) -> ValidationIssue | None:
     """Return a CARDINALITY_VIOLATION issue if ``count`` is out of range, else None."""
-    cardinality = (
-        rel_type.__source_cardinality__
+    raw_cardinality = (
+        rel_type.source_cardinality()
         if direction != "incoming"
-        else rel_type.__target_cardinality__
+        else rel_type.target_cardinality()
     )
+    # E40.3/E40.5: conditional sides are resolved per pair elsewhere; this
+    # constant path collapses any residual conditional (e.g. an undirected
+    # side, not partitioned) to its representative spec rather than crashing.
+    cardinality = representative_spec(raw_cardinality)
     if cardinality.contains(count):
         return None
-    max_str = "N" if cardinality.max is None else str(cardinality.max)
     return ValidationIssue(
         code="CARDINALITY_VIOLATION",
         severity=Severity.ERROR,
@@ -156,7 +189,7 @@ def _cardinality_violation_issue(
         message=(
             f"Node '{uid}' ({node_label}) has {count} {direction} "
             f"{rel_type.__label__} relationships, "
-            f"expected {cardinality.min}..{max_str}"
+            f"expected {cardinality.notation}"
         ),
         context={
             "rel_label": rel_type.__label__,
@@ -166,6 +199,297 @@ def _cardinality_violation_issue(
             "actual": count,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Conditional-cardinality checks (E40.5)
+# ---------------------------------------------------------------------------
+
+
+def _referenced_source_keys(card: ConditionalCardinality) -> frozenset[str]:
+    """Keys any rule discriminates on for the edge's source-label node (absolute)."""
+    keys: set[str] = set()
+    for rule in card.rules:
+        keys.update(rule.source.conditions)
+    return frozenset(keys)
+
+
+def _referenced_target_keys(card: ConditionalCardinality) -> frozenset[str]:
+    """Keys any rule discriminates on for the edge's target-label node (absolute)."""
+    keys: set[str] = set()
+    for rule in card.rules:
+        keys.update(rule.target.conditions)
+    return frozenset(keys)
+
+
+def _select(props: Mapping[str, object], keys: frozenset[str]) -> _EndpointProps:
+    """Project *props* onto *keys*, sorted, as a canonical partition component."""
+    return tuple(sorted((k, props.get(k)) for k in keys))
+
+
+def _partition_endpoints(
+    partition: _Partition,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Split a partition into (source-label props, target-label props) dicts."""
+    src, tgt = partition
+    return dict(src), dict(tgt)
+
+
+def _counted_props(partition: _Partition, side: str) -> dict[str, object]:
+    """Return the counted node's discriminator props for *side* (absolute convention).
+
+    The counted node is the source-label node on the ``"source"`` side and the
+    target-label node on the ``"target"`` side.
+    """
+    src_props, tgt_props = _partition_endpoints(partition)
+    return src_props if side == "source" else tgt_props
+
+
+def _node_matches_any_rule(
+    card: ConditionalCardinality, side: str, self_props: Mapping[str, object]
+) -> bool:
+    """Return True when some rule's counted-endpoint predicate matches this node.
+
+    The counted endpoint is ``rule.source`` on the source side and ``rule.target``
+    on the target side (absolute convention, ADR-032 §1a). A wildcard there matches
+    every node, so its presence means the node is never "unmatched".
+    """
+    for rule in card.rules:
+        own = rule.source if side == "source" else rule.target
+        if own.matches(self_props):
+            return True
+    return False
+
+
+def _declared_partitions(
+    card: ConditionalCardinality, side: str, self_props: Mapping[str, object]
+) -> set[_Partition]:
+    """Return partitions a rule pins for this node so a missing one is checked.
+
+    A rule contributes a partition only when its counted-endpoint predicate
+    matches the node *and* the opposite-endpoint predicate fixes a value for every
+    key that endpoint discriminates on (a fully-determined partition). The pinned
+    partition carries both endpoints' selected props (absolute convention): the
+    counted node supplies its own matched values, the opposite endpoint the rule's.
+    """
+    src_keys = _referenced_source_keys(card)
+    tgt_keys = _referenced_target_keys(card)
+    self_keys = src_keys if side == "source" else tgt_keys
+    other_keys = tgt_keys if side == "source" else src_keys
+
+    partitions: set[_Partition] = set()
+    for rule in card.rules:
+        own = rule.source if side == "source" else rule.target
+        other = rule.target if side == "source" else rule.source
+        if not own.matches(self_props):
+            continue
+        if not other_keys <= other.conditions.keys():
+            continue
+        self_sel = _select(self_props, self_keys)
+        other_sel = tuple(sorted((k, other.conditions[k]) for k in other_keys))
+        partition = (self_sel, other_sel) if side == "source" else (other_sel, self_sel)
+        partitions.add(partition)
+    return partitions
+
+
+def _discriminator_value(
+    props: Mapping[str, object], keys: frozenset[str]
+) -> object | None:
+    """Return the single discriminator value for *keys* read from *props*.
+
+    Conditional cardinality rules discriminate on one property per endpoint in
+    practice; the reported ``*_kind`` is that property's value (or ``None`` when
+    the endpoint has no discriminator or the value is absent).
+    """
+    if len(keys) == 1:
+        return props.get(next(iter(keys)))
+    return None
+
+
+def _conditional_violation_issue(
+    uid: str,
+    node_label: str,
+    rel_label: str,
+    side: str,
+    partition: _Partition,
+    spec: CardinalitySpec,
+    count: int,
+    card: ConditionalCardinality,
+) -> ValidationIssue:
+    """Build a CARDINALITY_VIOLATION naming the source/target discriminator values."""
+    src_props, tgt_props = _partition_endpoints(partition)
+    source_kind = _discriminator_value(src_props, _referenced_source_keys(card))
+    target_kind = _discriminator_value(tgt_props, _referenced_target_keys(card))
+    direction = "outgoing" if side == "source" else "incoming"
+    max_str = "*" if spec.max is None else str(spec.max)
+    return ValidationIssue(
+        code="CARDINALITY_VIOLATION",
+        severity=Severity.ERROR,
+        entity_type=EntityType.NODE,
+        entity_id=f"{node_label}:{uid}",
+        message=(
+            f"Node '{uid}' ({node_label}) has {count} {direction} {rel_label} "
+            f"relationships for pair (source={source_kind!r}, "
+            f"target={target_kind!r}), expected {spec.min}..{max_str}"
+        ),
+        context={
+            "rel_label": rel_label,
+            "direction": direction,
+            "source_kind": source_kind,
+            "target_kind": target_kind,
+            "expected_min": spec.min,
+            "expected_max": spec.max,
+            "actual": count,
+        },
+    )
+
+
+def _counted_keys(card: ConditionalCardinality, side: str) -> frozenset[str]:
+    """Keys the counted endpoint discriminates on for *side* (absolute convention)."""
+    return (
+        _referenced_source_keys(card)
+        if side == "source"
+        else _referenced_target_keys(card)
+    )
+
+
+def _unmatched_kind_issue(
+    uid: str,
+    node_label: str,
+    rel_label: str,
+    side: str,
+    self_props: Mapping[str, object],
+    card: ConditionalCardinality,
+) -> ValidationIssue:
+    """Build the CARDINALITY_UNMATCHED_KIND INFO for an unmodelled discriminator."""
+    val = _discriminator_value(self_props, _counted_keys(card, side))
+    role = "source" if side == "source" else "target"
+    return ValidationIssue(
+        code="CARDINALITY_UNMATCHED_KIND",
+        severity=Severity.INFO,
+        entity_type=EntityType.NODE,
+        entity_id=f"{node_label}:{uid}",
+        message=(
+            f"Node '{uid}' ({node_label}) {val!r} matches no {rel_label} "
+            f"{role} cardinality rule; the default bound applies."
+        ),
+        context={
+            "rel_label": rel_label,
+            "side": side,
+            f"{role}_kind": val,
+        },
+    )
+
+
+def _default_floor_issue(
+    uid: str,
+    node_label: str,
+    rel_label: str,
+    side: str,
+    self_props: Mapping[str, object],
+    spec: CardinalitySpec,
+    total: int,
+    card: ConditionalCardinality,
+) -> ValidationIssue | None:
+    """Return a CARDINALITY_VIOLATION when an unmatched node's total degree on
+    this side breaks the ``default`` bound, else ``None``.
+
+    A node whose discriminator matches no rule is governed solely by ``default``
+    (ADR-029 §7). Enforcing ``default`` against the node's *total* side degree
+    keeps a ``min > 0`` default from silently passing a node with no edges
+    (ADR-029 §5 anti-silent-pass). A permissive default (``min == 0``) admits a
+    zero total, so this never fires for the common ``ZERO_OR_MORE`` default.
+    """
+    if spec.contains(total):
+        return None
+    val = _discriminator_value(self_props, _counted_keys(card, side))
+    role = "source" if side == "source" else "target"
+    direction = "outgoing" if side == "source" else "incoming"
+    max_str = "*" if spec.max is None else str(spec.max)
+    return ValidationIssue(
+        code="CARDINALITY_VIOLATION",
+        severity=Severity.ERROR,
+        entity_type=EntityType.NODE,
+        entity_id=f"{node_label}:{uid}",
+        message=(
+            f"Node '{uid}' ({node_label}) {val!r} matches no {rel_label} "
+            f"{role} cardinality rule and has {total} {direction} relationships, "
+            f"violating the default bound {spec.min}..{max_str}"
+        ),
+        context={
+            "rel_label": rel_label,
+            "direction": direction,
+            f"{role}_kind": val,
+            "default": True,
+            "expected_min": spec.min,
+            "expected_max": spec.max,
+            "actual": total,
+        },
+    )
+
+
+def _check_conditional_side(
+    uid: str,
+    node_label: str,
+    self_props: Mapping[str, object],
+    rel_type: type[RelationshipModel],
+    side: str,
+    card: ConditionalCardinality,
+    observed: dict[_Partition, int],
+    total: int,
+) -> list[ValidationIssue]:
+    """Check one conditional cardinality side of a node, partition by partition.
+
+    Each partition's bound comes from ``card.resolve_for_pair(self, other)``; a
+    declared-but-unobserved partition counts as 0 so an unmet ``min`` is caught.
+    A node whose discriminator matches no rule is governed by ``default``: its
+    total side degree is checked against the default (so a ``min > 0`` default is
+    not silently skipped) and a CARDINALITY_UNMATCHED_KIND INFO is emitted.
+    """
+    issues: list[ValidationIssue] = []
+    partitions = set(observed) | _declared_partitions(card, side, self_props)
+
+    for partition in partitions:
+        # Absolute convention (ADR-032 §1a): resolve always takes
+        # (source-label-node props, target-label-node props); rule.source is
+        # matched against arg 1, rule.target against arg 2, regardless of side.
+        src_props, tgt_props = _partition_endpoints(partition)
+        spec = card.resolve_for_pair(src_props, tgt_props)
+        count = observed.get(partition, 0)
+        if not spec.contains(count):
+            issues.append(
+                _conditional_violation_issue(
+                    uid,
+                    node_label,
+                    rel_type.__label__,
+                    side,
+                    partition,
+                    spec,
+                    count,
+                    card,
+                )
+            )
+
+    if not _node_matches_any_rule(card, side, self_props):
+        floor = _default_floor_issue(
+            uid,
+            node_label,
+            rel_type.__label__,
+            side,
+            self_props,
+            card.default,
+            total,
+            card,
+        )
+        if floor is not None:
+            issues.append(floor)
+        issues.append(
+            _unmatched_kind_issue(
+                uid, node_label, rel_type.__label__, side, self_props, card
+            )
+        )
+
+    return issues
 
 
 def _collect_present_labels(
@@ -220,6 +544,91 @@ def _extra_properties_issue(
     )
 
 
+# ---------------------------------------------------------------------------
+# Conditional-cardinality partitioning helpers
+# ---------------------------------------------------------------------------
+
+
+def _absolute_partition(
+    card: ConditionalCardinality,
+    src_node: "_IndexedNode | None",
+    tgt_node: "_IndexedNode | None",
+) -> _Partition:
+    """Build the absolute (source-label props, target-label props) partition key.
+
+    Selects, from each endpoint, the keys any rule discriminates on for that
+    endpoint (ADR-032 §1a — absolute convention). A dangling/absent endpoint
+    reads its selected keys as ``None``.
+    """
+    src_props = src_node.props if src_node is not None else {}
+    tgt_props = tgt_node.props if tgt_node is not None else {}
+    return (
+        _select(src_props, _referenced_source_keys(card)),
+        _select(tgt_props, _referenced_target_keys(card)),
+    )
+
+
+def _accumulate_partition(
+    partitioned: _PartitionCounts,
+    uid: str,
+    rel_label: str,
+    card: ConditionalCardinality,
+    src_node: "_IndexedNode | None",
+    tgt_node: "_IndexedNode | None",
+) -> None:
+    """Increment the partition count for one edge of a conditional side.
+
+    The partition is the absolute (source-label, target-label) discriminator key
+    (ADR-032 §1). The count is keyed by *uid* (the counted node for this side).
+    """
+    partition = _absolute_partition(card, src_node, tgt_node)
+    partitioned[(uid, rel_label)][partition] += 1
+
+
+def _partition_counts(
+    rel_records: list[_RelRecord],
+    graph_definition: GraphDefinition,
+    node_index: dict[str, _IndexedNode],
+) -> _PartitionCounts:
+    """Count directed-edge degrees partitioned by the opposite endpoint's kind.
+
+    Only conditional sides are partitioned; constant sides keep the unpartitioned
+    total-count path. The source side keys on the source uid (partitioned by the
+    target's properties) and the target side keys on the target uid (partitioned
+    by the source's properties).
+    """
+    partitioned: _PartitionCounts = defaultdict(lambda: defaultdict(int))
+
+    for label, src_uid, tgt_uid, _ in rel_records:
+        rel_type = graph_definition.get_relationship_type(label)
+        if rel_type is None or not rel_type.__directed__:
+            continue
+        src_node = node_index.get(src_uid)
+        tgt_node = node_index.get(tgt_uid)
+        src_card = rel_type.__source_cardinality__
+        if isinstance(src_card, ConditionalCardinality):
+            _accumulate_partition(
+                partitioned,
+                src_uid,
+                label,
+                src_card,
+                src_node,
+                tgt_node,
+            )
+        tgt_card = rel_type.__target_cardinality__
+        if isinstance(tgt_card, ConditionalCardinality):
+            _accumulate_partition(
+                partitioned,
+                tgt_uid,
+                label,
+                tgt_card,
+                src_node,
+                tgt_node,
+            )
+
+    return partitioned
+
+
 def _count_rel_degrees(
     rel_records: list[_RelRecord],
     graph_definition: GraphDefinition,
@@ -249,15 +658,30 @@ def _check_node_cardinality(
     uid: str,
     node_label: str,
     node_type: Any,
+    self_props: Mapping[str, object],
     graph_definition: GraphDefinition,
     outgoing: _DegreeCounts,
     incoming: _DegreeCounts,
     undirected: _DegreeCounts,
+    partitioned: _PartitionCounts,
 ) -> list[ValidationIssue]:
-    """Return cardinality violations for a single node across all its rel types."""
+    """Return cardinality violations for a single node across all its rel types.
+
+    A directed side whose cardinality is :class:`ConditionalCardinality` takes
+    the partitioned per-pair path; every other side keeps the unchanged
+    single-count path.
+    """
     issues: list[ValidationIssue] = []
 
     for rel_type in graph_definition.get_outgoing_relationship_types(node_type):
+        card = rel_type.__source_cardinality__
+        if rel_type.__directed__ and isinstance(card, ConditionalCardinality):
+            observed = partitioned.get((uid, rel_type.__label__), {})
+            total = outgoing.get((uid, rel_type.__label__), 0)
+            issues += _check_conditional_side(
+                uid, node_label, self_props, rel_type, "source", card, observed, total
+            )
+            continue
         direction = "total" if not rel_type.__directed__ else "outgoing"
         counts = undirected if not rel_type.__directed__ else outgoing
         count = counts.get((uid, rel_type.__label__), 0)
@@ -269,6 +693,14 @@ def _check_node_cardinality(
 
     for rel_type in graph_definition.get_incoming_relationship_types(node_type):
         if not rel_type.__directed__:
+            continue
+        card = rel_type.__target_cardinality__
+        if isinstance(card, ConditionalCardinality):
+            observed = partitioned.get((uid, rel_type.__label__), {})
+            total = incoming.get((uid, rel_type.__label__), 0)
+            issues += _check_conditional_side(
+                uid, node_label, self_props, rel_type, "target", card, observed, total
+            )
             continue
         count = incoming.get((uid, rel_type.__label__), 0)
         issue = _cardinality_violation_issue(
@@ -340,13 +772,14 @@ class GraphValidator:
 
     def _validate_and_index_nodes(
         self, nodes: Sequence[dict[str, Any] | NodeModel]
-    ) -> tuple[ValidationResult, dict[str, tuple[str, str]]]:
-        """Validate nodes and build uid->(label, uid) index.
+    ) -> tuple[ValidationResult, dict[str, _IndexedNode]]:
+        """Validate nodes and build a uid -> _IndexedNode index.
 
-        Returns (result, {uid: (label, uid)}) for referential checks.
+        Returns (result, {uid: _IndexedNode}) for referential and
+        conditional-cardinality checks (the latter needs endpoint properties).
         """
         result = ValidationResult()
-        node_index: dict[str, tuple[str, str]] = {}
+        node_index: dict[str, _IndexedNode] = {}
 
         for i, node in enumerate(nodes):
             label, props = _unpack_node(node)
@@ -392,7 +825,9 @@ class GraphValidator:
             uid_field = node_type.__uid_field__
             if uid_field and uid_field in props:
                 uid_val = str(props[uid_field])
-                node_index[uid_val] = (label, uid_val)
+                node_index[uid_val] = _IndexedNode(
+                    label=label, uid=uid_val, props=dict(props)
+                )
 
         return result, node_index
 
@@ -473,7 +908,7 @@ class GraphValidator:
     def _check_referential_integrity(
         self,
         rel_records: list[tuple[str, str, str, dict[str, Any]]],
-        node_index: dict[str, tuple[str, str]],
+        node_index: dict[str, _IndexedNode],
     ) -> ValidationResult:
         result = ValidationResult()
 
@@ -499,8 +934,8 @@ class GraphValidator:
                     )
 
             if src_uid in node_index and tgt_uid in node_index:
-                src_actual = node_index[src_uid][0]
-                tgt_actual = node_index[tgt_uid][0]
+                src_actual = node_index[src_uid].label
+                tgt_actual = node_index[tgt_uid].label
                 for issue in _check_endpoint_types(
                     label, src_uid, tgt_uid, src_actual, tgt_actual, rel_type
                 ):
@@ -512,26 +947,29 @@ class GraphValidator:
 
     def _check_cardinality(
         self,
-        node_index: dict[str, tuple[str, str]],
+        node_index: dict[str, _IndexedNode],
         rel_records: list[tuple[str, str, str, dict[str, Any]]],
     ) -> ValidationResult:
         result = ValidationResult()
         outgoing, incoming, undirected = _count_rel_degrees(
             rel_records, self.graph_definition
         )
+        partitioned = _partition_counts(rel_records, self.graph_definition, node_index)
 
-        for uid, (node_label, _) in node_index.items():
-            node_type = self.graph_definition.get_node_type(node_label)
+        for uid, indexed in node_index.items():
+            node_type = self.graph_definition.get_node_type(indexed.label)
             if node_type is None:
                 continue
             for issue in _check_node_cardinality(
                 uid,
-                node_label,
+                indexed.label,
                 node_type,
+                indexed.props,
                 self.graph_definition,
                 outgoing,
                 incoming,
                 undirected,
+                partitioned,
             ):
                 result.add(issue)
 

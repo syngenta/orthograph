@@ -1,66 +1,30 @@
 """Tests for orthograph.graph_definition.graph_definition -- GraphDefinition."""
 
-from typing import Optional
+from typing import ClassVar
 
 import pytest
 
 from orthograph.diagnostics.result import GraphValidationError
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
+    CardinalitySpec,
+    ConditionalCardinality,
+    ConditionalRule,
     NodeModel,
+    PropMatch,
     RelationshipModel,
 )
-
-
-# --- Shared node/relationship fixtures ---
-
-
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-
-    name: str
-    age: int
-    email: Optional[str] = None
-
-
-class Movie(NodeModel):
-    __label__ = "Movie"
-    __uid_field__ = "title"
-
-    title: str
-    year: int
-
-
-class City(NodeModel):
-    __label__ = "City"
-
-    name: str
-
-
-class ActedIn(RelationshipModel):
-    __label__ = "ACTED_IN"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
-    __target_cardinality__ = Cardinality.ZERO_OR_MORE
-
-    role: str
-
-
-class Directed(RelationshipModel):
-    __label__ = "DIRECTED"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-
-
-class LivesIn(RelationshipModel):
-    __label__ = "LIVES_IN"
-    __source_label__ = "Person"
-    __target_label__ = "City"
-    __source_cardinality__ = Cardinality.ONE
-    __target_cardinality__ = Cardinality.ZERO_OR_MORE
+from tests.graph_definition.conftest import (  # noqa: F401 — fixtures auto-used by pytest
+    ActedIn,
+    City,
+    Collaborates,
+    Company,
+    Directed,
+    FriendOf,
+    LivesIn,
+    Movie,
+    Person,
+)
 
 
 # --- GraphDefinition creation tests ---
@@ -289,26 +253,6 @@ def test_graph_data_model_relationship_label_enum():
 # --- Undirected relationship tests ---
 
 
-class Company(NodeModel):
-    __label__ = "Company"
-    __uid_field__ = "name"
-    name: str
-
-
-class FriendOf(RelationshipModel):
-    __label__ = "FRIEND_OF"
-    __source_label__ = "Person"
-    __target_label__ = "Person"
-    __directed__ = False
-
-
-class Collaborates(RelationshipModel):
-    __label__ = "COLLABORATES"
-    __source_label__ = "Person"
-    __target_label__ = "Company"
-    __directed__ = False
-
-
 def test_undirected_same_type_outgoing_includes_both_directions():
     """Undirected self-referencing rel appears in outgoing for the node type."""
     graph_definition = GraphDefinition(
@@ -486,3 +430,297 @@ def test_graph_definition_attributes_accessible_before_freeze():
     assert graph_definition.version == "1.0.0"
     assert len(graph_definition.node_types) == 2
     assert len(graph_definition.relationship_types) == 2
+
+
+# ---------------------------------------------------------------------------
+# E40.4 — Conditional cardinality definition-time checks
+# ---------------------------------------------------------------------------
+
+# Shared node types for cardinality check tests
+# Using the movie domain: Director directs Movie(s).
+# Both nodes carry a required ``kind`` property used as the cardinality
+# discriminator (e.g. director kind: "feature"/"documentary"/"short";
+# movie kind: "blockbuster"/"indie"/"none").
+
+
+class Director(NodeModel):
+    """Scope: Director node with required 'kind' property (style of directing)."""
+
+    __label__ = "Director"
+    kind: str
+
+
+class Film(NodeModel):
+    """Scope: Film node with required 'kind' property (production type)."""
+
+    __label__ = "Film"
+    kind: str
+
+
+class FilmOptKind(NodeModel):
+    """Scope: Film-like node with optional 'kind' (discriminator tests)."""
+
+    __label__ = "FilmOptKind"
+    kind: str | None = None
+
+
+def _adr029_conditional() -> ConditionalCardinality:
+    """Build the ADR-029 deciding-scenario ConditionalCardinality for DIRECTED.
+
+    Rules mirror the cardinality-spec deciding table:
+    - (documentary, documentary) → 1..2  (co-directed documentaries)
+    - (short, none) → ZERO               (short-format directors skip this film kind)
+    - (feature, none) → ZERO             (feature directors skip this film kind)
+    """
+    return ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "documentary"}),
+                target=PropMatch({"kind": "documentary"}),
+                spec=CardinalitySpec(min=1, max=2),
+            ),
+            ConditionalRule(
+                source=PropMatch({"kind": "short"}),
+                target=PropMatch({"kind": "none"}),
+                spec="0..0",
+            ),
+            ConditionalRule(
+                source=PropMatch({"kind": "feature"}),
+                target=PropMatch({"kind": "none"}),
+                spec="0..0",
+            ),
+        ),
+        default="0..*",
+    )
+
+
+def test_conditional_cardinality_valid_schema_constructs_cleanly():
+    """Scope: A valid ConditionalCardinality on DIRECTED constructs without errors."""
+
+    class Directed(RelationshipModel):
+        __label__ = "DIRECTED"
+        __source_label__ = "Director"
+        __target_label__ = "Film"
+        __source_cardinality__: ClassVar[CardinalitySpec | ConditionalCardinality] = (
+            _adr029_conditional()
+        )
+
+    # Should not raise
+    gd = GraphDefinition(
+        name="Filmography",
+        node_types=[Director, Film],
+        relationship_types=[Directed],
+    )
+    assert gd is not None
+
+
+def test_conditional_cardinality_unknown_discriminator_key_rejected():
+    """Scope: Unknown discriminator key raises CARDINALITY_UNKNOWN_DISCRIMINATOR."""
+
+    class Directed(RelationshipModel):
+        __label__ = "DIRECTED"
+        __source_label__ = "Director"
+        __target_label__ = "Film"
+        __source_cardinality__: ClassVar[CardinalitySpec | ConditionalCardinality] = (
+            ConditionalCardinality(
+                rules=(
+                    ConditionalRule(
+                        source=PropMatch({"nonexistent_prop": "short"}),
+                        target=PropMatch({"kind": "none"}),
+                        spec="0..0",
+                    ),
+                ),
+                default="0..*",
+            )
+        )
+
+    with pytest.raises(GraphValidationError) as exc_info:
+        GraphDefinition(
+            name="Bad",
+            node_types=[Director, Film],
+            relationship_types=[Directed],
+        )
+    codes = [i.code for i in exc_info.value.issues]
+    assert "CARDINALITY_UNKNOWN_DISCRIMINATOR" in codes
+
+
+def test_conditional_cardinality_optional_discriminator_rejected():
+    """Scope: Optional discriminator raises CARDINALITY_DISCRIMINATOR_OPTIONAL."""
+
+    class Directed(RelationshipModel):
+        __label__ = "DIRECTED"
+        __source_label__ = "Director"
+        __target_label__ = "FilmOptKind"
+        __target_cardinality__: ClassVar[CardinalitySpec | ConditionalCardinality] = (
+            ConditionalCardinality(
+                rules=(
+                    ConditionalRule(
+                        source=PropMatch({"kind": "documentary"}),
+                        target=PropMatch({"kind": "documentary"}),
+                        spec=CardinalitySpec(min=1, max=2),
+                    ),
+                ),
+                default="0..*",
+            )
+        )
+
+    with pytest.raises(GraphValidationError) as exc_info:
+        GraphDefinition(
+            name="Bad",
+            node_types=[Director, FilmOptKind],
+            relationship_types=[Directed],
+        )
+    issues = exc_info.value.issues
+    codes = [i.code for i in issues]
+    assert "CARDINALITY_DISCRIMINATOR_OPTIONAL" in codes
+    msgs = " ".join(i.message for i in issues)
+    assert "kind" in msgs
+
+
+def test_conditional_cardinality_duplicate_rule_key_rejected():
+    """Scope: Identical (source, target) predicates raise CARDINALITY_DUPLICATE_RULE."""
+
+    # Duplicates are expressible by explicit construction as two ConditionalRule
+    # entries sharing identical source/target predicates.
+    dup_card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "short"}),
+                target=PropMatch({"kind": "none"}),
+                spec="0..0",
+            ),
+            ConditionalRule(
+                source=PropMatch({"kind": "short"}),
+                target=PropMatch({"kind": "none"}),
+                spec=CardinalitySpec(min=1, max=1),
+            ),
+        ),
+        default="0..*",
+    )
+
+    class DirectedDup(RelationshipModel):
+        __label__ = "DIRECTED_DUP"
+        __source_label__ = "Director"
+        __target_label__ = "Film"
+        __source_cardinality__: ClassVar[CardinalitySpec | ConditionalCardinality] = (
+            dup_card
+        )
+
+    with pytest.raises(GraphValidationError) as exc_info:
+        GraphDefinition(
+            name="Bad",
+            node_types=[Director, Film],
+            relationship_types=[DirectedDup],
+        )
+    codes = [i.code for i in exc_info.value.issues]
+    assert "CARDINALITY_DUPLICATE_RULE" in codes
+
+
+def test_conditional_cardinality_ambiguous_overlap_rejected():
+    """Scope: Equal-specificity co-matchable rules raise CARDINALITY_AMBIGUOUS_RULES."""
+    from orthograph.graph_definition.models import ConditionalRule, PropMatch
+
+    # ("short","*") spec=1 + ("*","none") spec=1 → equal, can co-match
+    ambiguous_card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "short"}),
+                target=PropMatch(),
+                spec="0..0",
+            ),
+            ConditionalRule(
+                source=PropMatch(),
+                target=PropMatch({"kind": "none"}),
+                spec=CardinalitySpec(min=1, max=1),
+            ),
+        ),
+        default="0..*",
+    )
+
+    class DirectedAmb(RelationshipModel):
+        __label__ = "DIRECTED_AMB"
+        __source_label__ = "Director"
+        __target_label__ = "Film"
+        __source_cardinality__: ClassVar[CardinalitySpec | ConditionalCardinality] = (
+            ambiguous_card
+        )
+
+    with pytest.raises(GraphValidationError) as exc_info:
+        GraphDefinition(
+            name="Bad",
+            node_types=[Director, Film],
+            relationship_types=[DirectedAmb],
+        )
+    codes = [i.code for i in exc_info.value.issues]
+    assert "CARDINALITY_AMBIGUOUS_RULES" in codes
+
+
+def test_conditional_cardinality_narrow_overrides_broad_allowed():
+    """Scope: ('short','*') + ('short','none') allowed — narrow-overrides-broad."""
+    from orthograph.graph_definition.models import ConditionalRule, PropMatch
+
+    # ("short","*") spec=1, ("short","none") spec=2 → different scores → no ambiguity
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "short"}),
+                target=PropMatch(),
+                spec="0..0",
+            ),
+            ConditionalRule(
+                source=PropMatch({"kind": "short"}),
+                target=PropMatch({"kind": "none"}),
+                spec=CardinalitySpec(min=1, max=1),
+            ),
+        ),
+        default="0..*",
+    )
+
+    class DirectedNarrow(RelationshipModel):
+        __label__ = "DIRECTED_NARROW"
+        __source_label__ = "Director"
+        __target_label__ = "Film"
+        __source_cardinality__: ClassVar[CardinalitySpec | ConditionalCardinality] = (
+            card
+        )
+
+    # Must NOT raise
+    gd = GraphDefinition(
+        name="OK",
+        node_types=[Director, Film],
+        relationship_types=[DirectedNarrow],
+    )
+    assert gd is not None
+
+
+def test_conditional_cardinality_catchall_rule_rejected():
+    """Scope: A (*, *) catch-all rule raises CARDINALITY_CATCHALL_RULE."""
+    from orthograph.graph_definition.models import ConditionalRule, PropMatch
+
+    catchall_card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch(),
+                target=PropMatch(),
+                spec="0..0",
+            ),
+        ),
+        default="0..*",
+    )
+
+    class DirectedCatchall(RelationshipModel):
+        __label__ = "DIRECTED_CATCHALL"
+        __source_label__ = "Director"
+        __target_label__ = "Film"
+        __source_cardinality__: ClassVar[CardinalitySpec | ConditionalCardinality] = (
+            catchall_card
+        )
+
+    with pytest.raises(GraphValidationError) as exc_info:
+        GraphDefinition(
+            name="Bad",
+            node_types=[Director, Film],
+            relationship_types=[DirectedCatchall],
+        )
+    codes = [i.code for i in exc_info.value.issues]
+    assert "CARDINALITY_CATCHALL_RULE" in codes

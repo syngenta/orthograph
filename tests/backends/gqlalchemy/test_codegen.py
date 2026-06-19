@@ -8,7 +8,6 @@ import pytest
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
     NodeModel,
     RelationshipModel,
 )
@@ -57,7 +56,7 @@ class FriendOfRel(RelationshipModel):
     __source_label__ = "Person"
     __target_label__ = "Person"
     __directed__ = False
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
+    __source_cardinality__ = "0..*"
     since: Optional[str] = None
 
 

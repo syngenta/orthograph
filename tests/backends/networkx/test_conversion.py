@@ -5,7 +5,14 @@ import pytest
 
 from orthograph.backends.networkx.conversion import schema_to_networkx
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_definition.models import NodeModel, RelationshipModel
+from orthograph.graph_definition.models import (
+    CardinalitySpec,
+    ConditionalCardinality,
+    ConditionalRule,
+    NodeModel,
+    PropMatch,
+    RelationshipModel,
+)
 from tests.fixtures.conftest import ActedIn, Directed, Movie, Person
 
 
@@ -104,3 +111,70 @@ def test_schema_to_networkx_undirected_cross_type(
     u, v, d = collab_edges[0]
     assert {u, v} == {"Person", "Company"}
     assert d["directed"] is False
+
+
+# ============================================================
+# Conditional cardinality tests
+# ============================================================
+
+
+class Operation(NodeModel):
+    """Test node type for conditional cardinality."""
+
+    __label__ = "Operation"
+    __uid_field__ = "id"
+    id: str
+    kind: str
+
+
+class Sample(NodeModel):
+    """Test node type for conditional cardinality."""
+
+    __label__ = "Sample"
+    __uid_field__ = "id"
+    id: str
+    kind: str
+
+
+class HasOutput(RelationshipModel):
+    """Test relationship with conditional cardinality."""
+
+    __label__ = "HAS_OUTPUT"
+    __source_label__ = "Operation"
+    __target_label__ = "Sample"
+    __source_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "subsampling"}),
+                target=PropMatch({"kind": "subsampling"}),
+                spec=CardinalitySpec(min=1, max=2),
+            ),
+            ConditionalRule(
+                source=PropMatch({"kind": "split"}),
+                target=PropMatch({"kind": "nothing"}),
+                spec="0..0",
+            ),
+        ),
+        default="0..*",
+    )
+
+
+def test_schema_to_networkx_conditional_cardinality_stringifies():
+    """Scope: Stringify conditional cardinality in schema_to_networkx."""
+    m = GraphDefinition(
+        name="ConditionalTest",
+        node_types=[Operation, Sample],
+        relationship_types=[HasOutput],
+    )
+    g = schema_to_networkx(m)
+    # The edge should have a cardinality that stringifies successfully
+    edge_data = [data for _, _, data in g.edges(data=True)]
+    assert len(edge_data) > 0
+    # Find the HAS_OUTPUT edge
+    has_output_edges = [d for d in edge_data if d["label"] == "HAS_OUTPUT"]
+    assert len(has_output_edges) > 0
+    # The source_cardinality should be a string (not raise)
+    card_str = has_output_edges[0]["source_cardinality"]
+    assert isinstance(card_str, str)
+    # Should contain some indication of being conditional (brace or "default")
+    assert "{" in card_str or "default" in card_str

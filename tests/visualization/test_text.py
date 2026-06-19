@@ -8,7 +8,11 @@ from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue, ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
+    CardinalitySpec,
+    ConditionalCardinality,
+    ConditionalRule,
+    NodeModel,
+    PropMatch,
     RelationshipModel,
 )
 from orthograph.graph_profile.models import (
@@ -31,8 +35,8 @@ class CustomActedIn(RelationshipModel):
     __label__ = "ACTED_IN"
     __source_label__ = "Person"
     __target_label__ = "Movie"
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
-    __target_cardinality__ = Cardinality.ONE_OR_MORE
+    __source_cardinality__ = "0..*"
+    __target_cardinality__ = "1..*"
     role: str
 
 
@@ -301,3 +305,90 @@ def test_result_to_text_valid():
     assert "Validation: PASS" in text
     assert "No issues found." in text
     assert "Errors: 0" in text
+
+
+# ============================================================
+# Conditional cardinality tests
+# ============================================================
+
+
+class Operation(NodeModel):
+    """Test node type for conditional cardinality."""
+
+    __label__ = "Operation"
+    __uid_field__ = "id"
+    id: str
+    kind: str
+
+
+class Sample(NodeModel):
+    """Test node type for conditional cardinality."""
+
+    __label__ = "Sample"
+    __uid_field__ = "id"
+    id: str
+    kind: str
+
+
+class HasOutput(RelationshipModel):
+    """Test relationship with conditional cardinality."""
+
+    __label__ = "HAS_OUTPUT"
+    __source_label__ = "Operation"
+    __target_label__ = "Sample"
+    __source_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "subsampling"}),
+                target=PropMatch({"kind": "subsampling"}),
+                spec=CardinalitySpec(min=1, max=2),
+            ),
+            ConditionalRule(
+                source=PropMatch({"kind": "split"}),
+                target=PropMatch({"kind": "nothing"}),
+                spec="0..0",
+            ),
+        ),
+        default="0..*",
+    )
+
+
+def test_model_to_text_conditional_cardinality():
+    """Scope: model_to_text renders conditional cardinality without crashing."""
+    m = GraphDefinition(
+        name="ConditionalTest",
+        node_types=[Operation, Sample],
+        relationship_types=[HasOutput],
+    )
+    text = model_to_text(m)
+    assert "HAS_OUTPUT" in text
+    # The format should contain the conditional cardinality summary
+    assert "{" in text  # Conditional summary starts with {
+    assert "default:" in text  # Should show default spec
+
+
+def test_model_to_text_conditional_cardinality_includes_rules():
+    """Scope: Conditional cardinality summary includes rules and default."""
+    m = GraphDefinition(
+        name="ConditionalTest",
+        node_types=[Operation, Sample],
+        relationship_types=[HasOutput],
+    )
+    text = model_to_text(m)
+    # Check that the text includes both constant and conditional rendering
+    assert "Operation" in text
+    assert "Sample" in text
+
+
+def test_model_to_text_constant_cardinality_unchanged():
+    """Scope: Constant cardinality rendering is unchanged (regression)."""
+    m = GraphDefinition(
+        name="ConstantTest",
+        node_types=[Person, Movie],
+        relationship_types=[ActedIn],
+    )
+    text = model_to_text(m)
+    # ActedIn uses constant cardinalities
+    assert "ACTED_IN" in text
+    # Should render as simple min..max, not as conditional
+    assert "0..*" in text

@@ -34,8 +34,10 @@ from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
+    ConditionalCardinality,
+    ConditionalRule,
     NodeModel,
+    PropMatch,
     RelationshipModel,
 )
 from orthograph.graph_definition.property_spec import TypeInfo
@@ -98,14 +100,32 @@ class _LivesIn(RelationshipModel):
     __label__ = "LIVES_IN"
     __source_label__ = "Person"
     __target_label__ = "City"
-    __source_cardinality__ = Cardinality.ONE
+    __source_cardinality__ = "1..1"
 
 
 class _LivesInLoose(RelationshipModel):
     __label__ = "LIVES_IN"
     __source_label__ = "Person"
     __target_label__ = "City"
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
+    __source_cardinality__ = "0..*"
+
+
+class _LivesInConditional(RelationshipModel):
+    """LIVES_IN whose source cardinality is conditional (default ONE_OR_MORE)."""
+
+    __label__ = "LIVES_IN"
+    __source_label__ = "Person"
+    __target_label__ = "City"
+    __source_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "vip"}),
+                target=PropMatch(),
+                spec="0..1",
+            ),
+        ),
+        default="1..*",
+    )
 
 
 # GD that includes all node types so referential integrity holds
@@ -731,7 +751,7 @@ def test_cardinality_changed_noop_when_stats_none():
 
 def test_cardinality_changed_fires_definition():
     rule = CardinalityChangedRule()
-    # _LivesIn has Cardinality.ONE; _LivesInLoose has Cardinality.ZERO_OR_MORE
+    # _LivesIn has "1..1"; _LivesInLoose has "0..*"
     ctx = _ctx(
         left=_LivesIn,
         right=_LivesInLoose,
@@ -753,6 +773,29 @@ def test_cardinality_changed_noop_identical_definition():
         extra={"address_type": "rel_type"},
     )
     assert list(rule(ctx)) == []
+
+
+def test_cardinality_changed_conditional_definition_does_not_crash():
+    """E40.7: a conditional source cardinality on one side must not raise
+    AttributeError; the context omits min/max keys (E40.7 — conditional specs
+    have no .min/.max attributes; representative_spec is not used for context)."""
+    rule = CardinalityChangedRule()
+    ctx = _ctx(
+        left=_LivesIn,  # "1..1"
+        right=_LivesInConditional,  # default ONE_OR_MORE (min=1, max=None)
+        address="LIVES_IN",
+        extra={"address_type": "rel_type"},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue.code == "CARDINALITY_CHANGED"
+    # E40.7: when either side is conditional, context has no min/max keys.
+    ctx_keys = set(issue.context or {})
+    assert "left_min" not in ctx_keys
+    assert "left_max" not in ctx_keys
+    assert "right_min" not in ctx_keys
+    assert "right_max" not in ctx_keys
 
 
 def test_cardinality_changed_noop_for_property_address():
@@ -1098,3 +1141,132 @@ def test_property_type_changed_unknown_type_same_as_known_mapped_noop():
     issues = list(rule(ctx))
     assert len(issues) == 1
     assert issues[0].code == "PROPERTY_TYPE_CHANGED"
+
+
+# ===========================================================================
+# E40.7 — CardinalityChangedRule: conditional definition ↔ definition
+# ===========================================================================
+
+
+class _KindedSourceNode(NodeModel):
+    """Source node with a required 'kind' property for conditional cardinality tests."""
+
+    __label__ = "KindedSource"
+    kind: str
+
+
+class _KindedTargetNode(NodeModel):
+    """Target node for conditional cardinality tests."""
+
+    __label__ = "KindedTarget"
+    name: str
+
+
+class _HasOutputConditionalA(RelationshipModel):
+    """HAS_OUTPUT with conditional source cardinality — rule set A."""
+
+    __label__ = "HAS_OUTPUT"
+    __source_label__ = "KindedSource"
+    __target_label__ = "KindedTarget"
+    __source_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "vip"}),
+                target=PropMatch(),
+                spec="0..1",
+            ),
+        ),
+        default="1..*",
+    )
+
+
+class _HasOutputConditionalB(RelationshipModel):
+    """HAS_OUTPUT with a different conditional source cardinality — rule set B."""
+
+    __label__ = "HAS_OUTPUT"
+    __source_label__ = "KindedSource"
+    __target_label__ = "KindedTarget"
+    __source_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "admin"}),
+                target=PropMatch(),
+                spec="0..*",
+            ),
+        ),
+        default="1..1",
+    )
+
+
+_GD_COND_A = GraphDefinition(
+    name="cond_a",
+    node_types=[_KindedSourceNode, _KindedTargetNode],
+    relationship_types=[_HasOutputConditionalA],
+)
+
+_GD_COND_B = GraphDefinition(
+    name="cond_b",
+    node_types=[_KindedSourceNode, _KindedTargetNode],
+    relationship_types=[_HasOutputConditionalB],
+)
+
+_GD_COND_SAME = GraphDefinition(
+    name="cond_same",
+    node_types=[_KindedSourceNode, _KindedTargetNode],
+    relationship_types=[_HasOutputConditionalA],
+)
+
+
+def test_cardinality_changed_fires_for_differing_conditional_definitions():
+    """Scope: CardinalityChangedRule emits CARDINALITY_CHANGED (INFO) when both
+    sides have conditional source cardinality but with different rule sets."""
+    rule = CardinalityChangedRule()
+    ctx = _ctx(
+        left=_HasOutputConditionalA,
+        right=_HasOutputConditionalB,
+        address="HAS_OUTPUT",
+        extra={"address_type": "rel_type"},
+        left_gd=_GD_COND_A,
+        right_gd=_GD_COND_B,
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "CARDINALITY_CHANGED"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_cardinality_changed_noop_for_identical_conditional_definitions():
+    """Scope: CardinalityChangedRule is silent when both sides have identical
+    conditional source cardinality (structural ==)."""
+    rule = CardinalityChangedRule()
+    ctx = _ctx(
+        left=_HasOutputConditionalA,
+        right=_HasOutputConditionalA,
+        address="HAS_OUTPUT",
+        extra={"address_type": "rel_type"},
+        left_gd=_GD_COND_A,
+        right_gd=_GD_COND_SAME,
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_cardinality_changed_conditional_context_has_no_min_max_keys():
+    """Scope: CARDINALITY_CHANGED context dict for a conditional diff must not
+    contain left_min, left_max, right_min, or right_max keys (those attributes
+    do not exist on ConditionalCardinality)."""
+    rule = CardinalityChangedRule()
+    ctx = _ctx(
+        left=_HasOutputConditionalA,
+        right=_HasOutputConditionalB,
+        address="HAS_OUTPUT",
+        extra={"address_type": "rel_type"},
+        left_gd=_GD_COND_A,
+        right_gd=_GD_COND_B,
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    ctx_keys = set(issues[0].context or {})
+    assert "left_min" not in ctx_keys
+    assert "left_max" not in ctx_keys
+    assert "right_min" not in ctx_keys
+    assert "right_max" not in ctx_keys

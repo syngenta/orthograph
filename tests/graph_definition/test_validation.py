@@ -1,14 +1,14 @@
 """Tests for orthograph.graph_definition.validation -- GraphValidator engine."""
 
-from typing import Any, Optional
-
-import pytest
+from typing import Any
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
     CardinalitySpec,
+    ConditionalCardinality,
+    ConditionalRule,
     NodeModel,
+    PropMatch,
     RelationshipModel,
 )
 from orthograph.graph_definition.validation import (
@@ -16,75 +16,17 @@ from orthograph.graph_definition.validation import (
     _unpack_node,
     _unpack_rel,
 )
-
-
-# --- Fixtures ---
-
-
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-
-    name: str
-    age: int
-    email: Optional[str] = None
-
-
-class Movie(NodeModel):
-    __label__ = "Movie"
-    __uid_field__ = "title"
-
-    title: str
-    year: int
-
-
-class City(NodeModel):
-    __label__ = "City"
-    __uid_field__ = "name"
-
-    name: str
-
-
-class ActedIn(RelationshipModel):
-    __label__ = "ACTED_IN"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
-    __target_cardinality__ = Cardinality.ZERO_OR_MORE
-
-    role: str
-
-
-class Directed(RelationshipModel):
-    __label__ = "DIRECTED"
-    __source_label__ = "Person"
-    __target_label__ = "Movie"
-
-
-class LivesIn(RelationshipModel):
-    __label__ = "LIVES_IN"
-    __source_label__ = "Person"
-    __target_label__ = "City"
-    __source_cardinality__ = Cardinality.ONE
-    __target_cardinality__ = Cardinality.ZERO_OR_MORE
-
-
-@pytest.fixture()
-def filmography_model() -> GraphDefinition:
-    return GraphDefinition(
-        name="Filmography",
-        node_types=[Person, Movie],
-        relationship_types=[ActedIn, Directed],
-    )
-
-
-@pytest.fixture()
-def full_model() -> GraphDefinition:
-    return GraphDefinition(
-        name="Full",
-        node_types=[Person, Movie, City],
-        relationship_types=[ActedIn, Directed, LivesIn],
-    )
+from tests.graph_definition.conftest import (  # noqa: F401 — re-exported for type-checker
+    ActedIn,
+    City,
+    Collaborates,
+    Company,
+    Directed,
+    FriendOf,
+    LivesIn,
+    Movie,
+    Person,
+)
 
 
 # --- Validate nodes tests ---
@@ -487,8 +429,8 @@ def test_validate_cardinality_zero_or_more_accepts_zero():
         __label__ = "Z_WORKS_ON"
         __source_label__ = "ZPerson"
         __target_label__ = "ZProject"
-        __source_cardinality__ = Cardinality.ZERO_OR_MORE  # 0..* -- optional
-        __target_cardinality__ = Cardinality.ZERO_OR_MORE
+        __source_cardinality__ = "0..*"  # 0..* -- optional
+        __target_cardinality__ = "0..*"
 
     graph_definition = GraphDefinition(
         name="ZeroOrMoreTest",
@@ -532,8 +474,8 @@ def test_validate_cardinality_one_or_more_rejects_zero():
         __label__ = "O_WORKS_ON"
         __source_label__ = "OPerson"
         __target_label__ = "OProject"
-        __source_cardinality__ = Cardinality.ONE_OR_MORE  # 1..* -- mandatory
-        __target_cardinality__ = Cardinality.ZERO_OR_MORE
+        __source_cardinality__ = "1..*"  # 1..* -- mandatory
+        __target_cardinality__ = "0..*"
 
     graph_definition = GraphDefinition(
         name="OneOrMoreTest",
@@ -581,13 +523,13 @@ def test_validate_cardinality_zero_or_more_vs_one_or_more_same_data():
         __label__ = "S_WORKS_ON_R"
         __source_label__ = "SPerson"
         __target_label__ = "SProject"
-        __source_cardinality__ = Cardinality.ZERO_OR_MORE
+        __source_cardinality__ = "0..*"
 
     class SWorksOnStrict(RelationshipModel):
         __label__ = "S_WORKS_ON_S"
         __source_label__ = "SPerson"
         __target_label__ = "SProject"
-        __source_cardinality__ = Cardinality.ONE_OR_MORE
+        __source_cardinality__ = "1..*"
 
     relaxed = GraphDefinition(
         name="Relaxed",
@@ -648,8 +590,8 @@ def test_validate_target_cardinality_violation():
         __label__ = "T_WROTE"
         __source_label__ = "TAuthor"
         __target_label__ = "TBook"
-        __source_cardinality__ = Cardinality.ZERO_OR_MORE
-        __target_cardinality__ = Cardinality.ONE  # each book has exactly 1 author
+        __source_cardinality__ = "0..*"
+        __target_cardinality__ = "1..1"  # each book has exactly 1 author
 
     graph_definition = GraphDefinition(
         name="TargetCard",
@@ -782,45 +724,6 @@ def test_validate_full_graph_complete_valid(filmography_model: GraphDefinition):
 
 
 # --- Undirected relationship validation tests ---
-
-
-class Company(NodeModel):
-    __label__ = "Company"
-    __uid_field__ = "name"
-    name: str
-
-
-class FriendOf(RelationshipModel):
-    __label__ = "FRIEND_OF"
-    __source_label__ = "Person"
-    __target_label__ = "Person"
-    __directed__ = False
-    __source_cardinality__ = Cardinality.ZERO_OR_MORE
-
-
-class Collaborates(RelationshipModel):
-    __label__ = "COLLABORATES"
-    __source_label__ = "Person"
-    __target_label__ = "Company"
-    __directed__ = False
-
-
-@pytest.fixture()
-def social_model() -> GraphDefinition:
-    return GraphDefinition(
-        name="Social",
-        node_types=[Person],
-        relationship_types=[FriendOf],
-    )
-
-
-@pytest.fixture()
-def cross_undirected_model() -> GraphDefinition:
-    return GraphDefinition(
-        name="CrossUndirected",
-        node_types=[Person, Company],
-        relationship_types=[Collaborates],
-    )
 
 
 def test_undirected_same_type_forward_valid(social_model: GraphDefinition):
@@ -1140,3 +1043,361 @@ def test_entity_presence_reports_both_missing_node_and_rel_types():
     }
     assert "ReqNode" in entity_ids
     assert "REQ_REL" in entity_ids
+
+
+# --- E40.3/E40.5: conditional cardinality on the validation path ---
+
+
+def test_validate_conditional_cardinality_does_not_crash():
+    """Scope: a ConditionalCardinality side validates per-pair without raising
+    AttributeError, and a documentary director with zero films violates the
+    ('documentary', '*') rule (declared partition, missing → 0)."""
+
+    class CDirector(NodeModel):
+        __label__ = "CDirector"
+        __uid_field__ = "name"
+        name: str
+        kind: str  # required — E40.4 requires discriminators to be required props
+
+    class CFilm(NodeModel):
+        __label__ = "CFilm"
+        __uid_field__ = "title"
+        title: str
+
+    # A documentary director must direct at least one film (wildcard target);
+    # any other kind falls to the permissive default.
+    conditional = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "documentary"}),
+                target=PropMatch(),
+                spec="1..*",
+            ),
+        ),
+        default="0..*",
+    )
+
+    class CDirected(RelationshipModel):
+        __label__ = "C_DIRECTED"
+        __source_label__ = "CDirector"
+        __target_label__ = "CFilm"
+        __source_cardinality__ = conditional
+        __target_cardinality__ = "0..*"
+
+    graph_definition = GraphDefinition(
+        name="ConditionalCardinality",
+        node_types=[CDirector, CFilm],
+        relationship_types=[CDirected],
+    )
+    v = GraphValidator(graph_definition)
+
+    # Nolan (documentary) has zero films → violates ONE_OR_MORE;
+    # Kubrick (feature) falls to the permissive default → no violation.
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "CDirector", "name": "Nolan", "kind": "documentary"},
+        {"__label__": "CDirector", "name": "Kubrick", "kind": "feature"},
+        {"__label__": "CFilm", "title": "Inception"},
+    ]
+    rels: list[dict[str, Any]] = [
+        {
+            "__label__": "C_DIRECTED",
+            "__source_uid__": "Kubrick",
+            "__target_uid__": "Inception",
+        },
+    ]
+
+    # Must not raise; resolution is per-pair.
+    result = v.validate(nodes=nodes, relationships=rels)
+
+    card_errors = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert any("Nolan" in e.entity_id for e in card_errors)
+    assert not any("Kubrick" in e.entity_id for e in card_errors)
+
+
+# ---------------------------------------------------------------------------
+# E40.5: in-memory partitioned conditional-cardinality validation (ADR-029)
+# ---------------------------------------------------------------------------
+
+
+def _operation_sample_model(
+    source_cardinality: ConditionalCardinality,
+) -> GraphDefinition:
+    """Build the ADR-029 Operation -[HAS_OUTPUT]-> Sample model with a given
+    source-side conditional cardinality (both nodes discriminated by ``kind``)."""
+
+    class Operation(NodeModel):
+        __label__ = "Operation"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+
+    class Sample(NodeModel):
+        __label__ = "Sample"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+
+    class HasOutput(RelationshipModel):
+        __label__ = "HAS_OUTPUT"
+        __source_label__ = "Operation"
+        __target_label__ = "Sample"
+        __source_cardinality__ = source_cardinality
+        __target_cardinality__ = "0..*"
+
+    return GraphDefinition(
+        name="OperationSample",
+        node_types=[Operation, Sample],
+        relationship_types=[HasOutput],
+    )
+
+
+def test_conditional_deciding_scenario_valid_with_permissive_default():
+    """Scope: ADR-029 deciding scenario resolves valid when default is ZERO_OR_MORE."""
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "subsampling"}),
+                target=PropMatch({"kind": "subsampling"}),
+                spec=CardinalitySpec(min=1, max=2),
+            ),
+        ),
+        default="0..*",
+    )
+    gd = _operation_sample_model(card)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Operation", "uid": "op1", "kind": "subsampling"},
+        {"__label__": "Sample", "uid": "s1", "kind": "subsampling"},
+        {"__label__": "Sample", "uid": "s2", "kind": "subsampling"},
+        {"__label__": "Sample", "uid": "s3", "kind": "nothing"},
+    ]
+    rels: list[dict[str, Any]] = [
+        {"__label__": "HAS_OUTPUT", "__source_uid__": "op1", "__target_uid__": "s1"},
+        {"__label__": "HAS_OUTPUT", "__source_uid__": "op1", "__target_uid__": "s2"},
+        {"__label__": "HAS_OUTPUT", "__source_uid__": "op1", "__target_uid__": "s3"},
+    ]
+    result = GraphValidator(gd).validate(nodes=nodes, relationships=rels)
+    assert result.is_valid
+    assert not any(e.code == "CARDINALITY_VIOLATION" for e in result.errors)
+
+
+def test_conditional_deciding_scenario_violation_with_zero_default():
+    """Scope: ADR-029 deciding scenario emits one violation naming
+    (subsampling, nothing) when default is ZERO."""
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "subsampling"}),
+                target=PropMatch({"kind": "subsampling"}),
+                spec=CardinalitySpec(min=1, max=2),
+            ),
+        ),
+        default="0..0",
+    )
+    gd = _operation_sample_model(card)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Operation", "uid": "op1", "kind": "subsampling"},
+        {"__label__": "Sample", "uid": "s1", "kind": "subsampling"},
+        {"__label__": "Sample", "uid": "s2", "kind": "subsampling"},
+        {"__label__": "Sample", "uid": "s3", "kind": "nothing"},
+    ]
+    rels: list[dict[str, Any]] = [
+        {"__label__": "HAS_OUTPUT", "__source_uid__": "op1", "__target_uid__": "s1"},
+        {"__label__": "HAS_OUTPUT", "__source_uid__": "op1", "__target_uid__": "s2"},
+        {"__label__": "HAS_OUTPUT", "__source_uid__": "op1", "__target_uid__": "s3"},
+    ]
+    result = GraphValidator(gd).validate(nodes=nodes, relationships=rels)
+    card_errors = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert len(card_errors) == 1
+    issue = card_errors[0]
+    assert issue.context["source_kind"] == "subsampling"
+    assert issue.context["target_kind"] == "nothing"
+    assert issue.context["actual"] == 1
+
+
+def test_conditional_missing_partition_counted_as_zero_violates_min():
+    """Scope: a declared rule with min>0 on an unobserved partition violates
+    (missing partition counted as 0)."""
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "combine"}),
+                target=PropMatch({"kind": "nothing"}),
+                spec=CardinalitySpec(min=2, max=2),
+            ),
+        ),
+        default="0..*",
+    )
+    gd = _operation_sample_model(card)
+    # A combine Operation with zero nothing-outputs: the (combine, nothing)
+    # partition is absent → counted as 0 → EXACTLY(2) min unmet.
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Operation", "uid": "op1", "kind": "combine"},
+        {"__label__": "Sample", "uid": "s1", "kind": "nothing"},
+    ]
+    result = GraphValidator(gd).validate(nodes=nodes, relationships=[])
+    card_errors = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert len(card_errors) == 1
+    assert card_errors[0].context["target_kind"] == "nothing"
+    assert card_errors[0].context["actual"] == 0
+
+
+def test_conditional_observed_partition_violates_wildcard_rule():
+    """Scope: a discard Operation with one output violates ('discard','*'): ZERO."""
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "discard"}),
+                target=PropMatch(),
+                spec="0..0",
+            ),
+        ),
+        default="0..*",
+    )
+    gd = _operation_sample_model(card)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Operation", "uid": "op1", "kind": "discard"},
+        {"__label__": "Sample", "uid": "s1", "kind": "nothing"},
+    ]
+    rels: list[dict[str, Any]] = [
+        {"__label__": "HAS_OUTPUT", "__source_uid__": "op1", "__target_uid__": "s1"},
+    ]
+    result = GraphValidator(gd).validate(nodes=nodes, relationships=rels)
+    card_errors = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert len(card_errors) == 1
+    assert card_errors[0].context["source_kind"] == "discard"
+
+
+def test_conditional_unmatched_kind_emits_info_no_error():
+    """Scope: an Operation whose kind matches no rule and no wildcard emits
+    CARDINALITY_UNMATCHED_KIND (INFO) and no error under a permissive default."""
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "subsampling"}),
+                target=PropMatch({"kind": "subsampling"}),
+                spec=CardinalitySpec(min=1, max=2),
+            ),
+        ),
+        default="0..*",
+    )
+    gd = _operation_sample_model(card)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Operation", "uid": "op1", "kind": "lyophilize"},
+    ]
+    result = GraphValidator(gd).validate(nodes=nodes, relationships=[])
+    assert result.is_valid
+    info = [i for i in result.issues if i.code == "CARDINALITY_UNMATCHED_KIND"]
+    assert len(info) == 1
+    assert info[0].severity.value == "info"
+    assert info[0].context["source_kind"] == "lyophilize"
+
+
+def test_conditional_target_cardinality_partitioned_by_source_kind():
+    """Scope: a target-side conditional cardinality partitions a target node's
+    incoming edges by the source node's kind, symmetrically to the source side."""
+
+    class Producer(NodeModel):
+        __label__ = "Producer"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+
+    class Artifact(NodeModel):
+        __label__ = "Artifact"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+
+    # Each Artifact{kind:final} must have exactly 2 incoming edges from
+    # Producer{kind:assembler}; default permits anything.
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "assembler"}),
+                target=PropMatch({"kind": "final"}),
+                spec=CardinalitySpec(min=2, max=2),
+            ),
+        ),
+        default="0..*",
+    )
+
+    class Produces(RelationshipModel):
+        __label__ = "PRODUCES"
+        __source_label__ = "Producer"
+        __target_label__ = "Artifact"
+        __target_cardinality__ = card
+
+    gd = GraphDefinition(
+        name="ProducerArtifact",
+        node_types=[Producer, Artifact],
+        relationship_types=[Produces],
+    )
+    # final Artifact has only 1 incoming assembler edge → violates min=2.
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Producer", "uid": "p1", "kind": "assembler"},
+        {"__label__": "Artifact", "uid": "a1", "kind": "final"},
+    ]
+    rels: list[dict[str, Any]] = [
+        {"__label__": "PRODUCES", "__source_uid__": "p1", "__target_uid__": "a1"},
+    ]
+    result = GraphValidator(gd).validate(nodes=nodes, relationships=rels)
+    card_errors = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert len(card_errors) == 1
+    assert card_errors[0].context["source_kind"] == "assembler"
+    assert card_errors[0].context["target_kind"] == "final"
+    assert card_errors[0].context["actual"] == 1
+
+
+def test_conditional_default_floor_enforced_on_unmatched_zero_edge_node():
+    """Scope: an unmatched node with zero edges violates a default with min>0
+    (ADR-029 §5/§7 default floor — no silent pass)."""
+    # subsampling consumes nothing; every other kind must consume at least one.
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "subsampling"}),
+                target=PropMatch(),
+                spec="0..0",
+            ),
+        ),
+        default="1..*",
+    )
+    gd = _operation_sample_model(card)
+    # A combine Operation matches no rule and has zero outputs → default ONE_OR_MORE
+    # is violated (total degree 0).
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Operation", "uid": "op1", "kind": "combine"},
+    ]
+    result = GraphValidator(gd).validate(nodes=nodes, relationships=[])
+    card_errors = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert len(card_errors) == 1
+    issue = card_errors[0]
+    assert issue.context["default"] is True
+    assert issue.context["source_kind"] == "combine"
+    assert issue.context["actual"] == 0
+    # The drift INFO is still emitted alongside the enforced floor.
+    assert any(i.code == "CARDINALITY_UNMATCHED_KIND" for i in result.issues)
+
+
+def test_conditional_permissive_default_admits_zero_edge_unmatched_node():
+    """Scope: a permissive default (min=0) lets an unmatched zero-edge node pass;
+    only the drift INFO is emitted, no violation (default floor never fires)."""
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "subsampling"}),
+                target=PropMatch(),
+                spec="0..0",
+            ),
+        ),
+        default="0..*",
+    )
+    gd = _operation_sample_model(card)
+    nodes: list[dict[str, Any]] = [
+        {"__label__": "Operation", "uid": "op1", "kind": "combine"},
+    ]
+    result = GraphValidator(gd).validate(nodes=nodes, relationships=[])
+    assert result.is_valid
+    assert not any(e.code == "CARDINALITY_VIOLATION" for e in result.errors)
+    info = [i for i in result.issues if i.code == "CARDINALITY_UNMATCHED_KIND"]
+    assert len(info) == 1

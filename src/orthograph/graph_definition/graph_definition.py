@@ -9,7 +9,12 @@ from orthograph.diagnostics.result import (
     ValidationIssue,
     ValidationResult,
 )
-from orthograph.graph_definition.models import NodeModel, RelationshipModel
+from orthograph.graph_definition.cardinality_checks import standard_cardinality_checks
+from orthograph.graph_definition.models import (
+    ConditionalCardinality,
+    NodeModel,
+    RelationshipModel,
+)
 
 
 class GraphDefinition:
@@ -132,6 +137,7 @@ class GraphDefinition:
         self._check_duplicate_labels(result)
         self._check_undefined_node_refs(result)
         self._check_isolated_nodes(result)
+        self._check_cardinality_rules(result)
         return result
 
     def _check_duplicate_labels(self, result: ValidationResult) -> None:
@@ -217,3 +223,30 @@ class GraphDefinition:
                         ),
                     )
                 )
+
+    def _check_cardinality_rules(self, result: ValidationResult) -> None:
+        """Run standard definition-time checks on every ConditionalCardinality."""
+        checks = standard_cardinality_checks()
+        for rt in self.relationship_types:
+            src_node = self.get_node_type(rt.__source_label__)
+            tgt_node = self.get_node_type(rt.__target_label__)
+
+            # Absolute convention (ADR-032 §1a): rule.source always describes the
+            # source-label node, rule.target the target-label node — for BOTH the
+            # source and target cardinality. The checks validate rule.source
+            # against the first node and rule.target against the second, so both
+            # sides pass (src_node, tgt_node) in that fixed order.
+            sides = [
+                ("source", rt.__source_cardinality__),
+                ("target", rt.__target_cardinality__),
+            ]
+            for side, card in sides:
+                if not isinstance(card, ConditionalCardinality):
+                    continue
+                # Skip if either endpoint node type is undefined —
+                # _check_undefined_node_refs already reports that.
+                if src_node is None or tgt_node is None:
+                    continue
+                for check in checks:
+                    for issue in check(rt.__label__, side, card, src_node, tgt_node):
+                        result.add(issue)

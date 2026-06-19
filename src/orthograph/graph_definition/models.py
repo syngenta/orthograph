@@ -1,12 +1,17 @@
 """NodeModel and RelationshipModel base classes for defining graph types."""
 
 import inspect
-import typing
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any, ClassVar, cast, get_type_hints
 
 from pydantic import BaseModel, model_validator
 
-from orthograph.graph_definition.exceptions import MissingClassVarError
+from orthograph.graph_definition.exceptions import (
+    AmbiguousCardinalityError,
+    CardinalityParseError,
+    MissingClassVarError,
+)
 from orthograph.graph_definition.property_spec import TypeInfo, resolve_type_info
 
 
@@ -203,6 +208,22 @@ class CardinalitySpec(BaseModel):
     min: int
     max: int | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_notation(cls, value: Any) -> Any:
+        """Coerce a UML-notation string into field data; pass other inputs through.
+
+        This is the single seam (ADR-031) through which notation strings reach
+        ``CardinalitySpec`` — raw construction, YAML parsing, and the
+        ``CardinalitySpec``-typed fields of the conditional models. Dicts and
+        instances are returned untouched so the normal field pipeline (and the
+        ``mode="after"`` ``_validate_bounds``) runs unchanged.
+        """
+        if isinstance(value, str):
+            parsed = cls.parse(value)
+            return {"min": parsed.min, "max": parsed.max}
+        return value
+
     @model_validator(mode="after")
     def _validate_bounds(self) -> "CardinalitySpec":
         if self.min < 0:
@@ -219,35 +240,255 @@ class CardinalitySpec(BaseModel):
             return False
         return True
 
+    def resolve_for_pair(
+        self, self_props: Mapping[str, object], other_props: Mapping[str, object]
+    ) -> "CardinalitySpec":
+        """Constant cardinality ignores endpoint properties."""
+        return self
+
+    @classmethod
+    def parse(cls, text: str) -> "CardinalitySpec":
+        """Parse strict UML ``min..max`` notation into a ``CardinalitySpec``.
+
+        ``min`` is a non-negative int; ``max`` is ``None`` for the unbounded
+        symbol ``*`` else a non-negative int. Syntactic failures raise
+        :exc:`CardinalityParseError`; semantic failures (e.g. ``5..2``,
+        negatives) come from ``_validate_bounds`` during construction.
+        """
+        parts = text.split("..")
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise CardinalityParseError(text)
+        min_part, max_part = parts
+        try:
+            min_value = int(min_part)
+        except ValueError:
+            raise CardinalityParseError(text) from None
+        if max_part == "*":
+            max_value: int | None = None
+        else:
+            try:
+                max_value = int(max_part)
+            except ValueError:
+                raise CardinalityParseError(text) from None
+        return cls(min=min_value, max=max_value)
+
+    @property
+    def notation(self) -> str:
+        """Emit UML ``min..max`` notation (inverse of :meth:`parse`)."""
+        return f"{self.min}..{'*' if self.max is None else self.max}"
+
     def __repr__(self) -> str:
-        max_str = "N" if self.max is None else str(self.max)
-        return f"CardinalitySpec({self.min}..{max_str})"
+        return f"CardinalitySpec({self.notation})"
 
 
-class Cardinality:
-    """Named :class:`CardinalitySpec` constants for relationship constraints.
+def _coerce_cardinality(
+    value: "str | CardinalitySpec | ConditionalCardinality",
+) -> "CardinalitySpec | ConditionalCardinality":
+    """Coerce a notation string to :class:`CardinalitySpec`; pass other values through.
 
-    Cardinality constrains how many instances of a relationship type each
-    individual node may have.  It does NOT control whether the relationship
-    type must appear anywhere in the data — that is ``__optional__`` on the
-    :class:`RelationshipModel`.
+    Used by :meth:`RelationshipModel.__init_subclass__` to coerce ClassVar
+    cardinality values, where Pydantic's ``mode="before"`` validator does not run.
+    ``CardinalitySpec`` and ``ConditionalCardinality`` instances are returned as-is.
+    """
+    if isinstance(value, str):
+        return CardinalitySpec.parse(value)
+    return value
 
-    ``ZERO_OR_MORE`` means each node may have zero or more instances.
-    Zero is valid; the node simply does not participate.  This is semantically
-    distinct from ``ONE_OR_MORE``, which requires at least one instance.
+
+# ---------------------------------------------------------------------------
+# Conditional cardinality models
+# ---------------------------------------------------------------------------
+
+
+class PropMatch(BaseModel):
+    """A conjunction of property-equality predicates for one relationship endpoint.
+
+    An empty ``conditions`` map matches any node (wildcard).
     """
 
-    ZERO_OR_ONE: typing.ClassVar[CardinalitySpec] = CardinalitySpec(min=0, max=1)
-    """0..1 — optional, at most one."""
+    model_config = {"frozen": True}
 
-    ONE: typing.ClassVar[CardinalitySpec] = CardinalitySpec(min=1, max=1)
-    """1..1 — exactly one."""
+    conditions: Mapping[str, object] = {}
 
-    ZERO_OR_MORE: typing.ClassVar[CardinalitySpec] = CardinalitySpec(min=0, max=None)
-    """0..* — optional, unbounded (permissive default)."""
+    def __init__(
+        self, conditions: Mapping[str, object] | None = None, /, **data: object
+    ) -> None:
+        """Accept a positional mapping as well as the keyword form.
 
-    ONE_OR_MORE: typing.ClassVar[CardinalitySpec] = CardinalitySpec(min=1, max=None)
-    """1..* — mandatory, unbounded."""
+        Pydantic models are keyword-only by construction, but the agreed
+        authoring style for cardinality rules is ``PropMatch({"kind": "split"})``
+        — a positional dict that removes the repeated ``conditions=`` noise at
+        every rule's two endpoints.  The leading parameter is declared
+        positional-only (``/``) so both call shapes reach the same field:
+
+            PropMatch({"kind": "split"})          # agreed form
+            PropMatch(conditions={"kind": "split"})  # keyword form — still valid
+            PropMatch()                            # wildcard — unchanged
+
+        Delegating immediately to ``super().__init__`` means Pydantic's
+        validation pipeline, the frozen contract, and the ``_freeze_conditions``
+        post-validator (MappingProxyType wrapping) all run exactly as before.
+        This override is the only viable seam: there is no Pydantic config switch
+        that enables positional construction, so ``__init__`` is both the correct
+        and the minimal place to add it.
+        """
+        if conditions is not None:
+            data["conditions"] = conditions
+        super().__init__(**data)
+
+    @model_validator(mode="after")
+    def _freeze_conditions(self) -> "PropMatch":
+        """Replace conditions with a read-only proxy so the frozen contract holds.
+
+        Pydantic's ``frozen=True`` blocks attribute reassignment but not mutation
+        of the underlying dict; wrapping in a ``MappingProxyType`` makes the map
+        genuinely immutable so equality and specificity cannot drift.
+        """
+        object.__setattr__(self, "conditions", MappingProxyType(dict(self.conditions)))
+        return self
+
+    def matches(self, props: Mapping[str, object]) -> bool:
+        """Return True when every condition key/value pair is satisfied by *props*.
+
+        A condition is satisfied only when *props* contains the key and its value
+        is equal; an absent key never matches (even against a ``None`` condition).
+        """
+        return all(k in props and props[k] == v for k, v in self.conditions.items())
+
+    @property
+    def specificity(self) -> int:
+        """Number of conditions (higher = more specific)."""
+        return len(self.conditions)
+
+    @property
+    def is_wildcard(self) -> bool:
+        """True when there are no conditions (matches everything)."""
+        return not self.conditions
+
+
+class ConditionalRule(BaseModel):
+    """A single rule binding a (source, target) predicate pair to a cardinality spec."""
+
+    model_config = {"frozen": True}
+
+    source: PropMatch
+    target: PropMatch
+    spec: CardinalitySpec
+
+
+def _matching_rules(
+    rules: tuple["ConditionalRule", ...],
+    self_props: Mapping[str, object],
+    other_props: Mapping[str, object],
+) -> list["ConditionalRule"]:
+    """Return rules whose source and target predicates both match the given props."""
+    return [
+        r
+        for r in rules
+        if r.source.matches(self_props) and r.target.matches(other_props)
+    ]
+
+
+def _highest_specificity(
+    matches: list["ConditionalRule"],
+) -> list["ConditionalRule"]:
+    """Return the subset of *matches* that share the maximum combined specificity.
+
+    Precondition: *matches* must be non-empty.
+    """
+    assert matches, "_highest_specificity requires at least one match"
+    max_score = max(r.source.specificity + r.target.specificity for r in matches)
+    return [
+        r for r in matches if r.source.specificity + r.target.specificity == max_score
+    ]
+
+
+class ConditionalCardinality(BaseModel):
+    """Cardinality that varies by endpoint property values.
+
+    Resolution uses most-specific-wins: the rule whose combined
+    ``source.specificity + target.specificity`` is highest wins.
+    A required ``default`` applies when no rule matches.
+    """
+
+    model_config = {"frozen": True}
+
+    rules: tuple[ConditionalRule, ...]
+    default: CardinalitySpec
+
+    def resolve_for_pair(
+        self,
+        self_props: Mapping[str, object],
+        other_props: Mapping[str, object],
+    ) -> CardinalitySpec:
+        """Return the cardinality spec for the given endpoint property pair.
+
+        Raises :exc:`AmbiguousCardinalityError` when two rules of equal
+        top specificity both match (defence-in-depth; prevented at definition
+        time by E40.4 checks).
+        """
+        matched = _matching_rules(self.rules, self_props, other_props)
+        if not matched:
+            return self.default
+        winners = _highest_specificity(matched)
+        if len(winners) > 1:
+            predicates = [(w.source.conditions, w.target.conditions) for w in winners]
+            raise AmbiguousCardinalityError(
+                f"Multiple rules of equal specificity match {dict(self_props)!r} / "
+                f"{dict(other_props)!r}: {predicates}"
+            )
+        return winners[0].spec
+
+    def __str__(self) -> str:
+        """Return a compact string representation of the conditional cardinality.
+
+        Format: `{(source_cond,target_cond):spec; ...; default:default_spec}`.
+        """
+
+        def format_spec(spec: CardinalitySpec) -> str:
+            """Format a CardinalitySpec as a compact string."""
+            max_str = "*" if spec.max is None else str(spec.max)
+            return f"{spec.min}..{max_str}"
+
+        rule_parts: list[str] = []
+        for rule in self.rules:
+            source_vals = (
+                dict(rule.source.conditions) if rule.source.conditions else "*"
+            )
+            target_vals = (
+                dict(rule.target.conditions) if rule.target.conditions else "*"
+            )
+            spec_str = format_spec(rule.spec)
+            rule_parts.append(f"({source_vals},{target_vals}):{spec_str}")
+
+        default_str = format_spec(self.default)
+        all_parts = rule_parts + [f"default:{default_str}"]
+        return "{" + "; ".join(all_parts) + "}"
+
+    def __repr__(self) -> str:
+        """Return the string representation (same as __str__)."""
+        return self.__str__()
+
+
+def representative_spec(
+    cardinality: "CardinalitySpec | ConditionalCardinality",
+) -> CardinalitySpec:
+    """Return a concrete :class:`CardinalitySpec` for a possibly-conditional value.
+
+    Display, serialization, and structural-diff contexts do not have the
+    endpoint property pairs required to resolve a :class:`ConditionalCardinality`
+    precisely; for those a representative spec is needed. A plain
+    ``CardinalitySpec`` is returned as-is, while a ``ConditionalCardinality``
+    yields its ``default`` bound.
+
+    This avoids the ``AttributeError`` that arises from accessing ``.min`` /
+    ``.max`` / ``.contains()`` on a ``ConditionalCardinality`` (which has none
+    of those attributes). Per-endpoint resolution for the validation path is
+    tracked separately (E40.5).
+    """
+    if isinstance(cardinality, ConditionalCardinality):
+        return cardinality.default
+    return cardinality
 
 
 class RelationshipModel(_PropertySpecMixin, BaseModel):
@@ -277,11 +518,15 @@ class RelationshipModel(_PropertySpecMixin, BaseModel):
         When ``False`` the validator requires at least one instance of this
         relationship type in the graph.
 
-    ``__source_cardinality__`` : :class:`CardinalitySpec` (default ``ZERO_OR_MORE``)
-        How many outgoing instances each source node may have.
+    ``__source_cardinality__`` : ``CardinalitySpec | ConditionalCardinality``
+        (default ``"0..*"``) Outgoing instances per source node; author as a
+        UML notation string or a :class:`CardinalitySpec` /
+        :class:`ConditionalCardinality` instance.
 
-    ``__target_cardinality__`` : :class:`CardinalitySpec` (default ``ZERO_OR_MORE``)
-        How many incoming instances each target node may have.
+    ``__target_cardinality__`` : ``CardinalitySpec | ConditionalCardinality``
+        (default ``"0..*"``) Incoming instances per target node; author as a
+        UML notation string or a :class:`CardinalitySpec` /
+        :class:`ConditionalCardinality` instance.
 
     **Example**::
 
@@ -298,14 +543,28 @@ class RelationshipModel(_PropertySpecMixin, BaseModel):
     __target_label__: ClassVar[str]
     __directed__: ClassVar[bool] = True
     __optional__: ClassVar[bool] = True
-    __source_cardinality__: ClassVar[CardinalitySpec] = Cardinality.ZERO_OR_MORE
+    __source_cardinality__: ClassVar[str | CardinalitySpec | ConditionalCardinality] = (
+        CardinalitySpec(min=0, max=None)
+    )
     """Source-side cardinality (how many outgoing instances each source node may have).
-    Default: ``ZERO_OR_MORE`` (no constraint enforced).
+
+    Author as a UML notation string (e.g. ``"1..*"``) or a
+    :class:`CardinalitySpec` / :class:`ConditionalCardinality` instance.
+    String values are coerced to :class:`CardinalitySpec` at subclass definition
+    time by :meth:`__init_subclass__`.
+    Default: ``CardinalitySpec(min=0, max=None)`` (``"0..*"`` — no constraint enforced).
     """
 
-    __target_cardinality__: ClassVar[CardinalitySpec] = Cardinality.ZERO_OR_MORE
+    __target_cardinality__: ClassVar[str | CardinalitySpec | ConditionalCardinality] = (
+        CardinalitySpec(min=0, max=None)
+    )
     """Target-side cardinality (how many incoming instances each target node may have).
-    Default: ``ZERO_OR_MORE`` (no constraint enforced).
+
+    Author as a UML notation string (e.g. ``"1..*"``) or a
+    :class:`CardinalitySpec` / :class:`ConditionalCardinality` instance.
+    String values are coerced to :class:`CardinalitySpec` at subclass definition
+    time by :meth:`__init_subclass__`.
+    Default: ``CardinalitySpec(min=0, max=None)`` (``"0..*"`` — no constraint enforced).
     """
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -316,3 +575,32 @@ class RelationshipModel(_PropertySpecMixin, BaseModel):
 
         for var in ("__label__", "__source_label__", "__target_label__"):
             _assert_classvar_defined(cls, var, base=RelationshipModel)
+
+        for attr in ("__source_cardinality__", "__target_cardinality__"):
+            if attr in cls.__dict__:
+                coerced = _coerce_cardinality(cls.__dict__[attr])
+                setattr(cls, attr, coerced)
+
+    @classmethod
+    def source_cardinality(cls) -> "CardinalitySpec | ConditionalCardinality":
+        """Return the resolved source-side cardinality.
+
+        The ``__source_cardinality__`` ClassVar is typed to include ``str`` so
+        that subclasses may *author* cardinality as UML notation, but
+        :meth:`__init_subclass__` coerces every string to a
+        :class:`CardinalitySpec` at definition time. After coercion the value is
+        never a string, so this accessor is the single seam that narrows the
+        authoring union to the resolved invariant. Consumers (visualization,
+        serialization, validation, diffing) read through here rather than
+        touching the raw ClassVar, so the ``str`` case is narrowed in exactly
+        one place instead of at every call site.
+        """
+        return _coerce_cardinality(cls.__source_cardinality__)
+
+    @classmethod
+    def target_cardinality(cls) -> "CardinalitySpec | ConditionalCardinality":
+        """Return the resolved target-side cardinality.
+
+        See :meth:`source_cardinality` for why this accessor exists.
+        """
+        return _coerce_cardinality(cls.__target_cardinality__)

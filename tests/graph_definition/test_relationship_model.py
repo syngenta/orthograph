@@ -6,35 +6,14 @@ import pytest
 
 from orthograph.graph_definition.exceptions import MissingClassVarError
 from orthograph.graph_definition.models import (
-    Cardinality,
     CardinalitySpec,
-    NodeModel,
+    ConditionalCardinality,
+    ConditionalRule,
+    PropMatch,
     RelationshipModel,
+    representative_spec,
 )
-
-
-# --- Fixtures: node types used across tests ---
-
-
-class Person(NodeModel):
-    __label__ = "Person"
-    __uid_field__ = "name"
-
-    name: str
-    age: int
-
-
-class Movie(NodeModel):
-    __label__ = "Movie"
-    __uid_field__ = "title"
-
-    title: str
-    year: int
-
-
-class City(NodeModel):
-    __label__ = "City"
-    name: str
+from tests.graph_definition.conftest import City, Movie, Person  # noqa: F401
 
 
 # --- RelationshipModel definition tests ---
@@ -54,8 +33,8 @@ def test_relationship_model_simple():
     assert ActedIn.__directed__ is True
     assert ActedIn.__optional__ is True
     # Default cardinality is ZERO_OR_MORE on both sides (permissive default)
-    assert ActedIn.__source_cardinality__ == Cardinality.ZERO_OR_MORE
-    assert ActedIn.__target_cardinality__ == Cardinality.ZERO_OR_MORE
+    assert ActedIn.__source_cardinality__ == CardinalitySpec(min=0, max=None)
+    assert ActedIn.__target_cardinality__ == CardinalitySpec(min=0, max=None)
 
 
 def test_relationship_model_with_cardinality():
@@ -63,8 +42,8 @@ def test_relationship_model_with_cardinality():
         __label__ = "LIVES_IN"
         __source_label__ = "Person"
         __target_label__ = "City"
-        __source_cardinality__ = Cardinality.ONE
-        __target_cardinality__ = Cardinality.ZERO_OR_MORE
+        __source_cardinality__ = CardinalitySpec(min=1, max=1)
+        __target_cardinality__ = CardinalitySpec(min=0, max=None)
 
     assert LivesIn.__source_cardinality__ == CardinalitySpec(min=1, max=1)
     assert LivesIn.__target_cardinality__ == CardinalitySpec(min=0, max=None)
@@ -136,8 +115,8 @@ def test_relationship_model_self_referencing():
         __label__ = "MANAGES"
         __source_label__ = "Person"
         __target_label__ = "Person"
-        __source_cardinality__ = Cardinality.ZERO_OR_MORE
-        __target_cardinality__ = Cardinality.ZERO_OR_ONE
+        __source_cardinality__ = CardinalitySpec(min=0, max=None)
+        __target_cardinality__ = CardinalitySpec(min=0, max=1)
 
     assert Manages.__source_label__ == "Person"
     assert Manages.__target_label__ == "Person"
@@ -225,3 +204,97 @@ def test_relationship_model_from_dict():
 
     r = ActedIn.model_validate({"role": "Hermione"})
     assert r.role == "Hermione"
+
+
+# --- E40.3: conditional cardinality on ClassVar ---
+
+
+def test_relationship_model_conditional_source_cardinality():
+    """Scope: RelationshipModel with ConditionalCardinality source side constructs
+    and ClassVar reads back equal."""
+    conditional = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "short"}),
+                target=PropMatch({"kind": "none"}),
+                spec=CardinalitySpec(min=0, max=0),
+            ),
+        ),
+        default=CardinalitySpec(min=0, max=None),
+    )
+
+    class Directed(RelationshipModel):
+        __label__ = "DIRECTED"
+        __source_label__ = "Director"
+        __target_label__ = "Movie"
+        __source_cardinality__ = conditional
+
+    assert Directed.__source_cardinality__ == conditional
+
+
+def test_relationship_model_conditional_target_cardinality():
+    """Scope: ConditionalCardinality is accepted on the target side too (symmetry)."""
+    conditional = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch(),
+                target=PropMatch({"kind": "unreleased"}),
+                spec=CardinalitySpec(min=0, max=0),
+            ),
+        ),
+        default=CardinalitySpec(min=0, max=None),
+    )
+
+    class Produced(RelationshipModel):
+        __label__ = "PRODUCED"
+        __source_label__ = "Director"
+        __target_label__ = "Movie"
+        __target_cardinality__ = conditional
+
+    assert Produced.__target_cardinality__ == conditional
+
+
+def test_relationship_model_constant_cardinality_regression():
+    """Scope: constant-cardinality RelationshipModel subclass constructs correctly."""
+
+    class LivesIn(RelationshipModel):
+        __label__ = "LIVES_IN"
+        __source_label__ = "Person"
+        __target_label__ = "City"
+        __source_cardinality__ = CardinalitySpec(min=1, max=1)
+        __target_cardinality__ = CardinalitySpec(min=0, max=None)
+
+    assert LivesIn.__source_cardinality__ == CardinalitySpec(min=1, max=1)
+    assert LivesIn.__target_cardinality__ == CardinalitySpec(min=0, max=None)
+
+
+# --- E40.3: representative_spec helper ---
+
+
+def test_representative_spec_returns_plain_spec_unchanged():
+    """Scope: a CardinalitySpec passes through representative_spec unchanged."""
+    spec = CardinalitySpec(min=1, max=3)
+    assert representative_spec(spec) is spec
+
+
+def test_representative_spec_collapses_conditional_to_default():
+    """Scope: a ConditionalCardinality collapses to its default bound, never
+    raising AttributeError on min/max/contains access."""
+    conditional = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "split"}),
+                target=PropMatch({"kind": "nothing"}),
+                spec=CardinalitySpec(min=0, max=0),
+            ),
+        ),
+        default=CardinalitySpec(min=1, max=None),
+    )
+
+    result = representative_spec(conditional)
+
+    assert result == CardinalitySpec(min=1, max=None)
+    # The collapsed value supports the CardinalitySpec API the call sites need.
+    assert result.min == 1
+    assert result.max is None
+    assert result.contains(5) is True

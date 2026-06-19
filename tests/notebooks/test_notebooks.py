@@ -29,7 +29,9 @@ ALL_NOTEBOOKS = [
     # Module 01 -- Schema Design & Fundamentals
     NOTEBOOKS_DIR / "01.01_create_a_graph_definition.ipynb",
     NOTEBOOKS_DIR / "01.02_validating_graph_data.ipynb",
-    NOTEBOOKS_DIR / "01.03_optionality_and_cardinality.ipynb",
+    NOTEBOOKS_DIR / "01.03_what_is_cardinality.ipynb",
+    NOTEBOOKS_DIR / "01.04_optionality_and_cardinality.ipynb",
+    NOTEBOOKS_DIR / "01.05_conditional_cardinality.ipynb",
     # Module 02 -- Schema Portability & Visualization
     NOTEBOOKS_DIR / "02.01_yaml_configuration.ipynb",
     NOTEBOOKS_DIR / "02.02_visualization.ipynb",

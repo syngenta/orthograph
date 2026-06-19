@@ -4,13 +4,33 @@ import base64
 
 from orthograph.dependencies import require
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_definition.models import CardinalitySpec
+from orthograph.graph_definition.models import CardinalitySpec, ConditionalCardinality
 
 
-def _format_cardinality(spec: CardinalitySpec) -> str:
-    """Format a CardinalitySpec as a compact string (e.g., '0..1', '1..*')."""
-    max_str = "*" if spec.max is None else str(spec.max)
-    return f"{spec.min}..{max_str}"
+def _format_conditional(card: ConditionalCardinality) -> str:
+    """Format a ConditionalCardinality as a compact summary string.
+
+    Example: `{(source,target):1..2; (split,nothing):0..0; default:0..*}`.
+    """
+    rule_parts: list[str] = []
+    for rule in card.rules:
+        source_vals = dict(rule.source.conditions) if rule.source.conditions else "*"
+        target_vals = dict(rule.target.conditions) if rule.target.conditions else "*"
+        rule_parts.append(f"({source_vals},{target_vals}):{rule.spec.notation}")
+
+    all_parts = rule_parts + [f"default:{card.default.notation}"]
+    return "{" + "; ".join(all_parts) + "}"
+
+
+def _format_cardinality(spec: CardinalitySpec | ConditionalCardinality) -> str:
+    """Format a CardinalitySpec or ConditionalCardinality as a compact string.
+
+    For CardinalitySpec: '0..1', '1..*', etc.
+    For ConditionalCardinality: compact summary with rules and default.
+    """
+    if isinstance(spec, ConditionalCardinality):
+        return _format_conditional(spec)
+    return spec.notation
 
 
 def _mermaid_ink_url(graph: str) -> str:
@@ -84,8 +104,8 @@ def model_to_mermaid(graph_definition: GraphDefinition) -> str:
             )
             label_parts.append(props)
 
-        src_card = _format_cardinality(rt.__source_cardinality__)
-        tgt_card = _format_cardinality(rt.__target_cardinality__)
+        src_card = _format_cardinality(rt.source_cardinality())
+        tgt_card = _format_cardinality(rt.target_cardinality())
         label_parts.append(f"{src_card} : {tgt_card}")
 
         label_str = "<br>".join(label_parts)

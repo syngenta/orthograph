@@ -33,7 +33,7 @@ from typing import Literal
 from orthograph.comparison.rules import Rule, RuleContext
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue
-from orthograph.graph_definition.models import RelationshipModel
+from orthograph.graph_definition.models import RelationshipModel, representative_spec
 from orthograph.graph_definition.property_spec import TypeInfo
 from orthograph.graph_profile.models import PropertyProfile, RelationshipTypeProfile
 
@@ -208,11 +208,40 @@ def _cardinality_issue_definition(
     left: type[RelationshipModel],
     right: type[RelationshipModel],
 ) -> ValidationIssue | None:
-    """Return a CARDINALITY_CHANGED issue if source cardinalities differ, else None."""
-    l_card = left.__source_cardinality__
-    r_card = right.__source_cardinality__
+    """Return a CARDINALITY_CHANGED issue if source cardinalities differ, else None.
+
+    When either side is a
+    :class:`~orthograph.graph_definition.models.ConditionalCardinality`,
+    structural equality (``==``) is used and the context omits ``.min``/``.max``
+    keys (which do not exist on conditional specs).
+    """
+    from orthograph.graph_definition.models import ConditionalCardinality
+
+    l_card = left.source_cardinality()
+    r_card = right.source_cardinality()
     if l_card == r_card:
         return None
+
+    either_conditional = isinstance(l_card, ConditionalCardinality) or isinstance(
+        r_card, ConditionalCardinality
+    )
+
+    if either_conditional:
+        return ValidationIssue(
+            code="CARDINALITY_CHANGED",
+            severity=Severity.INFO,
+            entity_type=EntityType.RELATIONSHIP,
+            entity_id=rt,
+            message=(
+                f"Relationship '{rt}' source cardinality differs: "
+                f"left={l_card!r} right={r_card!r}"
+            ),
+            context={},
+        )
+
+    # Both sides are constant CardinalitySpec — include min/max in context.
+    l_spec = representative_spec(l_card)
+    r_spec = representative_spec(r_card)
     return ValidationIssue(
         code="CARDINALITY_CHANGED",
         severity=Severity.INFO,
@@ -223,10 +252,10 @@ def _cardinality_issue_definition(
             f"left={l_card!r} right={r_card!r}"
         ),
         context={
-            "left_min": l_card.min,
-            "left_max": l_card.max,
-            "right_min": r_card.min,
-            "right_max": r_card.max,
+            "left_min": l_spec.min,
+            "left_max": l_spec.max,
+            "right_min": r_spec.min,
+            "right_max": r_spec.max,
         },
     )
 

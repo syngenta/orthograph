@@ -6,7 +6,6 @@ import pytest
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
     NodeModel,
     RelationshipModel,
 )
@@ -47,8 +46,8 @@ class LivesIn(RelationshipModel):
     __label__ = "LIVES_IN"
     __source_label__ = "Person"
     __target_label__ = "City"
-    __source_cardinality__ = Cardinality.ONE
-    __target_cardinality__ = Cardinality.ZERO_OR_MORE
+    __source_cardinality__ = "1..1"
+    __target_cardinality__ = "0..*"
 
 
 class Directed(RelationshipModel):

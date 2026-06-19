@@ -4,8 +4,11 @@ import pytest
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
-    Cardinality,
+    CardinalitySpec,
+    ConditionalCardinality,
+    ConditionalRule,
     NodeModel,
+    PropMatch,
     RelationshipModel,
 )
 from orthograph.visualization.mermaid import (
@@ -46,8 +49,8 @@ class LivesIn(RelationshipModel):
     __label__ = "LIVES_IN"
     __source_label__ = "Person"
     __target_label__ = "Company"
-    __source_cardinality__ = Cardinality.ONE
-    __target_cardinality__ = Cardinality.ZERO_OR_MORE
+    __source_cardinality__ = "1..1"
+    __target_cardinality__ = "0..*"
 
 
 # --- Fixtures ---
@@ -246,3 +249,78 @@ def test_display_mermaid_rejects_unsupported_type():
     """display_mermaid raises TypeError for unsupported input."""
     with pytest.raises(TypeError, match="Cannot render"):
         display_mermaid(42)  # type: ignore[arg-type]
+
+
+# ============================================================
+# Conditional cardinality tests
+# ============================================================
+
+
+class Operation(NodeModel):
+    """Test node type for conditional cardinality."""
+
+    __label__ = "Operation"
+    __uid_field__ = "id"
+    id: str
+    kind: str
+
+
+class Sample(NodeModel):
+    """Test node type for conditional cardinality."""
+
+    __label__ = "Sample"
+    __uid_field__ = "id"
+    id: str
+    kind: str
+
+
+class HasOutput(RelationshipModel):
+    """Test relationship with conditional cardinality."""
+
+    __label__ = "HAS_OUTPUT"
+    __source_label__ = "Operation"
+    __target_label__ = "Sample"
+    __source_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "subsampling"}),
+                target=PropMatch({"kind": "subsampling"}),
+                spec=CardinalitySpec(min=1, max=2),
+            ),
+            ConditionalRule(
+                source=PropMatch({"kind": "split"}),
+                target=PropMatch({"kind": "nothing"}),
+                spec="0..0",
+            ),
+        ),
+        default="0..*",
+    )
+
+
+def test_mermaid_conditional_cardinality_renders():
+    """Scope: model_to_mermaid renders conditional cardinality without crashing."""
+    m = GraphDefinition(
+        name="ConditionalTest",
+        node_types=[Operation, Sample],
+        relationship_types=[HasOutput],
+    )
+    mermaid = model_to_mermaid(m)
+    assert "graph TD" in mermaid
+    assert "Operation" in mermaid
+    assert "Sample" in mermaid
+    assert "HAS_OUTPUT" in mermaid
+    # Should contain some representation of the conditional cardinality
+    assert "{" in mermaid  # Conditional summary starts with {
+
+
+def test_mermaid_constant_cardinality_unchanged():
+    """Scope: Constant cardinality rendering in mermaid is unchanged (regression)."""
+    m = GraphDefinition(
+        name="ConstantTest",
+        node_types=[Person, Movie],
+        relationship_types=[ActedIn, Directed],
+    )
+    mermaid = model_to_mermaid(m)
+    assert "ACTED_IN" in mermaid
+    # Should render as simple min..max
+    assert "0..*" in mermaid
