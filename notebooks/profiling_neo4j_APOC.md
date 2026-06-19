@@ -1,12 +1,13 @@
-# Profiling Neo4j with Orthograph - Complete Guide
+# Profiling Neo4j with Orthograph — Complete Guide
 
-Complete guide to profiling Neo4j databases and understanding APOC requirements.
+Complete guide to profiling Neo4j databases and understanding how property-type
+detection works, including the three inspection strategies and APOC requirements.
 
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
 2. [Tool Comparison](#tool-comparison)
-3. [APOC Guide](#apoc-guide)
+3. [Inspection Strategies](#inspection-strategies)
 4. [Installation](#installation)
 5. [Credential Management](#credential-management)
 6. [Usage Examples](#usage-examples)
@@ -27,7 +28,7 @@ python profile_script.py
 
 This will:
 - Connect to Neo4j (using `.env` credentials)
-- **Check APOC status** ⚠️
+- **Auto-detect the best inspection strategy** (APOC → `db.schema.*` → pure-Cypher)
 - Extract profile
 - Display results
 - Export to `scratch/profile_export.json`
@@ -54,86 +55,109 @@ jupyter notebook
 
 ## Tool Comparison
 
-| Task | Tool | Setup | Speed | Output | APOC Check |
-|------|------|-------|-------|--------|-----------|
-| **Learn profiling** | `06.01_profile_neo4j_example.ipynb` | ⭐⭐ | Slow | Console | ✓ Yes |
-| **Profile database** | `06.02_profile_neo4j_custom.ipynb` | ⭐ | Slow | Console | ✓ Yes |
-| **Automate profiling** | `profile_script.py` | ⭐ | Fast | JSON | ✓ Yes |
+| Task | Tool | Setup | Speed | Output |
+|------|------|-------|-------|--------|
+| **Learn profiling** | `06.01_profile_neo4j_example.ipynb` | ⭐⭐ | Slow | Console |
+| **Profile database** | `06.02_profile_neo4j_custom.ipynb` | ⭐ | Slow | Console |
+| **Automate profiling** | `profile_script.py` | ⭐ | Fast | JSON |
 
 ---
 
-## APOC Guide
+## Inspection Strategies
 
-### What is APOC?
+`Neo4jInspector` reads property types (`observed_types`) using one of three
+strategies, **auto-detected in order**:
 
-**APOC** = **A**wesome **P**rocedures **O**n **C**ypher
+| Priority | Strategy | Source | `observed_types` | Completeness counts |
+|----------|----------|--------|------------------|---------------------|
+| 1st | **APOC** | `apoc.meta.*` (requires APOC **Core**) | populated | true |
+| 2nd | **SCHEMA** | built-in `db.schema.*` + Cypher scan | populated | true |
+| 3rd | **CYPHER** | pure-Cypher scan only | `[]` (empty) | true |
 
-APOC is Neo4j's library of advanced procedures for graph analysis. For profiling, it provides the `apoc.meta.*` procedures that can introspect property types.
+**Completeness counts are always true** — all three strategies use the
+pure-Cypher two-pass scan for counts. The strategies differ only in whether
+they can report `observed_types`.
 
-### Why Do We Need APOC?
+### Strategy 1: APOC (Best — when available)
 
-The **`observed_types`** field shows what data types each property contains (String, Long, Boolean, etc.).
+Uses `apoc.meta.nodeTypeProperties()` and `apoc.meta.relTypeProperties()`.
 
-**Without APOC**, this field shows `(APOC required)`:
-```
-Property    Completeness  Observed Types
-name           100.0%    (APOC required)
-year           100.0%    (APOC required)
-```
-
-**With APOC**, it shows actual types:
-```
-Property    Completeness  Observed Types
-name           100.0%    String
-year           100.0%    Long
-```
-
-### How It Works: Two Modes
-
-Neo4j has **two modes** for property introspection:
-
-#### Mode 1: With APOC ✓ (Recommended)
-Uses: `apoc.meta.nodeTypeProperties()` and `apoc.meta.relTypeProperties()`
-- **Detects**: String, Long, Double, Boolean, LocalDate, etc.
-- **Requires**: APOC plugin installed
-- **Performance**: Fast (uses metadata cache)
-- **Code**: `src/orthograph/backends/neo4j/queries.py:160-166` (ApocNodePropertiesQuery)
-
-#### Mode 2: Without APOC ✗ (Fallback)
-Uses: Pure Cypher `MATCH (n:Label) UNWIND keys(n) AS key ...`
-- **Detects**: Property names and completeness only
-- **Requires**: Nothing (standard Cypher)
-- **Performance**: Slower (scans all nodes)
-- **Type detection**: ❌ Not possible → returns `[]`
-- **Code**: `src/orthograph/backends/neo4j/queries.py:232-240` (CypherNodePropertiesQuery)
-
-### What Still Works Without APOC
-
-Even without APOC, you get:
-
-✅ **Completeness**: 100% if property on all nodes
-✅ **Property Names**: name, year, etc.
-✅ **Cardinality**: Relationship degree distribution
-✅ **Constraints**: Uniqueness, existence constraints
-❌ **Observed Types**: String, Long, etc.
-
-### APOC Detection Logic
-
-All tools use `check_apoc_available()` from `utils.py`:
+- Requires **APOC Core** (the plugin must register `apoc.meta.*` procedures).
+- ⚠️  **APOC Extended** (`apoc5plus`) does **not** register `apoc.meta.*` — the
+  inspector detects this and falls through to SCHEMA automatically.
 
 ```python
-def check_apoc_available(driver) -> bool:
-    records, _, _ = driver.execute_query(
-        "SHOW PROCEDURES YIELD name WHERE name STARTS WITH 'apoc.meta' RETURN count(name) AS cnt"
-    )
-    return records[0]["cnt"] > 0 if records else False
+# APOC is auto-detected; you can also force it:
+from orthograph.backends.neo4j.inspector import Neo4jInspector, Neo4jInspectionStrategy
+
+profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.APOC).inspect(driver)
 ```
 
-**In notebooks and scripts**:
+### Strategy 2: SCHEMA (Built-in fallback — available since Neo4j 4.x)
+
+Uses the built-in `db.schema.nodeTypeProperties()` / `db.schema.relTypeProperties()`
+procedures (no plugin required) for types, combined with the pure-Cypher scan for
+true completeness counts.
+
+This is the strategy that **resolves the APOC-Extended pitfall**: when APOC is
+absent or only the Extended flavour is installed, types are still populated via
+the built-in procedures that ship with every Neo4j 4.x+ instance.
+
+Key constraint: `db.schema.*` returns **types but no observation counts**. Counts
+always come from the Cypher scan — so completeness fidelity is identical to
+pure-Cypher and the SCHEMA strategy is strictly better than falling back to CYPHER.
+
 ```python
-if not check_apoc_available(driver):
-    print("⚠️  WARNING: APOC not installed")
-    print("   Property types will NOT be detected")
+# Force SCHEMA (e.g. on a system without APOC):
+profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.SCHEMA).inspect(driver)
+```
+
+### Strategy 3: CYPHER (Last resort)
+
+Pure-Cypher two-pass scan: true completeness counts but `observed_types = []`.
+Used only when neither `apoc.meta.*` nor `db.schema.*` is available.
+
+```python
+# Force pure-Cypher (no types, but still true counts):
+profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(driver)
+```
+
+### Tradeoff Table
+
+| | `observed_types` | Completeness counts | Plugin required |
+|---|---|---|---|
+| **APOC** | ✅ populated | ✅ true | APOC Core |
+| **SCHEMA** | ✅ populated | ✅ true | none (built-in) |
+| **CYPHER** | ❌ `[]` | ✅ true | none |
+
+> **Note:** `db.schema.*` types are schema-inferred; they reflect all types ever
+> stored for a property across the graph's lifetime, not just the current snapshot.
+> APOC samples actual data. In practice both agree for stable schemas.
+
+### The APOC-Extended Pitfall
+
+Some Neo4j deployments install **APOC Extended** (`apoc5plus`) instead of APOC
+Core. APOC Extended does **not** register `apoc.meta.*`. Before E44, the inspector
+detected zero `apoc.meta` procedures, fell back to pure-Cypher, and reported
+`observed_types = []` for every property — even though `db.schema.*` was available
+the whole time. The auto-detection order (APOC → SCHEMA → CYPHER) fixes this
+silently: APOC Extended users now get types via SCHEMA.
+
+### Explicit Strategy Selection
+
+```python
+from orthograph.backends.neo4j.inspector import Neo4jInspector, Neo4jInspectionStrategy
+
+# Auto-detect (recommended — picks the best available)
+profile = Neo4jInspector().inspect(driver)
+
+# Force a specific strategy
+profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.SCHEMA).inspect(driver)
+profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(driver)
+
+# Deprecated — still works but emits DeprecationWarning
+profile = Neo4jInspector(use_apoc=False).inspect(driver)  # → CYPHER
+profile = Neo4jInspector(use_apoc=True).inspect(driver)   # → APOC
 ```
 
 ---
@@ -150,37 +174,30 @@ docker run --name neo4j \
   neo4j:latest
 ```
 
+This installs APOC Core. The inspector will use the APOC strategy automatically.
+
 ### Option B: Local Neo4j
 
 ```bash
-# 1. Download APOC jar
+# 1. Download APOC Core jar (not APOC Extended / apoc5plus)
 cd ~/Downloads
-wget https://github.com/neo4j-contrib/neo4j-apoc-procedures/releases/download/[VERSION]/apoc-[VERSION]-all.jar
+wget https://github.com/neo4j-contrib/neo4j-apoc-procedures/releases/download/[VERSION]/apoc-[VERSION]-core.jar
 
 # 2. Copy to plugins directory
-cp apoc-*.jar $NEO4J_HOME/plugins/
+cp apoc-*-core.jar $NEO4J_HOME/plugins/
 
 # 3. Restart Neo4j
 systemctl restart neo4j  # (or your restart method)
 
-# 4. Verify installation
+# 4. Verify APOC Core is available
 cypher-shell "SHOW PROCEDURES YIELD name WHERE name STARTS WITH 'apoc.meta' RETURN count(name)"
-# Should return: 1 (or higher)
+# Should return: 10 (or similar)
 ```
 
-### After Installing APOC
+### Without APOC
 
-Run any tool and you'll see:
-```
-APOC: ✓ Available (property types will be detected)
-```
-
-And profiles will show actual types:
-```
-Property    Completeness  Observed Types
-name           100.0%    String
-year           100.0%    Long
-```
+`db.schema.*` is a Neo4j built-in (available since 4.x) — no installation needed.
+The inspector will fall through to SCHEMA automatically if APOC is absent.
 
 ---
 
@@ -200,7 +217,7 @@ year           100.0%    Long
    NEO4J_PASSWORD=your-password
    ```
 
-3. Both notebooks and script will auto-load these
+3. Both notebooks and script will auto-load these.
 
 ### Direct Credentials in Notebook
 
@@ -213,7 +230,6 @@ neo4j_password = "your-password"
 
 ### Environment Variables
 
-Set as OS environment variables (highest priority):
 ```bash
 export NEO4J_URI=bolt://localhost:7687
 export NEO4J_USER=neo4j
@@ -231,87 +247,30 @@ python profile_script.py
 python profile_script.py
 ```
 
-Output:
+Output (APOC or SCHEMA detected):
 ```
 Connecting to bolt://localhost:7687...
-✓ Connected
-Database: neo4j 5.12.0
-  Nodes: 42
-  Relationships: 87
-  APOC: ✓ Available (property types will be detected)
+Connected
 
-Extracting profile...
-✓ Profile extracted
-  Node types: 3
-  Relationship types: 2
+Profiling database 'neo4j' ...
+[profile output with types populated]
 
-... (profile display) ...
-
-✓ Profile exported to scratch/profile_export.json
-✓ Driver closed
+Full profile written to: scratch/profile_export.json
 ```
 
-### Example 2: Example Notebook
-
-```bash
-jupyter notebook
-# Open: 06.01_profile_neo4j_example.ipynb
-```
-
-**Features**:
-- Auto-populates sample data (Person, Movie, ACTED_IN)
-- Checks APOC with warning if missing
-- Extracts and displays profile
-- Validates against model
-- Shows full workflow
-
-### Example 3: Custom Database
-
-```bash
-jupyter notebook
-# Open: 06.02_profile_neo4j_custom.ipynb
-```
-
-**Features**:
-- Connects to your database
-- Checks APOC with warning if missing
-- Extracts and displays profile (read-only)
-- Exports JSON
-
-### Example 4: Programmatic Usage
+### Example 2: Programmatic Usage
 
 ```python
-from utils import (
-    load_env,
-    check_apoc_available,
-    print_apoc_status,
-    extract_profile,
-    display_profile_summary,
-    display_node_profiles,
-    export_profile_json,
-)
 from neo4j import GraphDatabase
+from orthograph.api.database import inspect as ograph_inspect
 
-# Connect
-driver = GraphDatabase.driver(
-    load_env("NEO4J_URI", "bolt://localhost:7687"),
-    auth=(
-        load_env("NEO4J_USER", "neo4j"),
-        load_env("NEO4J_PASSWORD", "password")
-    )
-)
+driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
+profile = ograph_inspect("neo4j", driver)
 
-# Check APOC
-print_apoc_status(driver)
-
-# Extract and display
-profile = extract_profile(driver)
-display_profile_summary(profile)
-display_node_profiles(profile)
-
-# Export
-output_file = export_profile_json(profile)
-print(f"Exported to {output_file}")
+for label, node_profile in profile.node_type_profiles.items():
+    print(f"{label}:")
+    for prop_name, pp in node_profile.property_profiles.items():
+        print(f"  {prop_name}: {pp.completeness:.0%} complete, types={pp.observed_types}")
 
 driver.close()
 ```
@@ -320,63 +279,79 @@ driver.close()
 
 ## Understanding observed_types
 
-### The Problem
+### What You See
 
-When you run the profile script/notebook, you might see:
-
+When types are populated (APOC or SCHEMA strategy):
 ```
-Property                Completeness  Observed Types
-title                        100.0%  (APOC required)
-year                         100.0%  (APOC required)
-name                         100.0%  (APOC required)
-born                         100.0%  (APOC required)
+Node Types
+  Person (100 instances)
+    name: 100% complete [mandatory] types=[String]
+    born: 60% complete [partial]   types=[Long]
 ```
 
-The `(APOC required)` means the types couldn't be detected. **This is expected if APOC is not installed.**
-
-### Why This Happens
-
-**With APOC installed** → Uses `apoc.meta.nodeTypeProperties()`:
-```python
-class ApocNodePropertiesQuery:
-    cypher = (
-        "CALL apoc.meta.nodeTypeProperties({sample: -1})"
-        " YIELD nodeType, nodeLabels, propertyName, propertyTypes, ..."
-        f" WHERE '{label}' IN nodeLabels"
-        " RETURN propertyName, propertyTypes, ..."  # ← Gets types
-    )
+When types are empty (CYPHER strategy — last resort only):
+```
+  Person (100 instances)
+    name: 100% complete [mandatory] types=[]
+    born: 60% complete [partial]   types=[]
 ```
 
-**Without APOC** → Falls back to pure Cypher:
-```python
-class CypherNodePropertiesQuery:
-    cypher_template = (
-        "MATCH (n:`<<label>>`)"
-        " WITH count(n) AS total"
-        " MATCH (n:`<<label>>`)"
-        " UNWIND keys(n) AS key"
-        " WITH key, count(*) AS present, total"
-        " RETURN key AS propertyName, [] AS propertyTypes, ..."  # ← Empty!
-    )
-```
+### Why types=[] Still Happens
 
-### Solution
+Only when **both** `apoc.meta.*` and `db.schema.*` are unavailable — an unusual
+configuration. In practice, every Neo4j 4.x+ instance has `db.schema.*` built in,
+so `observed_types = []` should only occur on very old or specially restricted
+instances.
 
-Install APOC (see [Installation](#installation) section above).
+If you're seeing `observed_types = []` unexpectedly:
+
+1. Check which strategy was selected:
+   ```python
+   inspector = Neo4jInspector()
+   # Force SCHEMA to verify db.schema.* works on your instance:
+   profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.SCHEMA).inspect(driver)
+   ```
+
+2. Verify `db.schema.nodeTypeProperties` is available:
+   ```cypher
+   SHOW PROCEDURES YIELD name WHERE name STARTS WITH 'db.schema'
+   ```
 
 ---
 
 ## Troubleshooting
 
-### Profile shows "(APOC required)" for types
+### Profile shows types=[] unexpectedly
 
-**Cause**: APOC is not installed
+**Likely cause**: Neither APOC Core (`apoc.meta.*`) nor `db.schema.*` was detected.
 
-**Solution**: Install APOC (see [Installation](#installation) section)
+**Verify**:
+```cypher
+-- Check APOC Core
+SHOW PROCEDURES YIELD name WHERE name STARTS WITH 'apoc.meta' RETURN count(name)
+
+-- Check db.schema (built-in)
+SHOW PROCEDURES YIELD name WHERE name STARTS WITH 'db.schema' RETURN name
+```
+
+If `db.schema.nodeTypeProperties` is present, force SCHEMA:
+```python
+profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.SCHEMA).inspect(driver)
+```
+
+### I have APOC but types are still empty
+
+**Likely cause**: You have **APOC Extended** (`apoc5plus`) rather than APOC **Core**.
+APOC Extended does not register `apoc.meta.*`.
+
+The inspector now handles this automatically — it detects zero `apoc.meta.*`
+procedures and falls through to SCHEMA. Verify:
+```cypher
+SHOW PROCEDURES YIELD name WHERE name STARTS WITH 'apoc.meta' RETURN count(name)
+-- If 0: APOC Extended only; inspector uses db.schema.* (SCHEMA strategy) instead
+```
 
 ### Script fails with "Connection failed"
-
-**Cause**: Neo4j not running or wrong credentials
 
 **Check**:
 1. Is Neo4j running? `cypher-shell`
@@ -385,31 +360,17 @@ Install APOC (see [Installation](#installation) section above).
 
 ### "Database is empty" warning
 
-**Cause**: Database has no nodes
+Use `06.01_profile_neo4j_example.ipynb` to test with auto-populated sample data.
 
-**Solution**:
-- Populate database with your data, OR
-- Use `06.01_profile_neo4j_example.ipynb` to test with sample data
+### DeprecationWarning about use_apoc
 
-### APOC detection fails
-
-**Cause**: APOC installation issue
-
-**Verify**:
-```cypher
-SHOW PROCEDURES YIELD name WHERE name STARTS WITH 'apoc.meta'
+Migrate to the new `strategy=` parameter:
+```python
+# Old (deprecated)
+Neo4jInspector(use_apoc=False)
+# New
+Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER)
 ```
-
-Should return at least one row. If not, APOC isn't properly installed.
-
-### APOC check shows "Not available" but I installed it
-
-**Cause**: Neo4j hasn't been restarted after APOC installation
-
-**Solution**:
-1. Copy APOC jar to `$NEO4J_HOME/plugins/`
-2. **Restart Neo4j**
-3. Run profiling tool again
 
 ---
 
@@ -417,26 +378,24 @@ Should return at least one row. If not, APOC isn't properly installed.
 
 ### Code References
 
-- **APOC detection**: `src/orthograph/backends/neo4j/inspector.py:113-124`
-- **Query switching**: `src/orthograph/backends/neo4j/inspector.py:137`, `165`
-- **APOC queries**: `src/orthograph/backends/neo4j/queries.py:142-214`
-- **Cypher fallback**: `src/orthograph/backends/neo4j/queries.py:222-278`
-- **TODO note**: `src/orthograph/backends/neo4j/queries.py:54-55` (ADR-015 B1)
+- **Strategy enum**: `src/orthograph/backends/neo4j/inspector.py` — `Neo4jInspectionStrategy`
+- **Auto-detection**: `src/orthograph/backends/neo4j/inspector.py` — `_detect_strategy()`
+- **APOC queries**: `src/orthograph/backends/neo4j/queries.py` — `ApocNodePropertiesQuery`, `ApocRelPropertiesQuery`
+- **db.schema queries**: `src/orthograph/backends/neo4j/queries.py` — `DbSchemaNodeTypesQuery`, `DbSchemaRelTypesQuery`
+- **Cypher fallback**: `src/orthograph/backends/neo4j/queries.py` — `CypherNodePropertiesQuery`, `CypherRelPropertiesQuery`
+- **Catalogue factories**: `src/orthograph/backends/neo4j/queries.py` — `build_apoc_catalogue()`, `build_schema_catalogue()`, `build_cypher_catalogue()`
+- **ADR-033**: `.agentic/decisions/033-neo4j-db-schema-inspection-strategy.md` — full decision rationale
 
-### Utils Functions (in `utils.py`)
+### db.schema.* Column Shape (Neo4j 5.12.0, confirmed E44.0)
 
-```python
-load_env(key, default)              # Load from .env or env vars
-check_apoc_available(driver)        # Returns bool
-print_apoc_status(driver)           # Prints ✓ or ✗ with message
-get_database_info(driver)           # Returns (name, version, nodes, rels)
-extract_profile(driver)             # Returns GraphProfile
-display_profile_summary(profile)    # Console output
-display_node_profiles(profile)      # Console output
-display_relationship_profiles(profile)  # Console output
-display_constraints(profile)        # Console output
-export_profile_json(profile)        # Saves to scratch/
 ```
+nodeTypeProperties: nodeType (str, e.g. ':`Label`'), nodeLabels (list[str]),
+  propertyName (str | None), propertyTypes (list[str] | None), mandatory (bool)
+relTypeProperties:  relType  (str, e.g. ':`REL_TYPE`'),
+  propertyName (str | None), propertyTypes (list[str] | None), mandatory (bool)
+```
+
+`propertyName` and `propertyTypes` are `None` for types that have no properties.
 
 ### Tools Provided
 
@@ -445,35 +404,13 @@ export_profile_json(profile)        # Saves to scratch/
 | `06.01_profile_neo4j_example.ipynb` | Notebook | Learn + test with sample data |
 | `06.02_profile_neo4j_custom.ipynb` | Notebook | Profile your database |
 | `profile_script.py` | CLI | Quick command-line profiling |
-| `utils.py` | Module | Reusable functions |
-
-### Output
-
-All tools save profile JSON to: `notebooks/scratch/profile_export.json`
-
-The `scratch/` folder:
-- ✅ **Tracked in git** (via `.gitkeep`)
-- ❌ **Output files not committed** (via `.gitignore`)
-- 🔄 **Users regenerate outputs locally**
 
 ---
 
 ## References
 
+- **ADR-033**: [Three-Way Neo4j Inspection Strategy](../.agentic/decisions/033-neo4j-db-schema-inspection-strategy.md)
+- **Technical note**: [Neo4j Property-Type Detection](../.agentic/notes/neo4j_property_type_detection.md)
 - **Neo4j APOC**: https://neo4j.com/docs/apoc/current/
 - **APOC Releases**: https://github.com/neo4j-contrib/neo4j-apoc-procedures/releases
-- **Orthograph**: https://github.com/neo4j-labs/orthograph
 - **Neo4j Graph Database**: https://neo4j.com/
-
----
-
-## Summary
-
-This guide provides everything needed to:
-- ✅ Profile Neo4j databases using Orthograph
-- ✅ Understand APOC's role in type detection
-- ✅ Install and verify APOC
-- ✅ Use the profiling tools (CLI, notebooks, programmatic)
-- ✅ Troubleshoot common issues
-
-All profiling tools check APOC availability and warn if it's missing. **See this guide if property types show "(APOC required)".**

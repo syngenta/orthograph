@@ -335,7 +335,7 @@ vendor-free `orthograph.api` surface (`api.model`, `api.database`,
 Point-in-time structural analysis of live databases and in-memory graphs.
 
 - **[GraphInspector ABC](../../src/orthograph/graph_profile/inspection.py)** — common interface: `inspect(self, connection) -> GraphProfile`; stateless, connection injected per call
-- **[Neo4j Inspector](../../src/orthograph/backends/neo4j/inspector.py)** — live inspection via APOC + pure Cypher fallback strategy
+- **[Neo4j Inspector](../../src/orthograph/backends/neo4j/inspector.py)** — live inspection via three auto-detected strategies: **APOC** (`apoc.meta.*`, requires APOC Core) → **SCHEMA** (built-in `db.schema.*` + Cypher scan, available Neo4j 4.x+) → **CYPHER** (pure-Cypher scan, last resort). All three strategies yield true completeness counts; APOC and SCHEMA additionally populate `observed_types`. Strategy selected via `Neo4jInspectionStrategy` enum; `use_apoc=` is deprecated. See [ADR-033](../decisions/033-neo4j-db-schema-inspection-strategy.md).
 - **[Memgraph Inspector](../../src/orthograph/backends/memgraph/inspector.py)** — live inspection via Memgraph schema procedures
 - **[NetworkX Inspector](../../src/orthograph/backends/networkx/inspector.py)** — in-memory graph profiling
 - **[GraphProfile](../../src/orthograph/graph_profile/models.py)** — frozen Pydantic model: node/relationship type profiles, property completeness, cardinality statistics, constraints, metadata
@@ -457,10 +457,12 @@ Both paths (Cypher and GQLAlchemy) are needed for v0.1.0 to validate the extensi
 - [ADR-009: Inspector query alignment and GraphProfile parity](../decisions/009-inspector-query-alignment.md)
 - [ADR-010: Declared identifier parameters in typed queries](../decisions/010-declared-identifier-parameters.md)
 - [ADR-011: Capability seams and backend isolation](../decisions/011-e25-capability-seams-backend-isolation.md)
+- [ADR-012: Optional-dependency policy (APOC is optional)](../decisions/012-optional-dependency-policy.md)
 - [ADR-015: The declared/observed mirror](../decisions/015-declared-observed-mirror.md)
 - [ADR-016: Declared/observed naming and the deferred facade](../decisions/016-declared-observed-naming-and-facade.md)
 - [ADR-017: Package topology — definition / profile / comparison / diagnostics](../decisions/017-package-topology-definition-profile-comparison-diagnostics.md)
 - [ADR-018: Query package naming (`query/`, `base_models.py`, `catalogue.py`)](../decisions/018-query-package-naming.md)
+- [ADR-033: Three-way Neo4j inspection strategy — `db.schema.*` as type-bearing fallback](../decisions/033-neo4j-db-schema-inspection-strategy.md)
 
 > **Topology.** `graph_definition/` (declared side), `graph_profile/` (observed
 > side), `comparison/` (`compare`, the cross-layer reconciliation),

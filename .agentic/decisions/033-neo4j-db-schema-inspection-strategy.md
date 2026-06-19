@@ -42,6 +42,20 @@ Two problems surface:
    `plugins/`. A user asked, correctly, whether a native path exists and whether a
    backend-scoped seam should encode it.
 
+> **Amendment (2026-06-19, post-E44.1).** A first live run against an APOC-**Core**
+> 5.12 instance revealed that part of the originally-observed type loss was a
+> separate, plain bug, not a strategy gap: APOC emits a `propertyName: null`
+> sentinel row for property-less node/rel types, and `NodePropertyRow.property_name`
+> was non-nullable (`str`), so the APOC path raised a Pydantic `ValidationError`
+> before any types reached the profile. That bug is fixed independently
+> (`property_name: str | None` + skip-`None` guards in `Neo4jInspector`). **This does
+> not retract the decision below:** the APOC-**Extended**-only configuration (no
+> `apoc.meta.*`) is still a real, supported case where types must come from
+> `db.schema.*` — including when an operator *deliberately* disables APOC. The
+> `SCHEMA` strategy earns its place on that basis, not on the (now-fixed) Core bug.
+> Readers should treat the "type loss on APOC Core" framing above as partly a
+> misdiagnosed bug; the "type loss when `apoc.meta.*` is absent" framing stands.
+
 ### What `db.schema.*` does and does **not** give
 
 `CALL db.schema.nodeTypeProperties() YIELD nodeType, nodeLabels, propertyName,
@@ -123,6 +137,13 @@ the enum (`True → APOC`, `False → CYPHER`, `None → auto`) and emits a
 `DeprecationWarning`. This preserves every current caller (ADR-009 §8 flagged this
 constructor as a breaking-change surface; we choose the non-breaking path). Removal
 of `use_apoc` is a future, separately-noted change.
+
+The deprecation is justified by the *three-way* selector, not by the type-loss
+incident: a boolean `use_apoc=False` cannot distinguish "use `SCHEMA` (types via
+`db.schema.*`)" from "use `CYPHER` (no types)". This matters precisely for the
+operator who **deliberately disables APOC** yet still wants `observed_types` — the
+boolean is expressively insufficient for that intent, so an enum selector is
+required and `use_apoc` is superseded.
 
 ### 5. Identifier safety unchanged (ADR-008)
 

@@ -71,7 +71,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E41 | Conditional Cardinality — Profiling & Live-DB Enforcement (Phase 2) | Medium | planned (blocked by E40; ADR-030; additive per-pair observed stats across 3 backends) |
 | E42 | Unify Cardinality on UML Notation | Medium | **done** (2026-06-19; ADR-031; `CardinalitySpec.parse`⇄`.notation`, removes `Cardinality.*`/`EXACTLY`, one notation everywhere incl. YAML; `*` canonical for unbounded) |
 | E43 | General Conditional-Cardinality Partitioning | High | **done** (2026-06-19; ADR-032; partition by both endpoints, removes `by_kind`, definition-time guard — closes the silent-wrong-validation hole; coordinate with E42 on models.py) |
-| E44 | Neo4j `db.schema.*` Inspection Strategy — Reproducible Type Detection | Medium | planned (independent; ADR-033; third strategy: APOC→`db.schema.*`→pure-Cypher; fixes APOC-Extended type-loss; **land before E41** — both edit the Neo4j catalogue factories) |
+| E44 | Neo4j `db.schema.*` Inspection Strategy — Reproducible Type Detection | Medium | **done** (2026-06-19; ADR-033; three-way APOC→SCHEMA→CYPHER detection; `use_apoc` deprecated in favour of `Neo4jInspectionStrategy` enum; landed before E41) |
 
 ---
 
@@ -96,9 +96,9 @@ INDEPENDENT — can start immediately:
        stays sync)
   E40  Conditional Cardinality — In-Memory (independent; ADR-029; additive to graph_definition/;
        blocks E41) ✓ done (2026-06-19)
-  E44  Neo4j db.schema.* Inspection Strategy (independent; ADR-033; third property-type strategy
-       APOC→db.schema.*→pure-Cypher; backend-scoped to backends/neo4j/; LAND BEFORE E41 — both
-       edit build_*_catalogue in backends/neo4j/queries.py)
+   E44  Neo4j db.schema.* Inspection Strategy (independent; ADR-033; third property-type strategy
+        APOC→db.schema.*→pure-Cypher; backend-scoped to backends/neo4j/; landed before E41)
+        ✓ done (2026-06-19)
 
 AFTER E40:
   E41  Conditional Cardinality — Profiling (ADR-030; per-pair observed statistics + live-DB
@@ -210,7 +210,6 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E35 — Write Query Return-Row Echo](active_epics/E35_write_query_return_rows.md)
 - [E39 — Async Query Runner](active_epics/E39_async_query_runner.md)
 - [E41 — Conditional Cardinality — Profiling & Live-DB Enforcement (Phase 2)](active_epics/E41_conditional_cardinality_profiling.md)
-- [E44 — Neo4j `db.schema.*` Inspection Strategy](active_epics/E44_neo4j_db_schema_inspection_strategy.md)
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 
@@ -225,6 +224,7 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E37 — Simple Cypher Query — Shared Validation, Catalogue Parity, and Executor](archived_epics/E37_simple_cypher_query_shared_validation.md) *(done 2026-06-17; `CypherQueryBase` fate is a separate follow-on discussion)*
 - [E38 — CypherQuery Signature Collapse — `Params` + `Identifiers` Only](archived_epics/E38_cypher_query_params_collapse.md) *(done 2026-06-18; collapsed three-into-one via JSON-Schema round-trip and ADR-027)*
 - [E43 — General Conditional-Cardinality Partitioning](archived_epics/E43_general_conditional_cardinality_partitioning.md) *(done 2026-06-19)*
+- [E44 — Neo4j `db.schema.*` Inspection Strategy](archived_epics/E44_neo4j_db_schema_inspection_strategy.md) *(done 2026-06-19)*
 - [E42 — Unify Cardinality on UML Notation](archived_epics/E42_unify_cardinality_uml_notation.md) *(done 2026-06-19)*
 - [E6 — Cypher Query Catalogue](archived_epics/E6_query_catalogue.md)
 - [E12 — Shared Catalogue Interface](archived_epics/E12_shared_catalogue_interface.md)

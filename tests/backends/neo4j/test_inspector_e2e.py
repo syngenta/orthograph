@@ -31,7 +31,11 @@ from typing import Any, Optional
 
 import pytest
 
-from orthograph.backends.neo4j.inspector import Neo4jInspector, validate_database
+from orthograph.backends.neo4j.inspector import (
+    Neo4jInspectionStrategy,
+    Neo4jInspector,
+    validate_database,
+)
 from orthograph.backends.neo4j.queries import build_apoc_catalogue
 from orthograph.cypher.bindings import NoParams
 from orthograph.cypher.exceptions import CypherIdentifierError
@@ -87,31 +91,31 @@ def _seed(driver: Any) -> None:
 
 
 @pytest.mark.neo4j
-def test_apoc_auto_detection_no_apoc(neo4j_driver: Any, neo4j_clean: None) -> None:
-    """Inspector selects pure-Cypher when APOC procedures are absent.
+def test_auto_detection_yields_counts(neo4j_driver: Any, neo4j_clean: None) -> None:
+    """Auto-detection (default) yields a usable profile with node counts.
 
-    Observable behaviour: against a Neo4j instance with no APOC installation,
-    auto-detection (``use_apoc=None``) resolves to the pure-Cypher path, so a
-    seeded DB still yields node-property counts (the APOC-only metadata path is
-    not taken) and inspection succeeds.
+    Observable behaviour: with no explicit strategy, the inspector auto-detects
+    (APOC → SCHEMA → CYPHER) and a seeded DB yields node-property counts
+    regardless of which strategy the live instance resolves to.
     """
     _seed(neo4j_driver)
     profile = Neo4jInspector().inspect(neo4j_driver)
-    # Pure-Cypher path derives counts from the MATCH/count scan.
     assert profile.node_type_profiles["Person"].count == 2
 
 
 @pytest.mark.neo4j
-def test_explicit_use_apoc_false_skips_detection(
+def test_explicit_cypher_strategy_skips_detection(
     neo4j_driver: Any, neo4j_clean: None
 ) -> None:
-    """use_apoc=False uses the pure-Cypher path and never probes for APOC.
+    """strategy=CYPHER uses the pure-Cypher path and never probes procedures.
 
-    Observable behaviour: no ``SHOW PROCEDURES`` (APOC auto-detect) query is
-    issued, and the produced profile uses pure-Cypher counts.
+    Observable behaviour: no ``SHOW PROCEDURES`` (auto-detect) query is issued,
+    and the produced profile uses pure-Cypher counts.
     """
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     assert profile.node_type_profiles["Person"].count == 2
     assert profile.relationship_types == {"ACTED_IN"}
 
@@ -126,7 +130,9 @@ def test_empty_db_returns_empty_profile(neo4j_driver: Any, neo4j_clean: None) ->
     not asserted to be empty here.  What must be empty is every node profile's
     property map and count.
     """
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
 
     assert profile.source == "neo4j"
     assert profile.relationship_types == set()
@@ -139,7 +145,9 @@ def test_empty_db_returns_empty_profile(neo4j_driver: Any, neo4j_clean: None) ->
 def test_node_labels_detected(neo4j_driver: Any, neo4j_clean: None) -> None:
     """After seeding, both Person and Movie are present in the profile."""
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     assert profile.node_labels == {"Person", "Movie"}
 
 
@@ -150,7 +158,9 @@ def test_node_counts(neo4j_driver: Any, neo4j_clean: None) -> None:
     Both Person (2) and Movie (2) were seeded.
     """
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     assert profile.node_type_profiles["Person"].count == 2
     assert profile.node_type_profiles["Movie"].count == 2
 
@@ -161,7 +171,9 @@ def test_node_property_names(neo4j_driver: Any, neo4j_clean: None) -> None:
     label.  Person has {name, born}; Movie has {title, year}.
     """
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     person_props = set(profile.node_type_profiles["Person"].property_profiles)
     movie_props = set(profile.node_type_profiles["Movie"].property_profiles)
     assert person_props == {"name", "born"}
@@ -175,7 +187,9 @@ def test_mandatory_property_is_required(neo4j_driver: Any, neo4j_clean: None) ->
     name is present on both Alice and Bob (present_count == total_count == 2).
     """
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     name_pp = profile.node_type_profiles["Person"].property_profiles["name"]
     assert name_pp.is_required is True
     assert name_pp.present_count == 2
@@ -192,7 +206,9 @@ def test_optional_property_is_not_required(
     total_count=2, is_required=False.
     """
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     born_pp = profile.node_type_profiles["Person"].property_profiles["born"]
     assert born_pp.is_required is False
     assert born_pp.present_count == 1
@@ -203,7 +219,9 @@ def test_optional_property_is_not_required(
 def test_relationship_type_detected(neo4j_driver: Any, neo4j_clean: None) -> None:
     """After seeding, ACTED_IN is present in rel_type_profiles."""
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     assert profile.relationship_types == {"ACTED_IN"}
 
 
@@ -213,7 +231,9 @@ def test_relationship_count(neo4j_driver: Any, neo4j_clean: None) -> None:
     rel-property scan (three edges were seeded).
     """
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     assert profile.rel_type_profiles["ACTED_IN"].count == 3
 
 
@@ -223,7 +243,9 @@ def test_relationship_property_names(neo4j_driver: Any, neo4j_clean: None) -> No
     relationship type.  All three ACTED_IN edges carry role.
     """
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     props = set(profile.rel_type_profiles["ACTED_IN"].property_profiles)
     assert props == {"role"}
 
@@ -232,7 +254,9 @@ def test_relationship_property_names(neo4j_driver: Any, neo4j_clean: None) -> No
 def test_endpoint_labels_populated(neo4j_driver: Any, neo4j_clean: None) -> None:
     """source_labels and target_labels are populated by the endpoint-labels query."""
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     acted_in = profile.rel_type_profiles["ACTED_IN"]
     assert acted_in.source_labels == {"Person"}
     assert acted_in.target_labels == {"Movie"}
@@ -246,7 +270,9 @@ def test_cardinality_stats_populated(neo4j_driver: Any, neo4j_clean: None) -> No
     values are min=1, max=2, avg=1.5, sample_size=2.
     """
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     cs = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
     assert cs is not None
     assert cs.min_degree == 1
@@ -268,7 +294,9 @@ def test_cardinality_not_computed_against_target_label(
     has occurred.
     """
     _seed(neo4j_driver)
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     cs = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
     assert cs is not None
     assert cs.min_degree > 0, (
@@ -288,8 +316,50 @@ def test_cardinality_none_when_no_relationships(
         "MERGE (:Person {name: 'Alice'})"
         " MERGE (:Movie {title: 'Inception', year: 2010})"
     )
-    profile = Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
     assert "ACTED_IN" not in profile.rel_type_profiles
+
+
+@pytest.mark.neo4j
+def test_schema_strategy_populates_types_with_true_counts(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """SCHEMA strategy: observed_types populated AND completeness counts true.
+
+    This is the reproduced-failure scenario from ADR-033, now fixed: forcing
+    ``strategy=SCHEMA`` (the path auto-detection selects when ``apoc.meta.*`` is
+    absent but ``db.schema.*`` exists) yields populated ``observed_types`` from
+    ``db.schema.*`` while keeping the true completeness counts from the
+    pure-Cypher scan.
+
+    Seeded data: Alice has born=1985, Bob has no born — so on Person, ``name`` is
+    complete (2/2) and ``born`` is partial (1/2).  Without this strategy the
+    pure-Cypher fallback would report ``observed_types == []``.
+    """
+    _seed(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.SCHEMA).inspect(
+        neo4j_driver
+    )
+
+    person = profile.node_type_profiles["Person"]
+    # Types populated from db.schema.* (the fix).
+    assert person.property_profiles["name"].observed_types != []
+    assert "String" in person.property_profiles["name"].observed_types
+    # True completeness counts preserved from the scan.
+    name_pp = person.property_profiles["name"]
+    assert name_pp.present_count == 2
+    assert name_pp.total_count == 2
+    born_pp = person.property_profiles["born"]
+    assert born_pp.present_count == 1
+    assert born_pp.total_count == 2
+
+    # Relationship property types populated too.
+    role_pp = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
+    assert role_pp.observed_types != []
+    assert role_pp.present_count == 3
+    assert role_pp.total_count == 3
 
 
 @pytest.mark.neo4j
@@ -380,7 +450,7 @@ def test_internal_catalogue_populated(neo4j_driver: Any, neo4j_clean: None) -> N
     """The pure-Cypher catalogue holds exactly the 7 expected query names."""
     from orthograph.backends.neo4j.queries import build_cypher_catalogue
 
-    Neo4jInspector(use_apoc=False).inspect(neo4j_driver)
+    Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(neo4j_driver)
     names = set(build_cypher_catalogue().names())
     assert names == {
         "neo4j.inspect.node_labels",

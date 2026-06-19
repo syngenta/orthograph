@@ -18,6 +18,10 @@ from orthograph.backends.neo4j.queries import (
     ApocRelPropertiesQuery,
     CypherNodePropertiesQuery,
     CypherRelPropertiesQuery,
+    DbSchemaNodeTypeRow,
+    DbSchemaNodeTypesQuery,
+    DbSchemaRelTypeRow,
+    DbSchemaRelTypesQuery,
     InspectNeo4jConstraintsQuery,
     InspectNodeLabelsQuery,
     InspectRelTypesQuery,
@@ -26,6 +30,7 @@ from orthograph.backends.neo4j.queries import (
     RelTypeLabelRow,
     build_apoc_catalogue,
     build_cypher_catalogue,
+    build_schema_catalogue,
 )
 from orthograph.cypher.bindings import NoParams
 from orthograph.cypher.exceptions import CypherIdentifierError
@@ -241,6 +246,103 @@ def test_cypher_rel_properties_injected_rel_type_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# DbSchemaNodeTypesQuery
+# ---------------------------------------------------------------------------
+
+
+def test_db_schema_node_types_build_returns_expected_cypher() -> None:
+    q = DbSchemaNodeTypesQuery()
+    cypher, params = q.build(_no_params())
+    assert "CALL db.schema.nodeTypeProperties()" in cypher
+    assert "nodeType" in cypher
+    assert "propertyTypes" in cypher
+    # Bulk query — no interpolated identifier slots.
+    assert "<<" not in cypher
+    assert params == {}
+
+
+def test_db_schema_node_types_materialize_strips_prefix() -> None:
+    q = DbSchemaNodeTypesQuery()
+    row = q.materialize(
+        {
+            "nodeType": ":`Sample`",
+            "nodeLabels": ["Sample"],
+            "propertyName": "name",
+            "propertyTypes": ["String"],
+            "mandatory": True,
+        }
+    )
+    assert isinstance(row, DbSchemaNodeTypeRow)
+    assert row.label == "Sample"
+    assert row.property_name == "name"
+    assert row.observed_types == ["String"]
+
+
+def test_db_schema_node_types_materialize_none_property() -> None:
+    """A node type with no properties yields propertyName/propertyTypes None."""
+    q = DbSchemaNodeTypesQuery()
+    row = q.materialize(
+        {
+            "nodeType": ":`Empty`",
+            "nodeLabels": ["Empty"],
+            "propertyName": None,
+            "propertyTypes": None,
+            "mandatory": False,
+        }
+    )
+    assert row.label == "Empty"
+    assert row.property_name is None
+    assert row.observed_types == []
+
+
+# ---------------------------------------------------------------------------
+# DbSchemaRelTypesQuery
+# ---------------------------------------------------------------------------
+
+
+def test_db_schema_rel_types_build_returns_expected_cypher() -> None:
+    q = DbSchemaRelTypesQuery()
+    cypher, params = q.build(_no_params())
+    assert "CALL db.schema.relTypeProperties()" in cypher
+    assert "relType" in cypher
+    assert "propertyTypes" in cypher
+    assert "<<" not in cypher
+    assert params == {}
+
+
+def test_db_schema_rel_types_materialize_strips_prefix() -> None:
+    q = DbSchemaRelTypesQuery()
+    row = q.materialize(
+        {
+            "relType": ":`ACTED_IN`",
+            "propertyName": "role",
+            "propertyTypes": ["String"],
+            "mandatory": False,
+        }
+    )
+    assert isinstance(row, DbSchemaRelTypeRow)
+    assert row.rel_type == "ACTED_IN"
+    assert row.property_name == "role"
+    assert row.observed_types == ["String"]
+
+
+def test_db_schema_rel_types_materialize_none_property() -> None:
+    """A rel type with no properties yields propertyName/propertyTypes None."""
+    q = DbSchemaRelTypesQuery()
+    row = q.materialize(
+        {
+            "relType": ":`HAS_SAMPLE`",
+            "propertyName": None,
+            "propertyTypes": None,
+            "mandatory": False,
+        }
+    )
+    assert row.rel_type == "HAS_SAMPLE"
+    assert row.property_name is None
+    assert row.observed_types == []
+
+
+# ---------------------------------------------------------------------------
 # Catalogue factories
 # ---------------------------------------------------------------------------
 
@@ -267,9 +369,31 @@ def test_cypher_catalogue_registered_names() -> None:
     assert len(names) == 7
 
 
+def test_schema_catalogue_registered_names() -> None:
+    query_catalogue = build_schema_catalogue()
+    names = query_catalogue.names()
+    # The pure-Cypher scan queries (for true counts)
+    assert "neo4j.inspect.cypher.node_properties" in names
+    assert "neo4j.inspect.cypher.rel_properties" in names
+    # The db.schema.* type queries
+    assert "neo4j.inspect.schema.node_types" in names
+    assert "neo4j.inspect.schema.rel_types" in names
+    # Shared neutral queries
+    assert "neo4j.inspect.node_labels" in names
+    assert "neo4j.inspect.rel_types" in names
+    assert "inspect.cardinality" in names
+    assert "neo4j.inspect.constraints" in names
+    assert "inspect.endpoint_labels" in names
+    assert len(names) == 9
+
+
 def test_catalogue_all_reads_have_output_schema() -> None:
     """Every registered read must have an output_schema (non-None)."""
-    for query_catalogue in (build_apoc_catalogue(), build_cypher_catalogue()):
+    for query_catalogue in (
+        build_apoc_catalogue(),
+        build_cypher_catalogue(),
+        build_schema_catalogue(),
+    ):
         for desc in query_catalogue.describe():
             if desc.kind == "read":
                 assert desc.output_schema is not None, (

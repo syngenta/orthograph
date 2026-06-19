@@ -10,7 +10,7 @@ Routing table. No content lives here — each link points to the single canonica
 |----------|------|
 | What is this project, who is it for, what are the constraints? | [knowledge/product_requirements_document.md](knowledge/product_requirements_document.md) |
 | What is the package topology (definition/profile/comparison/diagnostics) and why? | [decisions/017-package-topology-definition-profile-comparison-diagnostics.md](decisions/017-package-topology-definition-profile-comparison-diagnostics.md) |
-| What is the inspection contract (inspector ABC, GraphProfile) and how are optional deps handled? | [decisions/012-optional-dependency-policy.md](decisions/012-optional-dependency-policy.md) |
+| What is the inspection contract (inspector ABC, GraphProfile) and how are optional deps handled? | [decisions/012-optional-dependency-policy.md](decisions/012-optional-dependency-policy.md) — for the Neo4j three-way strategy (APOC / SCHEMA / CYPHER), see [decisions/033-neo4j-db-schema-inspection-strategy.md](decisions/033-neo4j-db-schema-inspection-strategy.md) |
 | What is the consumer-facing API surface? | `src/orthograph/api/` — `model.py` (load/save/validate in-memory), `database.py` (inspect/validate/query/execute), `visualization.py` (render_*/display) |
 | How does a backend name map to an adapter, and how is availability checked? | `src/orthograph/backends/loader.py` (adapter wiring) + `src/orthograph/dependencies.py` (availability) |
 | Where do vendor backends and the vendor-free inspection currency live? | `src/orthograph/backends/<vendor>/` (adapters + queries) and `src/orthograph/graph_profile/` (GraphProfile, inspector ABC); the declared side is `src/orthograph/graph_definition/`, the cross-layer comparison is `src/orthograph/comparison/` (`compare_profile_to_definition`, `compare_profiles`, `compare_definitions`), and the shared result currency is `src/orthograph/diagnostics/`. The Cypher language tool is top-level `src/orthograph/cypher/`. *(Topology per ADR-017.)* |
@@ -18,6 +18,7 @@ Routing table. No content lives here — each link points to the single canonica
 | How is cardinality authored? What is the UML notation grammar (`"1..*"`)? | [decisions/031-unify-cardinality-on-uml-notation.md](decisions/031-unify-cardinality-on-uml-notation.md) (notation grammar, round-trip invariant; supersedes the cardinality-naming parts of ADR-001/005) |
 | How does conditional cardinality partition/enforce counts? Why discriminate on both endpoints? | [decisions/032-general-conditional-cardinality-partitioning.md](decisions/032-general-conditional-cardinality-partitioning.md) (both-endpoint partitioning, `by_kind` removed; amends ADR-029 §3/§4/§7) + `src/orthograph/graph_definition/validation.py` (`_partition_counts`, `_check_conditional_side`) |
 | Why was a specific architectural decision made? | [decisions/](decisions/) — search by title or category |
+| How does Neo4j's `Neo4jInspector` detect and read property types? | [notes/neo4j_property_type_detection.md](notes/neo4j_property_type_detection.md) (APOC / SCHEMA / CYPHER strategies, deprecation, backward compatibility) |
 | What work is planned and in what order? | [planning/overview.md](planning/overview.md) |
 | What are the tasks for a specific epic? | [planning/active_epics/](planning/active_epics/) (archived: [planning/archived_epics/](planning/archived_epics/)) |
 
@@ -31,6 +32,7 @@ Routing table. No content lives here — each link points to the single canonica
 ├── knowledge/                  ← stable reference, rarely changes
 │   └── product_requirements_document.md  ← problem, vision, constraints, capabilities
 ├── decisions/                  ← architectural decisions (ADR format, flat numbered)
+├── notes/                      ← technical notes, memoranda, implementation guides
 ├── planning/                   ← work to do (temporary — migrates to Jira)
 │   ├── overview.md             ← epic index with status and dependency order
 │   ├── active_epics/           ← one file per in-progress/planned epic with tasks

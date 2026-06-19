@@ -57,7 +57,8 @@ Extension        What it adds
 ===============  ====================================================================
 ``neo4j``        ``Neo4jInspector`` — inspects a live Neo4j database and produces a
                  ``GraphProfile``; ``validate_database()`` compares the profile
-                 against a declared model.
+                 against a declared model. *(See* ``.agentic/notes/`` *for type-
+                 detection strategy details.)*
 ``memgraph``     ``MemgraphInspector`` — same interface as the Neo4j inspector,
                  using Memgraph's schema procedures via the Bolt driver.
 ``networkx``     ``NetworkxInspector`` — in-process inspection of a
@@ -76,6 +77,7 @@ Extension        What it adds
 
 
 Installation
+
 ------------
 
 Create a dedicated Python environment first:
