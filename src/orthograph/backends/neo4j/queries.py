@@ -35,6 +35,8 @@ from orthograph.graph_profile.models import (
 from orthograph.graph_profile.queries.shared import (
     InspectCardinalityQuery,
     InspectEndpointLabelsQuery,
+    InspectSourcePartitionedCardinalityQuery,
+    InspectTargetPartitionedCardinalityQuery,
     coerce_types,
 )
 from orthograph.query.catalogue import QueryCatalogue
@@ -377,6 +379,34 @@ with _warnings.catch_warnings():
 # ---------------------------------------------------------------------------
 
 
+_PARTITIONED_PLACEHOLDER_IDENTIFIERS = {
+    "label": "_",
+    "rel_type": "_",
+    "source_discriminator": "_",
+    "target_discriminator": "_",
+}
+
+
+def _register_partitioned_cardinality(catalogue: QueryCatalogue) -> None:
+    """Register both per-side partitioned cardinality queries (E41.7).
+
+    Source and target are always registered together so every strategy catalogue
+    (APOC / Cypher / SCHEMA) exposes the symmetric pair — a both-endpoint
+    conditional relationship can be profiled on either side regardless of which
+    inspection strategy is active.
+    """
+    catalogue.register_read(
+        InspectSourcePartitionedCardinalityQuery(
+            identifiers=_PARTITIONED_PLACEHOLDER_IDENTIFIERS
+        )
+    )
+    catalogue.register_read(
+        InspectTargetPartitionedCardinalityQuery(
+            identifiers=_PARTITIONED_PLACEHOLDER_IDENTIFIERS
+        )
+    )
+
+
 def build_apoc_catalogue() -> QueryCatalogue:
     """Return an internal QueryCatalogue populated with APOC-strategy queries."""
     query_catalogue = QueryCatalogue()
@@ -391,6 +421,7 @@ def build_apoc_catalogue() -> QueryCatalogue:
     query_catalogue.register_read(
         InspectEndpointLabelsQuery(identifiers={"rel_type": "_"})
     )
+    _register_partitioned_cardinality(query_catalogue)
     return query_catalogue
 
 
@@ -410,6 +441,7 @@ def build_cypher_catalogue() -> QueryCatalogue:
     query_catalogue.register_read(
         InspectEndpointLabelsQuery(identifiers={"rel_type": "_"})
     )
+    _register_partitioned_cardinality(query_catalogue)
     return query_catalogue
 
 
@@ -436,4 +468,5 @@ def build_schema_catalogue() -> QueryCatalogue:
     query_catalogue.register_read(
         InspectEndpointLabelsQuery(identifiers={"rel_type": "_"})
     )
+    _register_partitioned_cardinality(query_catalogue)
     return query_catalogue

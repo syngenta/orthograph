@@ -1,5 +1,6 @@
 """NodeModel and RelationshipModel base classes for defining graph types."""
 
+import enum
 import inspect
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -300,6 +301,19 @@ def _coerce_cardinality(
 # ---------------------------------------------------------------------------
 
 
+def coerce_match_value(value: object) -> object:
+    """Normalise an observed property value for ``PropMatch`` equality.
+
+    An :class:`enum.Enum` member is reduced to its ``.value`` so a rule authored
+    with the underlying literal matches a node property whose ``model_dump()``
+    preserved the member (the plain-``Enum`` discriminator case). All other
+    values pass through unchanged, so scalar comparisons are unaffected.
+    """
+    if isinstance(value, enum.Enum):
+        return value.value
+    return value
+
+
 class PropMatch(BaseModel):
     """A conjunction of property-equality predicates for one relationship endpoint.
 
@@ -352,8 +366,21 @@ class PropMatch(BaseModel):
 
         A condition is satisfied only when *props* contains the key and its value
         is equal; an absent key never matches (even against a ``None`` condition).
+
+        Enum-valued observations are normalised to their ``.value`` before the
+        comparison so that a node property typed as a plain ``enum.Enum`` (whose
+        ``model_dump()`` yields the member, e.g. ``Genre.DRAMA``, not the string
+        ``"drama"``) still matches a rule authored with the literal value
+        (``PropMatch({"genre": "drama"})``). Without this a plain ``enum.Enum``
+        member never equals its string value, so the partition would silently
+        miss every edge and the validator would report a spurious 0-count
+        violation. ``str``-mixin enums already compare equal to their value, so
+        the normalisation is a no-op for them; plain scalars are untouched.
         """
-        return all(k in props and props[k] == v for k, v in self.conditions.items())
+        return all(
+            k in props and coerce_match_value(props[k]) == v
+            for k, v in self.conditions.items()
+        )
 
     @property
     def specificity(self) -> int:

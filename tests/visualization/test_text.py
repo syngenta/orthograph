@@ -96,9 +96,7 @@ def sample_profile() -> GraphProfile:
                 count=12,
                 source_labels={"Person"},
                 target_labels={"Movie"},
-                cardinality_stats=CardinalityStats(
-                    min_degree=1, max_degree=4, avg_degree=2.4, sample_size=5
-                ),
+                cardinality_stats=CardinalityStats(count=5, min=1, max=4, mean=2.4),
             ),
         },
     )
@@ -226,10 +224,11 @@ def test_profile_to_text_property_completeness(sample_profile: GraphProfile):
     assert "(8/10)" in text
 
 
-def test_profile_to_text_mandatory_partial(sample_profile: GraphProfile):
+def test_profile_to_text_observed_ratio_no_mandatory_tag(sample_profile: GraphProfile):
+    """E45.5: [mandatory]/[partial] replaced by observed ratio (ADR-034 §4)."""
     text = profile_to_text(sample_profile)
-    assert "[mandatory]" in text  # name is 100% complete
-    assert "[partial]" in text  # age is 80% complete
+    assert "[mandatory]" not in text
+    assert "[partial]" not in text
 
 
 def test_profile_to_text_observed_types(sample_profile: GraphProfile):
@@ -254,6 +253,204 @@ def test_profile_to_text_cardinality_stats(sample_profile: GraphProfile):
     assert "min=1" in text
     assert "max=4" in text
     assert "avg=2.4" in text
+
+
+# ============================================================
+# E45.5 rendering tests: constraint_required and value_distribution
+# ============================================================
+
+
+def test_profile_to_text_constraint_required_true():
+    """[constrained] tag shown when constraint_required is True."""
+    profile = GraphProfile(
+        source="s",
+        timestamp=datetime(2026, 1, 1),
+        node_type_profiles={
+            "X": NodeTypeProfile(
+                label="X",
+                count=5,
+                property_profiles={
+                    "name": PropertyProfile(
+                        name="name",
+                        present_count=5,
+                        total_count=5,
+                        constraint_required=True,
+                    )
+                },
+            )
+        },
+    )
+    text = profile_to_text(profile)
+    assert "[constrained]" in text
+    assert "[unconstrained]" not in text
+
+
+def test_profile_to_text_constraint_required_false():
+    """[unconstrained] tag shown when constraint_required is False."""
+    profile = GraphProfile(
+        source="s",
+        timestamp=datetime(2026, 1, 1),
+        node_type_profiles={
+            "X": NodeTypeProfile(
+                label="X",
+                count=5,
+                property_profiles={
+                    "name": PropertyProfile(
+                        name="name",
+                        present_count=5,
+                        total_count=5,
+                        constraint_required=False,
+                    )
+                },
+            )
+        },
+    )
+    text = profile_to_text(profile)
+    assert "[unconstrained]" in text
+    assert "[constrained]" not in text
+
+
+def test_profile_to_text_constraint_required_none_silent():
+    """No constraint tag shown when constraint_required is None (silent)."""
+    profile = GraphProfile(
+        source="s",
+        timestamp=datetime(2026, 1, 1),
+        node_type_profiles={
+            "X": NodeTypeProfile(
+                label="X",
+                count=5,
+                property_profiles={
+                    "p": PropertyProfile(
+                        name="p",
+                        present_count=5,
+                        total_count=5,
+                        constraint_required=None,
+                    )
+                },
+            )
+        },
+    )
+    text = profile_to_text(profile)
+    assert "[constrained]" not in text
+    assert "[unconstrained]" not in text
+
+
+def test_profile_to_text_value_distribution_complete():
+    """Complete value distribution rendered as values=[k:v, ...]."""
+    from orthograph.graph_profile.models import BoundedDistribution
+
+    dist = BoundedDistribution(
+        count=5, histogram={"red": 3, "blue": 2}, sample_complete=True
+    )
+    profile = GraphProfile(
+        source="s",
+        timestamp=datetime(2026, 1, 1),
+        node_type_profiles={
+            "X": NodeTypeProfile(
+                label="X",
+                count=5,
+                property_profiles={
+                    "colour": PropertyProfile(
+                        name="colour",
+                        present_count=5,
+                        total_count=5,
+                        value_distribution=dist,
+                    )
+                },
+            )
+        },
+    )
+    text = profile_to_text(profile)
+    assert "values=[" in text
+    assert "red:3" in text
+    assert "blue:2" in text
+    assert "more" not in text
+
+
+def test_profile_to_text_value_distribution_truncated():
+    """Truncated distribution shows +N more marker."""
+    from orthograph.graph_profile.models import BoundedDistribution
+
+    dist = BoundedDistribution(
+        count=1000,
+        histogram={"uid1": 1, "uid2": 1},
+        sample_complete=False,
+        limit=2,
+        other_count=998,
+    )
+    profile = GraphProfile(
+        source="s",
+        timestamp=datetime(2026, 1, 1),
+        node_type_profiles={
+            "X": NodeTypeProfile(
+                label="X",
+                count=1000,
+                property_profiles={
+                    "id": PropertyProfile(
+                        name="id",
+                        present_count=1000,
+                        total_count=1000,
+                        value_distribution=dist,
+                    )
+                },
+            )
+        },
+    )
+    text = profile_to_text(profile)
+    assert "values=[" in text
+    assert "+998 more" in text
+
+
+def test_profile_to_text_value_distribution_none_silent():
+    """No values= shown when value_distribution is None."""
+    profile = GraphProfile(
+        source="s",
+        timestamp=datetime(2026, 1, 1),
+        node_type_profiles={
+            "X": NodeTypeProfile(
+                label="X",
+                count=5,
+                property_profiles={
+                    "p": PropertyProfile(
+                        name="p",
+                        present_count=5,
+                        total_count=5,
+                        value_distribution=None,
+                    )
+                },
+            )
+        },
+    )
+    text = profile_to_text(profile)
+    assert "values=" not in text
+
+
+def test_profile_to_text_all_none_fields_no_crash():
+    """profile_to_text handles a profile with all optional fields None."""
+    profile = GraphProfile(
+        source="empty",
+        timestamp=datetime(2026, 1, 1),
+        node_type_profiles={
+            "A": NodeTypeProfile(
+                label="A",
+                count=0,
+                property_profiles={
+                    "x": PropertyProfile(name="x", present_count=0, total_count=0)
+                },
+            )
+        },
+        rel_type_profiles={
+            "REL": RelationshipTypeProfile(
+                rel_type="REL",
+                count=0,
+                source_labels={"A"},
+                target_labels={"A"},
+                cardinality_stats=None,
+            )
+        },
+    )
+    text = profile_to_text(profile)
+    assert "Profile: empty" in text
 
 
 # ============================================================

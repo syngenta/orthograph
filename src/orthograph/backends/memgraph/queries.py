@@ -14,6 +14,8 @@ from orthograph.cypher.bindings import CypherQueryData, NoParams
 from orthograph.graph_profile.queries.shared import (
     InspectCardinalityQuery,
     InspectEndpointLabelsQuery,
+    InspectSourcePartitionedCardinalityQuery,
+    InspectTargetPartitionedCardinalityQuery,
     coerce_types,
 )
 from orthograph.query.catalogue import QueryCatalogue
@@ -163,6 +165,22 @@ class MemgraphEndpointLabelsQuery(InspectEndpointLabelsQuery):
     name = "memgraph.inspect.endpoint_labels"
 
 
+class MemgraphSourcePartitionedCardinalityQuery(
+    InspectSourcePartitionedCardinalityQuery
+):
+    """Source-side partitioned cardinality under the Memgraph catalogue name (E41.4)."""
+
+    name = "memgraph.inspect.partitioned_cardinality.source"
+
+
+class MemgraphTargetPartitionedCardinalityQuery(
+    InspectTargetPartitionedCardinalityQuery
+):
+    """Target-side partitioned cardinality under the Memgraph catalogue name (E41.7)."""
+
+    name = "memgraph.inspect.partitioned_cardinality.target"
+
+
 # ---------------------------------------------------------------------------
 # Catalogue factory
 # ---------------------------------------------------------------------------
@@ -179,5 +197,25 @@ def build_memgraph_catalogue() -> QueryCatalogue:
     )
     query_catalogue.register_read(
         MemgraphEndpointLabelsQuery(identifiers={"rel_type": "_"})
+    )
+    query_catalogue.register_read(
+        MemgraphSourcePartitionedCardinalityQuery(
+            identifiers={
+                "label": "_",
+                "rel_type": "_",
+                "source_discriminator": "_",
+                "target_discriminator": "_",
+            }
+        )
+    )
+    query_catalogue.register_read(
+        MemgraphTargetPartitionedCardinalityQuery(
+            identifiers={
+                "label": "_",
+                "rel_type": "_",
+                "source_discriminator": "_",
+                "target_discriminator": "_",
+            }
+        )
     )
     return query_catalogue

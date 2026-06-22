@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import networkx as nx
 
+from orthograph.graph_definition.graph_definition import GraphDefinition
+from orthograph.graph_definition.models import (
+    ConditionalCardinality,
+    RelationshipModel,
+)
 from orthograph.graph_profile.inspection import GraphInspector
 from orthograph.graph_profile.models import (
+    BoundedDistribution,
     CardinalityStats,
     GraphProfile,
     NodeTypeProfile,
+    PartitionKey,
     PropertyProfile,
     RelationshipTypeProfile,
 )
@@ -21,17 +29,49 @@ from orthograph.graph_profile.models import (
 
 logger = logging.getLogger(__name__)
 
+# Default maximum distinct values kept in value_distribution.histogram.
+# Set to None or 0 to disable value_distribution entirely.
+VALUE_COUNTS_TOP_N: int = 10
+
 
 class NetworkxInspector(GraphInspector):
     """Inspects a NetworkX MultiDiGraph and produces a structural profile.
 
     Stateless: the graph is passed to :meth:`inspect` per call, never stored.
+
+    Parameters
+    ----------
+    value_counts_top_n:
+        Maximum number of distinct values to retain in
+        :attr:`~orthograph.graph_profile.models.PropertyProfile.value_distribution`.
+        ``None`` or ``0`` disables the distribution entirely.  Defaults to
+        :data:`VALUE_COUNTS_TOP_N`.
     """
 
-    def inspect(self, connection: nx.MultiDiGraph[str]) -> GraphProfile:
-        """Inspect the graph and return a frozen :class:`GraphProfile`."""
+    def __init__(self, value_counts_top_n: int | None = VALUE_COUNTS_TOP_N) -> None:
+        self._value_counts_top_n = value_counts_top_n
+
+    def inspect(
+        self,
+        connection: nx.MultiDiGraph[str],
+        *,
+        graph_definition: GraphDefinition | None = None,
+    ) -> GraphProfile:
+        """Inspect the graph and return a frozen :class:`GraphProfile`.
+
+        When ``graph_definition`` is supplied, relationship types whose declared
+        side is a :class:`ConditionalCardinality` additionally receive a per-pair
+        breakdown grouped by the endpoints' discriminator values
+        (E41/ADR-034 §7), in ``source_partitioned_cardinality`` and/or
+        ``target_partitioned_cardinality`` — a type conditional on **both**
+        endpoints carries both (E41.7).  Without a definition the breakdowns are
+        left ``None`` (comparison then reports ``CARDINALITY_UNVERIFIABLE``) — an
+        additive keyword keeps existing single-argument callers working.
+        """
         node_type_profiles = self._inspect_nodes(connection)
-        rel_type_profiles = self._inspect_relationships(connection, node_type_profiles)
+        rel_type_profiles = self._inspect_relationships(
+            connection, node_type_profiles, graph_definition
+        )
         return GraphProfile(
             source="networkx",
             timestamp=datetime.now(),
@@ -52,7 +92,7 @@ class NetworkxInspector(GraphInspector):
 
         profiles: dict[str, NodeTypeProfile] = {}
         for label, nodes in sorted(groups.items()):
-            prop_profiles = _compute_property_profiles(nodes)
+            prop_profiles = _compute_property_profiles(nodes, self._value_counts_top_n)
             profiles[label] = NodeTypeProfile(
                 label=label,
                 count=len(nodes),
@@ -64,6 +104,7 @@ class NetworkxInspector(GraphInspector):
         self,
         graph: nx.MultiDiGraph[str],
         node_profiles: dict[str, NodeTypeProfile],
+        graph_definition: GraphDefinition | None = None,
     ) -> dict[str, RelationshipTypeProfile]:
         """Group edges by __label__ and compute property/cardinality profiles."""
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -71,6 +112,10 @@ class NetworkxInspector(GraphInspector):
         target_labels: dict[str, set[str]] = defaultdict(set)
         # Track outgoing degree per (rel_type, source_node)
         outgoing: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        # Endpoint records per rel_type for the conditional per-pair breakdown:
+        # (src_node, tgt_node, src_attrs, tgt_attrs).  Collected for every edge;
+        # only consumed for relationship types with a conditional declared side.
+        endpoints: dict[str, list[_EdgeEndpoints]] = defaultdict(list)
 
         for src, tgt, attrs in graph.edges(data=True):
             label = attrs.get("__label__")
@@ -93,11 +138,17 @@ class NetworkxInspector(GraphInspector):
                 target_labels[label].add(tgt_label)
 
             outgoing[label][src] += 1
+            endpoints[label].append(
+                _EdgeEndpoints(src, tgt, dict(src_attrs), dict(tgt_attrs))
+            )
 
         profiles: dict[str, RelationshipTypeProfile] = {}
         for label, edges in sorted(groups.items()):
-            prop_profiles = _compute_property_profiles(edges)
+            prop_profiles = _compute_property_profiles(edges, self._value_counts_top_n)
             cardinality = _compute_cardinality(outgoing.get(label, {}))
+            source_partitioned, target_partitioned = _compute_partitioned_cardinality(
+                label, endpoints.get(label, []), graph_definition
+            )
             profiles[label] = RelationshipTypeProfile(
                 rel_type=label,
                 count=len(edges),
@@ -105,12 +156,15 @@ class NetworkxInspector(GraphInspector):
                 target_labels=target_labels.get(label, set()),
                 property_profiles=prop_profiles,
                 cardinality_stats=cardinality,
+                source_partitioned_cardinality=source_partitioned,
+                target_partitioned_cardinality=target_partitioned,
             )
         return profiles
 
 
 def _compute_property_profiles(
     entities: list[dict[str, Any]],
+    value_counts_top_n: int | None,
 ) -> dict[str, PropertyProfile]:
     """Compute property profiles from a list of entity attribute dicts."""
     total = len(entities)
@@ -126,17 +180,58 @@ def _compute_property_profiles(
     for key in sorted(all_keys):
         present_count = 0
         observed_types: set[str] = set()
+        value_counts: Counter[str] = Counter()
         for entity in entities:
-            if key in entity:
+            if key in entity and entity[key] is not None:
+                # ADR-034 §5: an explicit ``null`` is *not* present.
                 present_count += 1
                 observed_types.add(type(entity[key]).__name__)
+                if value_counts_top_n:
+                    value_counts[str(entity[key])] += 1
         profiles[key] = PropertyProfile(
             name=key,
             present_count=present_count,
             total_count=total,
             observed_types=sorted(observed_types),
+            value_distribution=_build_value_distribution(
+                value_counts, present_count, value_counts_top_n
+            ),
+            # NetworkX carries no DB constraints -> constraint_required stays None.
         )
     return profiles
+
+
+def _build_value_distribution(
+    value_counts: Counter[str],
+    present_count: int,
+    top_n: int | None,
+) -> BoundedDistribution | None:
+    """Build a BoundedDistribution from value counts, or None when disabled."""
+    if not top_n or present_count == 0:
+        return None
+
+    distinct = len(value_counts)
+    if distinct <= top_n:
+        return BoundedDistribution(
+            count=present_count,
+            histogram=dict(value_counts),
+            sample_complete=True,
+        )
+
+    # Truncate to top-N by frequency, ties broken by key for determinism.
+    # Counter.most_common alone breaks ties by insertion order, which is not
+    # stable across runs/backends; sorting by (-count, key) makes the kept set
+    # reproducible so profile comparisons (ADR-009 parity) don't drift.
+    ranked = sorted(value_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    top_histogram = dict(ranked[:top_n])
+    top_total = sum(top_histogram.values())
+    return BoundedDistribution(
+        count=present_count,
+        histogram=top_histogram,
+        sample_complete=False,
+        limit=top_n,
+        other_count=present_count - top_total,
+    )
 
 
 def _compute_cardinality(degree_map: dict[str, int]) -> CardinalityStats | None:
@@ -144,9 +239,178 @@ def _compute_cardinality(degree_map: dict[str, int]) -> CardinalityStats | None:
     if not degree_map:
         return None
     degrees = list(degree_map.values())
+    mean = sum(degrees) / len(degrees)
+    # Population variance (divide by N, not N-1): the degrees ARE the full
+    # population for this (source-label, rel-type) pair, not a sample of it.
+    # This is the reference estimator -- Neo4j/Memgraph must match it or
+    # cross-backend variance comparisons will drift (ADR-034 §3 / ADR-009).
+    variance = sum((d - mean) ** 2 for d in degrees) / len(degrees)
     return CardinalityStats(
-        min_degree=min(degrees),
-        max_degree=max(degrees),
-        avg_degree=sum(degrees) / len(degrees),
-        sample_size=len(degrees),
+        count=len(degrees),
+        min=min(degrees),
+        max=max(degrees),
+        mean=mean,
+        variance=variance,
     )
+
+
+# ---------------------------------------------------------------------------
+# Conditional per-pair cardinality (E41.2 — reference implementation)
+# ---------------------------------------------------------------------------
+#
+# This is the reference the Neo4j/Memgraph backends must match (ADR-009).  The
+# partition key is the *absolute* (source-label-node discriminator, target-label-
+# node discriminator) pair (ADR-032 §1a): regardless of which side carries the
+# conditional cardinality, the key always reads the discriminator from the
+# source-label node first and the target-label node second.  Only the *counted*
+# node differs — the source node on a source-side rule, the target node on a
+# target-side rule — which selects whose degree the partition's
+# BoundedDistribution summarises.
+
+
+@dataclass(frozen=True)
+class _EdgeEndpoints:
+    """One edge's endpoints and their attribute dicts, kept for partitioning."""
+
+    src_node: str
+    tgt_node: str
+    src_attrs: dict[str, Any]
+    tgt_attrs: dict[str, Any]
+
+
+def _conditional_sides(
+    rel_type: type[RelationshipModel],
+) -> list[tuple[ConditionalCardinality, str]]:
+    """Return ``(card, side)`` for **every** conditional, directed side.
+
+    ``side`` is ``"source"`` or ``"target"`` and selects which endpoint's degree
+    is counted.  A relationship type conditional on both endpoints yields two
+    entries (E41.7); a single-side type yields one; a constant or undirected type
+    yields none.  Undirected relationships are skipped (mirrors the in-memory
+    path, which only partitions directed sides — ``validation._partition_counts``).
+    """
+    if not rel_type.__directed__:
+        return []
+    sides: list[tuple[ConditionalCardinality, str]] = []
+    src_card = rel_type.__source_cardinality__
+    if isinstance(src_card, ConditionalCardinality):
+        sides.append((src_card, "source"))
+    tgt_card = rel_type.__target_cardinality__
+    if isinstance(tgt_card, ConditionalCardinality):
+        sides.append((tgt_card, "target"))
+    return sides
+
+
+def _discriminator_keys(matches: tuple[Any, ...]) -> frozenset[str]:
+    """Union of property names every rule discriminates on for one endpoint."""
+    keys: set[str] = set()
+    for match in matches:
+        keys.update(match.conditions)
+    return frozenset(keys)
+
+
+def _discriminator_value(attrs: dict[str, Any], keys: frozenset[str]) -> str | None:
+    """Read the single discriminator value for *keys* from *attrs*, as a string.
+
+    The single-``kind`` first cut (E41) discriminates on one property per
+    endpoint; an endpoint with no discriminator, or a missing/``None`` value,
+    maps to ``None`` (the null-partition component).  Multi-key endpoints are not
+    supported in this first cut and also yield ``None`` (the guarded follow-on
+    tracked in the epic Out-of-Scope handles them).
+    """
+    if len(keys) != 1:
+        return None
+    value = attrs.get(next(iter(keys)))
+    return None if value is None else str(value)
+
+
+def _partition_degrees(
+    card: ConditionalCardinality,
+    side: str,
+    endpoints: list[_EdgeEndpoints],
+) -> dict[PartitionKey, list[int]]:
+    """Group per-counted-node degrees by the absolute (src_value, tgt_value) pair.
+
+    For each edge the partition key reads the source-label node's discriminator
+    and the target-label node's discriminator (absolute convention).  The counted
+    node is the source node on the source side and the target node on the target
+    side; its degree within each partition is the number of edges it has in that
+    partition.  Returns ``{partition: [degree_per_counted_node, ...]}``.
+    """
+    src_keys = _discriminator_keys(tuple(r.source for r in card.rules))
+    tgt_keys = _discriminator_keys(tuple(r.target for r in card.rules))
+
+    # counts[partition][counted_node] = degree of that node in that partition
+    counts: dict[PartitionKey, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for edge in endpoints:
+        partition = PartitionKey(
+            source_value=_discriminator_value(edge.src_attrs, src_keys),
+            target_value=_discriminator_value(edge.tgt_attrs, tgt_keys),
+        )
+        counted_node = edge.src_node if side == "source" else edge.tgt_node
+        counts[partition][counted_node] += 1
+
+    return {
+        partition: list(node_degrees.values())
+        for partition, node_degrees in counts.items()
+    }
+
+
+def _stats_per_partition(
+    degrees_by_partition: dict[PartitionKey, list[int]],
+) -> dict[str, BoundedDistribution]:
+    """Summarise each partition's per-node degrees into a BoundedDistribution.
+
+    Constructs :class:`BoundedDistribution` directly (not the
+    :class:`CardinalityStats` marker subclass): the profile field is typed on
+    the base, so a subclass value would be restored as its base on reload and
+    break round-trip equality (E41.1/E41.3).  Reuses the population-variance
+    estimator of :func:`_compute_cardinality` so partition and aggregate stats
+    stay consistent.
+    """
+    result: dict[str, BoundedDistribution] = {}
+    for partition, degrees in degrees_by_partition.items():
+        mean = sum(degrees) / len(degrees)
+        variance = sum((d - mean) ** 2 for d in degrees) / len(degrees)
+        result[str(partition)] = BoundedDistribution(
+            count=len(degrees),
+            min=min(degrees),
+            max=max(degrees),
+            mean=mean,
+            variance=variance,
+        )
+    return result
+
+
+def _compute_partitioned_cardinality(
+    rel_label: str,
+    endpoints: list[_EdgeEndpoints],
+    graph_definition: GraphDefinition | None,
+) -> tuple[
+    dict[str, BoundedDistribution] | None, dict[str, BoundedDistribution] | None
+]:
+    """Return ``(source_breakdown, target_breakdown)`` for a conditional rel type.
+
+    Each element is ``None`` (the common case) when its side is not conditional,
+    no definition is injected, the relationship type is unknown, or there are no
+    edges — so non-conditional profiling cost is unchanged.  A type conditional on
+    **both** endpoints (E41.7) returns both breakdowns; the per-side fields keep
+    source-counted and target-counted partitions from colliding.
+    """
+    if graph_definition is None:
+        return None, None
+    rel_type = graph_definition.get_relationship_type(rel_label)
+    if rel_type is None:
+        return None, None
+    if not endpoints:
+        return None, None
+
+    source_breakdown: dict[str, BoundedDistribution] | None = None
+    target_breakdown: dict[str, BoundedDistribution] | None = None
+    for card, side in _conditional_sides(rel_type):
+        breakdown = _stats_per_partition(_partition_degrees(card, side, endpoints))
+        if side == "source":
+            source_breakdown = breakdown
+        else:
+            target_breakdown = breakdown
+    return source_breakdown, target_breakdown

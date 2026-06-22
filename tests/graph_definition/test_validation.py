@@ -1,5 +1,6 @@
 """Tests for orthograph.graph_definition.validation -- GraphValidator engine."""
 
+import enum
 from typing import Any
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
@@ -1401,3 +1402,231 @@ def test_conditional_permissive_default_admits_zero_edge_unmatched_node():
     assert not any(e.code == "CARDINALITY_VIOLATION" for e in result.errors)
     info = [i for i in result.issues if i.code == "CARDINALITY_UNMATCHED_KIND"]
     assert len(info) == 1
+
+
+# ===========================================================================
+# Enum-typed discriminator in conditional cardinality
+#
+# Regression coverage: when a node property used as a conditional-cardinality
+# discriminator is declared as an ``enum.Enum`` subclass, the value read from a
+# NodeModel instance's ``model_dump()`` is the *member* (e.g. ``Genre.DRAMA``),
+# not its underlying literal (``"drama"``).  Rules are authored with the literal
+# (``PropMatch({"genre": "drama"})``).  Without normalising the observed value to
+# its ``.value`` at the matching/partitioning boundary, the observed edges land
+# in a ``(…, Genre.DRAMA)`` partition the rule never resolves while the declared
+# ``(…, "drama")`` partition is synthesised with count 0 — yielding a *spurious*
+# violation and silently miscounting the real edges.  These tests pin the fixed
+# behaviour for both a plain ``Enum`` and a ``str``-mixin ``Enum``.
+# ===========================================================================
+
+
+def _enum_filmography_model(
+    genre_enum: type,
+) -> tuple[GraphDefinition, type[NodeModel], type[NodeModel]]:
+    """Build a Person-ACTED_IN->Movie model whose Movie.genre is *genre_enum*.
+
+    Returns ``(graph_definition, PersonClass, MovieClass)`` so callers
+    instantiate the concrete node classes directly (no ``get_node_type`` →
+    ``type | None`` narrowing).  Source-side conditional cardinality:
+    actor→drama 1..3, actor→blockbuster 0..1, default 0..*.
+    """
+
+    class EnumPerson(NodeModel):
+        __label__ = "Person"
+        __uid_field__ = "name"
+        name: str
+        kind: str
+
+    class EnumMovie(NodeModel):
+        __label__ = "Movie"
+        __uid_field__ = "title"
+        title: str
+        genre: genre_enum  # type: ignore[valid-type]  # enum-typed discriminator
+
+    acted_in = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "actor"}),
+                target=PropMatch({"genre": "drama"}),
+                spec="1..3",
+            ),
+            ConditionalRule(
+                source=PropMatch({"kind": "actor"}),
+                target=PropMatch({"genre": "blockbuster"}),
+                spec="0..1",
+            ),
+        ),
+        default="0..*",
+    )
+
+    class EnumActedIn(RelationshipModel):
+        __label__ = "ACTED_IN"
+        __source_label__ = "Person"
+        __target_label__ = "Movie"
+        __source_cardinality__ = acted_in
+        __target_cardinality__ = "0..*"
+        role: str
+
+    gd = GraphDefinition(
+        name="EnumFilmography",
+        node_types=[EnumPerson, EnumMovie],
+        relationship_types=[EnumActedIn],
+    )
+    return gd, EnumPerson, EnumMovie
+
+
+def _make_genre_enum(mixin: bool) -> type[enum.Enum]:
+    """Return a Genre enum (plain or str-mixin) with drama/blockbuster members."""
+    if mixin:
+
+        class StrGenre(str, enum.Enum):
+            DRAMA = "drama"
+            BLOCKBUSTER = "blockbuster"
+
+        return StrGenre
+
+    class PlainGenre(enum.Enum):
+        DRAMA = "drama"
+        BLOCKBUSTER = "blockbuster"
+
+    return PlainGenre
+
+
+def test_conditional_enum_discriminator_plain_enum_valid_within_bounds():
+    """Plain Enum discriminator: 2 drama roles satisfy actor→drama 1..3 — no error.
+
+    Pins the partition-identity fix: the observed ``Genre.DRAMA`` partition must
+    coincide with the declared ``"drama"`` partition so the count is 2, not 0.
+    """
+    genre = _make_genre_enum(mixin=False)
+    gd, person_cls, movie_cls = _enum_filmography_model(genre)
+
+    nodes: list[Any] = [person_cls(name="Bob", kind="actor")] + [
+        movie_cls(title=f"D{i}", genre=genre["DRAMA"]) for i in range(1, 3)
+    ]
+    rels = [
+        {
+            "__label__": "ACTED_IN",
+            "__source_uid__": "Bob",
+            "__target_uid__": f"D{i}",
+            "role": "r",
+        }
+        for i in range(1, 3)
+    ]
+    result = GraphValidator(gd).validate(nodes, rels)
+    assert result.is_valid, [str(e) for e in result.errors]
+    assert not any(e.code == "CARDINALITY_VIOLATION" for e in result.errors)
+
+
+def test_conditional_enum_discriminator_plain_enum_flags_real_violation():
+    """Plain Enum discriminator: 5 drama roles breach actor→drama 1..3.
+
+    Exactly one CARDINALITY_VIOLATION, reporting the *correct* observed count (5)
+    against the resolved bound, and naming the partition by the enum's underlying
+    value ('drama') — not the spurious 0-count or the raw ``Genre.DRAMA`` member.
+    """
+    genre = _make_genre_enum(mixin=False)
+    gd, person_cls, movie_cls = _enum_filmography_model(genre)
+
+    nodes: list[Any] = [person_cls(name="Alice", kind="actor")] + [
+        movie_cls(title=f"D{i}", genre=genre["DRAMA"]) for i in range(1, 6)
+    ]
+    rels = [
+        {
+            "__label__": "ACTED_IN",
+            "__source_uid__": "Alice",
+            "__target_uid__": f"D{i}",
+            "role": "r",
+        }
+        for i in range(1, 6)
+    ]
+    result = GraphValidator(gd).validate(nodes, rels)
+
+    violations = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert len(violations) == 1, [str(e) for e in result.errors]
+    issue = violations[0]
+    assert issue.context["actual"] == 5
+    assert issue.context["expected_min"] == 1
+    assert issue.context["expected_max"] == 3
+    # Partition named by the underlying literal, never the Enum member repr.
+    assert issue.context["target_kind"] == "drama"
+    assert "Genre." not in issue.message
+
+
+def test_conditional_enum_discriminator_str_mixin_enum_valid():
+    """str-mixin Enum discriminator behaves identically (==-equal to its value).
+
+    Carol (actor) has 2 drama roles (satisfies 1..3) and 1 blockbuster role
+    (satisfies 0..1) — both partitions within bounds, so the graph is valid.
+    """
+    genre = _make_genre_enum(mixin=True)
+    gd, person_cls, movie_cls = _enum_filmography_model(genre)
+
+    nodes: list[Any] = [
+        person_cls(name="Carol", kind="actor"),
+        movie_cls(title="D1", genre=genre["DRAMA"]),
+        movie_cls(title="D2", genre=genre["DRAMA"]),
+        movie_cls(title="B1", genre=genre["BLOCKBUSTER"]),
+    ]
+    rels = [
+        {
+            "__label__": "ACTED_IN",
+            "__source_uid__": "Carol",
+            "__target_uid__": t,
+            "role": "r",
+        }
+        for t in ("D1", "D2", "B1")
+    ]
+    result = GraphValidator(gd).validate(nodes, rels)
+    assert result.is_valid, [str(e) for e in result.errors]
+
+
+def test_conditional_enum_discriminator_str_mixin_enum_flags_violation():
+    """str-mixin Enum: 2 blockbuster roles breach actor→blockbuster 0..1.
+
+    To isolate the blockbuster violation, Carol also has 1 drama role so the
+    ``min=1`` drama partition is satisfied — leaving exactly one violation.
+    """
+    genre = _make_genre_enum(mixin=True)
+    gd, person_cls, movie_cls = _enum_filmography_model(genre)
+
+    nodes: list[Any] = [
+        person_cls(name="Dan", kind="actor"),
+        movie_cls(title="D1", genre=genre["DRAMA"]),
+        movie_cls(title="B1", genre=genre["BLOCKBUSTER"]),
+        movie_cls(title="B2", genre=genre["BLOCKBUSTER"]),
+    ]
+    rels = [
+        {
+            "__label__": "ACTED_IN",
+            "__source_uid__": "Dan",
+            "__target_uid__": t,
+            "role": "r",
+        }
+        for t in ("D1", "B1", "B2")  # 1 drama (OK 1..3), 2 blockbuster (breach 0..1)
+    ]
+    result = GraphValidator(gd).validate(nodes, rels)
+    violations = [e for e in result.errors if e.code == "CARDINALITY_VIOLATION"]
+    assert len(violations) == 1, [str(e) for e in result.errors]
+    assert violations[0].context["actual"] == 2
+    assert violations[0].context["target_kind"] == "blockbuster"
+
+
+def test_coerce_match_value_normalises_enum_members():
+    """Unit guard for the shared normaliser used by matching and partitioning."""
+    import enum
+
+    from orthograph.graph_definition.models import coerce_match_value
+
+    class Genre(enum.Enum):
+        DRAMA = "drama"
+
+    class StrGenre(str, enum.Enum):
+        DRAMA = "drama"
+
+    assert coerce_match_value(Genre.DRAMA) == "drama"
+    assert coerce_match_value(StrGenre.DRAMA) == "drama"
+    # Non-enum values pass through unchanged.
+    assert coerce_match_value("drama") == "drama"
+    assert coerce_match_value(7) == 7
+    assert coerce_match_value(None) is None

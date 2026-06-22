@@ -9,9 +9,12 @@ from typing import Any
 from orthograph.cypher.base_models import CypherReadQuery
 from orthograph.cypher.bindings import NoParams
 from orthograph.graph_profile.models import (
+    BoundedDistribution,
     CardinalityIdentifiers,
     CardinalityStats,
     EndpointLabelsRow,
+    PartitionedCardinalityIdentifiers,
+    PartitionedCardinalityRow,
     RelTypeIdentifiers,
 )
 
@@ -40,10 +43,10 @@ class InspectCardinalityQuery(CypherReadQuery[NoParams, CardinalityStats]):
 
     def materialize(self, raw: Any) -> CardinalityStats:
         return CardinalityStats(
-            min_degree=raw["min_degree"],
-            max_degree=raw["max_degree"],
-            avg_degree=float(raw["avg_degree"]),
-            sample_size=raw["sample_size"],
+            count=raw["sample_size"],
+            min=raw["min_degree"],
+            max=raw["max_degree"],
+            mean=float(raw["avg_degree"]),
         )
 
 
@@ -64,3 +67,96 @@ class InspectEndpointLabelsQuery(CypherReadQuery[NoParams, EndpointLabelsRow]):
             source_labels=list(raw["source_labels"]),
             target_labels=list(raw["target_labels"]),
         )
+
+
+def _materialize_partitioned_row(raw: Any) -> PartitionedCardinalityRow:
+    """Map a grouped-cardinality raw row to a :class:`PartitionedCardinalityRow`.
+
+    Shared by the source- and target-anchored queries, which differ only in their
+    Cypher (which endpoint they anchor on / whose degree they count), not in row
+    shape.  ``stats`` is a :class:`BoundedDistribution` directly (not the
+    ``CardinalityStats`` marker): the per-side fields are typed on
+    ``BoundedDistribution``, so a subclass value would lose its subtype on reload
+    (E41.1).
+    """
+    return PartitionedCardinalityRow(
+        source_value=raw["sk"],
+        target_value=raw["tk"],
+        stats=BoundedDistribution(
+            count=raw["sample_size"],
+            min=raw["min_degree"],
+            max=raw["max_degree"],
+            mean=float(raw["avg_degree"]),
+        ),
+    )
+
+
+class InspectSourcePartitionedCardinalityQuery(
+    CypherReadQuery[NoParams, PartitionedCardinalityRow]
+):
+    """Per-pair cardinality for the **source side** (E41.3).
+
+    Anchors on the source ``<<label>>`` and counts each source node's **outgoing**
+    degree of ``<<rel_type>>``, grouped by the absolute
+    ``(source_discriminator, target_discriminator)`` pair (ADR-032 §1a).  Source
+    nodes with no such edge produce a ``(sk, null)`` zero-degree partition
+    (suppressed by the inspector for parity with NetworkX).
+
+    All four identifiers (``label``, ``rel_type``, and the two **property-name**
+    discriminators) are spliced via the ``<<...>>`` mechanism, which validates each
+    through ``validate_identifier`` (ADR-008) before substitution — an unsafe
+    discriminator name is rejected, never injected.
+
+    The symmetric counterpart is :class:`InspectTargetPartitionedCardinalityQuery`.
+    """
+
+    Params = NoParams
+    Output = PartitionedCardinalityRow
+    name = "inspect.partitioned_cardinality.source"
+    Identifiers = PartitionedCardinalityIdentifiers
+    cypher_template = (
+        "MATCH (n:`<<label>>`)"
+        " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->(m)"
+        " WITH n, n.`<<source_discriminator>>` AS sk,"
+        " m.`<<target_discriminator>>` AS tk, count(r) AS degree"
+        " RETURN sk, tk, min(degree) AS min_degree, max(degree) AS max_degree,"
+        " avg(degree) AS avg_degree, count(n) AS sample_size"
+    )
+
+    def materialize(self, raw: Any) -> PartitionedCardinalityRow:
+        return _materialize_partitioned_row(raw)
+
+
+class InspectTargetPartitionedCardinalityQuery(
+    CypherReadQuery[NoParams, PartitionedCardinalityRow]
+):
+    """Per-pair cardinality for the **target side** (E41.7).
+
+    Symmetric to :class:`InspectSourcePartitionedCardinalityQuery` but anchors on
+    the target ``<<label>>`` and counts each target node's **incoming** degree of
+    ``<<rel_type>>``, grouped by the same absolute discriminator pair.  Target nodes
+    with no such edge produce a ``(null, tk)`` zero-degree partition.
+
+    This is the query a both-endpoint-conditional relationship needs for its target
+    side; using the source query there would store source-outgoing degree under the
+    target breakdown and diverge from the NetworkX/in-memory verdict (E41.7 fix).
+
+    Identifier safety and zero-degree suppression are identical to the source
+    query; only the anchor (``MATCH (m:..)`` / ``count(m)``) differs.
+    """
+
+    Params = NoParams
+    Output = PartitionedCardinalityRow
+    name = "inspect.partitioned_cardinality.target"
+    Identifiers = PartitionedCardinalityIdentifiers
+    cypher_template = (
+        "MATCH (m:`<<label>>`)"
+        " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->(m)"
+        " WITH m, n.`<<source_discriminator>>` AS sk,"
+        " m.`<<target_discriminator>>` AS tk, count(r) AS degree"
+        " RETURN sk, tk, min(degree) AS min_degree, max(degree) AS max_degree,"
+        " avg(degree) AS avg_degree, count(m) AS sample_size"
+    )
+
+    def materialize(self, raw: Any) -> PartitionedCardinalityRow:
+        return _materialize_partitioned_row(raw)

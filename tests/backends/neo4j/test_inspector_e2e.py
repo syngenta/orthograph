@@ -40,7 +40,15 @@ from orthograph.backends.neo4j.queries import build_apoc_catalogue
 from orthograph.cypher.bindings import NoParams
 from orthograph.cypher.exceptions import CypherIdentifierError
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_definition.models import NodeModel, RelationshipModel
+from orthograph.graph_definition.models import (
+    CardinalitySpec,
+    ConditionalCardinality,
+    ConditionalRule,
+    NodeModel,
+    PropMatch,
+    RelationshipModel,
+)
+from orthograph.graph_profile.models import PartitionKey
 from orthograph.graph_profile.queries.shared import InspectCardinalityQuery
 
 
@@ -191,7 +199,7 @@ def test_mandatory_property_is_required(neo4j_driver: Any, neo4j_clean: None) ->
         neo4j_driver
     )
     name_pp = profile.node_type_profiles["Person"].property_profiles["name"]
-    assert name_pp.is_required is True
+    assert name_pp.completeness == 1.0
     assert name_pp.present_count == 2
     assert name_pp.total_count == 2
 
@@ -210,7 +218,7 @@ def test_optional_property_is_not_required(
         neo4j_driver
     )
     born_pp = profile.node_type_profiles["Person"].property_profiles["born"]
-    assert born_pp.is_required is False
+    assert born_pp.completeness < 1.0
     assert born_pp.present_count == 1
     assert born_pp.total_count == 2
 
@@ -275,10 +283,10 @@ def test_cardinality_stats_populated(neo4j_driver: Any, neo4j_clean: None) -> No
     )
     cs = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
     assert cs is not None
-    assert cs.min_degree == 1
-    assert cs.max_degree == 2
-    assert cs.avg_degree == 1.5
-    assert cs.sample_size == 2
+    assert cs.min == 1
+    assert cs.max == 2
+    assert cs.mean == 1.5
+    assert cs.count == 2
 
 
 @pytest.mark.neo4j
@@ -299,8 +307,8 @@ def test_cardinality_not_computed_against_target_label(
     )
     cs = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
     assert cs is not None
-    assert cs.min_degree > 0, (
-        "min_degree == 0: cardinality was computed against the target label "
+    assert cs.min is not None and cs.min > 0, (
+        "min == 0: cardinality was computed against the target label "
         "(Movie) instead of the source label (Person)"
     )
 
@@ -460,6 +468,8 @@ def test_internal_catalogue_populated(neo4j_driver: Any, neo4j_clean: None) -> N
         "inspect.cardinality",
         "neo4j.inspect.constraints",
         "inspect.endpoint_labels",
+        "inspect.partitioned_cardinality.source",
+        "inspect.partitioned_cardinality.target",
     }
 
 
@@ -476,6 +486,172 @@ def test_apoc_catalogue_offline_describe(neo4j_driver: Any, neo4j_clean: None) -
     names = set(query_catalogue.names())
     assert "neo4j.inspect.apoc.node_properties" in names
     assert "neo4j.inspect.apoc.rel_properties" in names
-    assert len(names) == 7
+    assert len(names) == 9
     for desc in query_catalogue.describe():
         assert desc.output_schema is not None
+
+
+# ---------------------------------------------------------------------------
+# Partitioned cardinality — both-endpoint conditional (E41.7)
+# ---------------------------------------------------------------------------
+
+
+class Operation(NodeModel):
+    """Source node for the both-sides conditional scenario."""
+
+    __label__ = "Operation"
+    __uid_field__ = "uid"
+    uid: str
+    kind: str
+
+
+class Sample(NodeModel):
+    """Target node for the both-sides conditional scenario."""
+
+    __label__ = "Sample"
+    __uid_field__ = "uid"
+    uid: str
+    kind: str
+
+
+class Makes(RelationshipModel):
+    """Conditional on BOTH endpoints (E41.7 live-DB scenario).
+
+    Source rule: (assembler, final) = 2..2  — each assembler must produce
+    exactly 2 final samples.
+    Target rule: (assembler, final) = 1..1  — each final sample must be
+    produced by exactly 1 assembler.
+    """
+
+    __label__ = "MAKES"
+    __source_label__ = "Operation"
+    __target_label__ = "Sample"
+    __source_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "assembler"}),
+                target=PropMatch({"kind": "final"}),
+                spec=CardinalitySpec(min=2, max=2),
+            ),
+        ),
+        default="0..*",
+    )
+    __target_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "assembler"}),
+                target=PropMatch({"kind": "final"}),
+                spec=CardinalitySpec(min=1, max=1),
+            ),
+        ),
+        default="0..*",
+    )
+
+
+BOTH_SIDES_MODEL = GraphDefinition(
+    name="BothSides",
+    node_types=[Operation, Sample],
+    relationship_types=[Makes],
+)
+
+_PAIR = str(PartitionKey(source_value="assembler", target_value="final"))
+
+
+def _seed_both_sides(driver: Any) -> None:
+    """Seed: op1 (assembler) -[MAKES]-> a1, a2 (both final).
+
+    Source side: op1 has outgoing degree 2 in the (assembler, final) partition.
+    Target side: a1 and a2 each have incoming degree 1 in the same partition.
+    """
+    driver.execute_query(
+        "MERGE (op1:Operation {uid: 'op1', kind: 'assembler'})"
+        " MERGE (a1:Sample {uid: 'a1', kind: 'final'})"
+        " MERGE (a2:Sample {uid: 'a2', kind: 'final'})"
+        " MERGE (op1)-[:MAKES]->(a1)"
+        " MERGE (op1)-[:MAKES]->(a2)"
+    )
+
+
+@pytest.mark.neo4j
+def test_both_sides_source_breakdown_populated(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """Source breakdown counts each source node's outgoing degree per pair.
+
+    op1 has 2 outgoing MAKES edges to final samples, so the
+    (assembler, final) partition must report min=2, max=2, count=1.
+    This confirms InspectSourcePartitionedCardinalityQuery is issued (not the
+    target query, which would report count=2, min=1, max=1).
+    """
+    _seed_both_sides(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver, graph_definition=BOTH_SIDES_MODEL
+    )
+    src = profile.rel_type_profiles["MAKES"].source_partitioned_cardinality
+    assert src is not None, "source_partitioned_cardinality must be populated"
+    assert _PAIR in src, f"expected partition {_PAIR!r} in {set(src)}"
+    assert src[_PAIR].min == 2
+    assert src[_PAIR].max == 2
+    assert src[_PAIR].count == 1  # one source node (op1)
+
+
+@pytest.mark.neo4j
+def test_both_sides_target_breakdown_populated(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """Target breakdown counts each target node's incoming degree per pair.
+
+    a1 and a2 each have 1 incoming MAKES edge from an assembler, so the
+    (assembler, final) partition must report min=1, max=1, count=2.
+    This confirms InspectTargetPartitionedCardinalityQuery is issued (not the
+    source query, which would report count=1, min=2, max=2 — op1's degree).
+    """
+    _seed_both_sides(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver, graph_definition=BOTH_SIDES_MODEL
+    )
+    tgt = profile.rel_type_profiles["MAKES"].target_partitioned_cardinality
+    assert tgt is not None, "target_partitioned_cardinality must be populated"
+    assert _PAIR in tgt, f"expected partition {_PAIR!r} in {set(tgt)}"
+    assert tgt[_PAIR].min == 1
+    assert tgt[_PAIR].max == 1
+    assert tgt[_PAIR].count == 2  # two target nodes (a1, a2)
+
+
+@pytest.mark.neo4j
+def test_both_sides_source_and_target_are_distinct(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """The two breakdowns carry different degree values for the same partition.
+
+    This is the live-DB regression guard for the E41.7 bug: if both sides
+    issued InspectSourcePartitionedCardinalityQuery, source and target would
+    be identical (both op1's outgoing degree = 2), and the min=1 assertion
+    on the target side would fail.
+    """
+    _seed_both_sides(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver, graph_definition=BOTH_SIDES_MODEL
+    )
+    rtp = profile.rel_type_profiles["MAKES"]
+    src = rtp.source_partitioned_cardinality
+    tgt = rtp.target_partitioned_cardinality
+    assert src is not None
+    assert tgt is not None
+    # Source degree = 2 (op1 has 2 outgoing edges); target degree = 1 (each
+    # of a1, a2 has 1 incoming edge).  They must differ.
+    assert src[_PAIR].min != tgt[_PAIR].min, (
+        "source and target breakdowns are identical — likely both used the "
+        "source-anchored query (E41.7 regression)"
+    )
+
+
+@pytest.mark.neo4j
+def test_both_sides_compare_passes_when_in_bounds(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """validate_database passes when both sides satisfy their per-pair rules."""
+    _seed_both_sides(neo4j_driver)
+    result = validate_database(neo4j_driver, BOTH_SIDES_MODEL)
+    violations = [i for i in result.issues if i.code == "CARDINALITY_VIOLATION"]
+    assert violations == [], [str(v) for v in violations]

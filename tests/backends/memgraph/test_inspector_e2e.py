@@ -43,7 +43,15 @@ from orthograph.backends.memgraph.queries import (
 from orthograph.cypher.bindings import NoParams
 from orthograph.cypher.exceptions import CypherIdentifierError
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_definition.models import NodeModel, RelationshipModel
+from orthograph.graph_definition.models import (
+    CardinalitySpec,
+    ConditionalCardinality,
+    ConditionalRule,
+    NodeModel,
+    PropMatch,
+    RelationshipModel,
+)
+from orthograph.graph_profile.models import PartitionKey
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +163,7 @@ def test_mandatory_property_heuristic(
     _seed(memgraph_driver)
     profile = MemgraphInspector().inspect(memgraph_driver)
     name_pp = profile.node_type_profiles["Person"].property_profiles["name"]
-    assert name_pp.is_required is True
+    assert name_pp.completeness == 1.0
 
 
 @pytest.mark.memgraph
@@ -166,7 +174,7 @@ def test_optional_property_heuristic(
     _seed(memgraph_driver)
     profile = MemgraphInspector().inspect(memgraph_driver)
     born_pp = profile.node_type_profiles["Person"].property_profiles["born"]
-    assert born_pp.is_required is False
+    assert born_pp.completeness < 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -218,10 +226,10 @@ def test_cardinality_stats_populated(
     profile = MemgraphInspector().inspect(memgraph_driver)
     cs = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
     assert cs is not None
-    assert cs.min_degree == 1
-    assert cs.max_degree == 2
-    assert cs.avg_degree == 1.5
-    assert cs.sample_size == 2
+    assert cs.min == 1
+    assert cs.max == 2
+    assert cs.mean == 1.5
+    assert cs.count == 2
 
 
 @pytest.mark.memgraph
@@ -233,8 +241,8 @@ def test_cardinality_not_computed_against_target_label(
     profile = MemgraphInspector().inspect(memgraph_driver)
     cs = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
     assert cs is not None
-    assert cs.min_degree > 0, (
-        "min_degree == 0: cardinality was computed against the target label"
+    assert cs.min is not None and cs.min > 0, (
+        "min == 0: cardinality was computed against the target label"
     )
 
 
@@ -295,7 +303,7 @@ def test_injection_raises_before_reaching_driver(
 def test_internal_catalogue_populated(
     memgraph_driver: Any, memgraph_clean: None
 ) -> None:
-    """The Memgraph catalogue holds exactly the 5 expected query names."""
+    """The Memgraph catalogue holds exactly the 7 expected query names."""
     from orthograph.backends.memgraph.queries import build_memgraph_catalogue
 
     MemgraphInspector().inspect(memgraph_driver)
@@ -306,4 +314,155 @@ def test_internal_catalogue_populated(
         "memgraph.inspect.constraints",
         "memgraph.inspect.cardinality",
         "memgraph.inspect.endpoint_labels",
+        "memgraph.inspect.partitioned_cardinality.source",
+        "memgraph.inspect.partitioned_cardinality.target",
     }
+
+
+# ---------------------------------------------------------------------------
+# Partitioned cardinality -- both-endpoint conditional (E41.7)
+# ---------------------------------------------------------------------------
+
+
+class Operation(NodeModel):
+    """Source node for the both-sides conditional scenario."""
+
+    __label__ = "Operation"
+    __uid_field__ = "uid"
+    uid: str
+    kind: str
+
+
+class Sample(NodeModel):
+    """Target node for the both-sides conditional scenario."""
+
+    __label__ = "Sample"
+    __uid_field__ = "uid"
+    uid: str
+    kind: str
+
+
+class Makes(RelationshipModel):
+    """Conditional on BOTH endpoints (E41.7 live-DB scenario).
+
+    Source rule: (assembler, final) = 2..2.
+    Target rule: (assembler, final) = 1..1.
+    """
+
+    __label__ = "MAKES"
+    __source_label__ = "Operation"
+    __target_label__ = "Sample"
+    __source_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "assembler"}),
+                target=PropMatch({"kind": "final"}),
+                spec=CardinalitySpec(min=2, max=2),
+            ),
+        ),
+        default="0..*",
+    )
+    __target_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "assembler"}),
+                target=PropMatch({"kind": "final"}),
+                spec=CardinalitySpec(min=1, max=1),
+            ),
+        ),
+        default="0..*",
+    )
+
+
+BOTH_SIDES_MODEL = GraphDefinition(
+    name="BothSides",
+    node_types=[Operation, Sample],
+    relationship_types=[Makes],
+)
+
+_PAIR = str(PartitionKey(source_value="assembler", target_value="final"))
+
+
+def _seed_both_sides(driver: Any) -> None:
+    """Seed: op1 (assembler) -[MAKES]-> a1, a2 (both final)."""
+    driver.execute_query(
+        "MERGE (op1:Operation {uid: 'op1', kind: 'assembler'})"
+        " MERGE (a1:Sample {uid: 'a1', kind: 'final'})"
+        " MERGE (a2:Sample {uid: 'a2', kind: 'final'})"
+        " MERGE (op1)-[:MAKES]->(a1)"
+        " MERGE (op1)-[:MAKES]->(a2)"
+    )
+
+
+@pytest.mark.memgraph
+def test_both_sides_source_breakdown_populated(
+    memgraph_driver: Any, memgraph_clean: None
+) -> None:
+    """Source breakdown counts each source node's outgoing degree per pair.
+
+    op1 has 2 outgoing MAKES edges, so the (assembler, final) partition must
+    report min=2, max=2, count=1.
+    """
+    _seed_both_sides(memgraph_driver)
+    profile = MemgraphInspector().inspect(
+        memgraph_driver, graph_definition=BOTH_SIDES_MODEL
+    )
+    src = profile.rel_type_profiles["MAKES"].source_partitioned_cardinality
+    assert src is not None, "source_partitioned_cardinality must be populated"
+    assert _PAIR in src, f"expected partition {_PAIR!r} in {set(src)}"
+    assert src[_PAIR].min == 2
+    assert src[_PAIR].max == 2
+    assert src[_PAIR].count == 1
+
+
+@pytest.mark.memgraph
+def test_both_sides_target_breakdown_populated(
+    memgraph_driver: Any, memgraph_clean: None
+) -> None:
+    """Target breakdown counts each target node's incoming degree per pair.
+
+    a1 and a2 each have 1 incoming MAKES edge, so the (assembler, final)
+    partition must report min=1, max=1, count=2.
+    """
+    _seed_both_sides(memgraph_driver)
+    profile = MemgraphInspector().inspect(
+        memgraph_driver, graph_definition=BOTH_SIDES_MODEL
+    )
+    tgt = profile.rel_type_profiles["MAKES"].target_partitioned_cardinality
+    assert tgt is not None, "target_partitioned_cardinality must be populated"
+    assert _PAIR in tgt, f"expected partition {_PAIR!r} in {set(tgt)}"
+    assert tgt[_PAIR].min == 1
+    assert tgt[_PAIR].max == 1
+    assert tgt[_PAIR].count == 2
+
+
+@pytest.mark.memgraph
+def test_both_sides_source_and_target_are_distinct(
+    memgraph_driver: Any, memgraph_clean: None
+) -> None:
+    """The two breakdowns carry different degree values (E41.7 regression guard).
+
+    If both sides issued the source query, both would show count=1, min=2 and
+    the min assertion on the target side would fail.
+    """
+    _seed_both_sides(memgraph_driver)
+    profile = MemgraphInspector().inspect(
+        memgraph_driver, graph_definition=BOTH_SIDES_MODEL
+    )
+    rtp = profile.rel_type_profiles["MAKES"]
+    assert rtp.source_partitioned_cardinality is not None
+    assert rtp.target_partitioned_cardinality is not None
+    assert rtp.source_partitioned_cardinality[_PAIR].min != (
+        rtp.target_partitioned_cardinality[_PAIR].min
+    ), "source and target breakdowns are identical -- likely both used the source query"
+
+
+@pytest.mark.memgraph
+def test_both_sides_compare_passes_when_in_bounds(
+    memgraph_driver: Any, memgraph_clean: None
+) -> None:
+    """validate_database passes when both sides satisfy their per-pair rules."""
+    _seed_both_sides(memgraph_driver)
+    result = validate_database(memgraph_driver, BOTH_SIDES_MODEL)
+    violations = [i for i in result.issues if i.code == "CARDINALITY_VIOLATION"]
+    assert violations == [], [str(v) for v in violations]

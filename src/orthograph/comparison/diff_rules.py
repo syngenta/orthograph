@@ -179,10 +179,7 @@ def _cardinality_issue_profile(
         return None
     l_stats = left.cardinality_stats
     r_stats = right.cardinality_stats
-    if (
-        l_stats.min_degree == r_stats.min_degree
-        and l_stats.max_degree == r_stats.max_degree
-    ):
+    if l_stats.min == r_stats.min and l_stats.max == r_stats.max:
         return None
     return ValidationIssue(
         code="CARDINALITY_CHANGED",
@@ -191,14 +188,14 @@ def _cardinality_issue_profile(
         entity_id=rt,
         message=(
             f"Relationship '{rt}' cardinality differs: "
-            f"left min={l_stats.min_degree} max={l_stats.max_degree}, "
-            f"right min={r_stats.min_degree} max={r_stats.max_degree}"
+            f"left min={l_stats.min} max={l_stats.max}, "
+            f"right min={r_stats.min} max={r_stats.max}"
         ),
         context={
-            "left_min": l_stats.min_degree,
-            "left_max": l_stats.max_degree,
-            "right_min": r_stats.min_degree,
-            "right_max": r_stats.max_degree,
+            "left_min": l_stats.min,
+            "left_max": l_stats.max,
+            "right_min": r_stats.min,
+            "right_max": r_stats.max,
         },
     )
 
@@ -514,7 +511,7 @@ class CardinalityChangedRule:
     Handles:
 
     - ``RelationshipTypeProfile`` ↔ ``RelationshipTypeProfile``: compare
-      ``cardinality_stats.min_degree`` / ``max_degree``; skips when either
+      ``cardinality_stats.min`` / ``max``; skips when either
       ``cardinality_stats`` is ``None``.
     - ``RelationshipModel`` subclass ↔ ``RelationshipModel`` subclass: compare
       ``__source_cardinality__``; skips when both are the default
@@ -541,6 +538,57 @@ class CardinalityChangedRule:
             yield issue
 
 
+@dataclass
+class CountChangedRule:
+    """Emits ``COUNT_CHANGED`` (INFO) when both sides observe a node label or
+    relationship type but the entity ``count`` differs (ADR-034 §6/§8).
+
+    Total count is **diff-only**: it never participates in profile↔description
+    comparison.  It applies only to :class:`NodeTypeProfile` /
+    :class:`RelationshipTypeProfile` operands — definition operands carry no
+    observed count, so the rule is silent for them.
+    """
+
+    key: str = "diff.count_changed"
+
+    def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
+        from orthograph.graph_profile.models import (
+            NodeTypeProfile,
+            RelationshipTypeProfile,
+        )
+
+        address_type = context.extra.get("address_type")
+        if address_type not in ("node_label", "rel_type"):
+            return  # only the type-level addresses carry a total count
+        # Both operands must be the profile class matching the address; this
+        # keeps the rule self-contained and rejects any node/rel mix.
+        expected = (
+            NodeTypeProfile if address_type == "node_label" else RelationshipTypeProfile
+        )
+        left = context.left
+        right = context.right
+        if not isinstance(left, expected) or not isinstance(right, expected):
+            return
+        if left.count == right.count:
+            return
+
+        entity_type = (
+            EntityType.NODE if address_type == "node_label" else EntityType.RELATIONSHIP
+        )
+        kind = "Node label" if address_type == "node_label" else "Relationship type"
+        yield ValidationIssue(
+            code="COUNT_CHANGED",
+            severity=Severity.INFO,
+            entity_type=entity_type,
+            entity_id=context.address,
+            message=(
+                f"{kind} '{context.address}' count differs: "
+                f"left={left.count} right={right.count}"
+            ),
+            context={"left": left.count, "right": right.count},
+        )
+
+
 # ---------------------------------------------------------------------------
 # Diff rule set factory
 # ---------------------------------------------------------------------------
@@ -558,4 +606,5 @@ def diff_rules() -> list[Rule]:
         PropertyTypeChangedRule(),
         EndpointsChangedRule(),
         CardinalityChangedRule(),
+        CountChangedRule(),
     ]

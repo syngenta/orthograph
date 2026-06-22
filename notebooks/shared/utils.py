@@ -251,9 +251,8 @@ def display_relationship_profiles(profile) -> None:
 
             if rtp.cardinality_stats:
                 cs = rtp.cardinality_stats
-                degree_info = (
-                    f"min={cs.min_degree}, max={cs.max_degree}, avg={cs.avg_degree:.2f}"
-                )
+                avg_str = f"{cs.mean:.2f}" if cs.mean is not None else "N/A"
+                degree_info = f"min={cs.min}, max={cs.max}, avg={avg_str}"
                 print(f"  Degree cardinality: {degree_info}")
 
             if rtp.property_profiles:

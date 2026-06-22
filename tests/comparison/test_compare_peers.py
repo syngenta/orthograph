@@ -219,12 +219,8 @@ def test_compare_profiles_endpoints_changed():
 
 
 def test_compare_profiles_cardinality_changed():
-    stats_1 = CardinalityStats(
-        min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5
-    )
-    stats_2 = CardinalityStats(
-        min_degree=2, max_degree=6, avg_degree=4.0, sample_size=5
-    )
+    stats_1 = CardinalityStats(count=5, min=1, max=3, mean=2.0)
+    stats_2 = CardinalityStats(count=5, min=2, max=6, mean=4.0)
     rtp_left = RelationshipTypeProfile(
         rel_type="ACTED_IN", count=5, cardinality_stats=stats_1
     )

@@ -5,10 +5,33 @@ from typing import Any
 
 from orthograph.cypher.bindings import NoParams
 from orthograph.graph_profile.models import (
+    BoundedDistribution,
     CardinalityStats,
     GraphProfile,
+    PartitionedCardinalityRow,
+    PartitionKey,
     RelationshipTypeProfile,
 )
+
+
+def _extract_discriminators(card: Any) -> tuple[str, str] | None:
+    """Return ``(source_prop, target_prop)`` for a single-property discriminator.
+
+    Reads the union of property names used as conditions across all rules on
+    each endpoint.  Returns ``None`` when the discriminator is multi-property
+    (unsupported in the E41 first cut) or when no conditions exist.
+
+    Mirrors the single-``kind`` constraint of :func:`_discriminator_value` in
+    the NetworkX reference inspector.
+    """
+    src_keys: set[str] = set()
+    tgt_keys: set[str] = set()
+    for rule in card.rules:
+        src_keys.update(rule.source.conditions)
+        tgt_keys.update(rule.target.conditions)
+    if len(src_keys) != 1 or len(tgt_keys) != 1:
+        return None
+    return next(iter(src_keys)), next(iter(tgt_keys))
 
 
 class GraphInspector(ABC):
@@ -95,7 +118,7 @@ class CypherInspector(GraphInspector):
                 identifiers={"label": label, "rel_type": rel_type},
                 **execute_kwargs,
             )
-            if card_rows and card_rows[0].sample_size > 0:
+            if card_rows and card_rows[0].count > 0:
                 card_stats = card_rows[0]
                 break
 
@@ -106,4 +129,75 @@ class CypherInspector(GraphInspector):
             cardinality_stats=card_stats,
             source_labels=source_labels,
             target_labels=target_labels,
+        )
+
+    def _enrich_with_partitioned_cardinality(
+        self,
+        connection: Any,
+        profile: RelationshipTypeProfile,
+        partitioned_query: Any,
+        source_discriminator: str,
+        target_discriminator: str,
+        side: str,
+        **execute_kwargs: Any,
+    ) -> RelationshipTypeProfile:
+        """Return a copy of ``profile`` with one side's partitioned breakdown set.
+
+        The query is anchored on the side's own label and counts that side's
+        degree — ``side == "source"`` iterates ``profile.source_labels`` with the
+        source-anchored (outgoing-degree) query; ``side == "target"`` iterates
+        ``profile.target_labels`` with the target-anchored (incoming-degree) query.
+        The caller supplies the matching ``partitioned_query`` class.  The result
+        is assembled into ``dict[str, BoundedDistribution]`` keyed by
+        ``str(PartitionKey)`` and attached to ``{side}_partitioned_cardinality``.
+        Calling it once per conditional side lets a both-endpoint-conditional type
+        carry both breakdowns without collision (E41.7).
+
+        Zero-degree rows (emitted by ``OPTIONAL MATCH`` for anchor nodes that have
+        no matching edge) are suppressed so the result matches the NetworkX
+        reference, which only emits partitions for observed edges (ADR-009 /
+        E41.4 parity note).
+
+        When no labels are known for the side or the query returns only zero-degree
+        rows, the targeted field is left ``None`` (honest).
+        """
+        rel_type = profile.rel_type
+        candidates = sorted(
+            profile.source_labels if side == "source" else profile.target_labels
+        )
+
+        partitioned: dict[str, BoundedDistribution] = {}
+        for label in candidates:
+            rows: list[PartitionedCardinalityRow] = self._run_query(
+                connection,
+                partitioned_query,
+                identifiers={
+                    "label": label,
+                    "rel_type": rel_type,
+                    "source_discriminator": source_discriminator,
+                    "target_discriminator": target_discriminator,
+                },
+                **execute_kwargs,
+            )
+            for row in rows:
+                # Suppress zero-degree rows from OPTIONAL MATCH (parity with
+                # NetworkX, which only emits observed edges -- see E41.4 notes).
+                # A zero-degree partition has all anchor nodes at 0 degree:
+                # min == 0 and max == 0.  Absent partitions are handled at
+                # comparison time by treating a missing key as degree 0.
+                if row.stats.min == 0 and row.stats.max == 0:
+                    continue
+                key = str(
+                    PartitionKey(
+                        source_value=row.source_value,
+                        target_value=row.target_value,
+                    )
+                )
+                partitioned[key] = row.stats
+
+        breakdown = partitioned if partitioned else None
+        return profile.model_copy(
+            update={
+                f"{side}_partitioned_cardinality": breakdown,
+            }
         )

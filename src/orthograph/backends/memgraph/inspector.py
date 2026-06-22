@@ -21,11 +21,15 @@ from orthograph.backends.memgraph.queries import (
     MemgraphEndpointLabelsQuery,
     MemgraphNodePropertiesQuery,
     MemgraphRelPropertiesQuery,
+    MemgraphSourcePartitionedCardinalityQuery,
+    MemgraphTargetPartitionedCardinalityQuery,
 )
 from orthograph.comparison.engine import compare_profile_to_definition
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
-from orthograph.graph_profile.inspection import CypherInspector
+from orthograph.graph_definition.models import ConditionalCardinality
+from orthograph.graph_profile.constraints import is_presence_constraint_for
+from orthograph.graph_profile.inspection import CypherInspector, _extract_discriminators
 from orthograph.graph_profile.models import (
     ConstraintInfo,
     GraphProfile,
@@ -45,11 +49,27 @@ class MemgraphInspector(CypherInspector):
     # Public interface
     # ------------------------------------------------------------------
 
-    def inspect(self, connection: Any) -> GraphProfile:
-        """Inspect the Memgraph database and return a :class:`GraphProfile`."""
-        node_profiles = self._build_node_profiles(connection)
-        rel_profiles = self._build_rel_profiles(connection)
+    def inspect(
+        self,
+        connection: Any,
+        *,
+        graph_definition: GraphDefinition | None = None,
+    ) -> GraphProfile:
+        """Inspect the Memgraph database and return a :class:`GraphProfile`.
+
+        When ``graph_definition`` is supplied, relationship types whose declared
+        side is a :class:`~orthograph.graph_definition.models.ConditionalCardinality`
+        additionally receive per-side partitioned cardinality breakdowns
+        (``source_partitioned_cardinality`` / ``target_partitioned_cardinality``;
+        E41/ADR-034 §7, both for a both-endpoint-conditional type — E41.7).
+        Without a definition the breakdowns are left ``None`` (comparison
+        then reports ``CARDINALITY_UNVERIFIABLE``).
+        """
         constraints = self._get_constraints(connection)
+        node_profiles = self._build_node_profiles(connection, constraints)
+        rel_profiles = self._build_rel_profiles(
+            connection, constraints, graph_definition=graph_definition
+        )
 
         return GraphProfile(
             source="memgraph",
@@ -62,7 +82,9 @@ class MemgraphInspector(CypherInspector):
     # Internal — profile builders
     # ------------------------------------------------------------------
 
-    def _build_node_profiles(self, connection: Any) -> dict[str, NodeTypeProfile]:
+    def _build_node_profiles(
+        self, connection: Any, constraints: list[ConstraintInfo]
+    ) -> dict[str, NodeTypeProfile]:
         rows = self._run_query(connection, MemgraphNodePropertiesQuery)
 
         label_props: dict[str, list[Any]] = {}
@@ -90,6 +112,9 @@ class MemgraphInspector(CypherInspector):
                     present_count=1 if r.mandatory else 0,
                     total_count=1,
                     observed_types=r.property_types,
+                    constraint_required=is_presence_constraint_for(
+                        constraints, "NODE", label, name
+                    ),
                 )
             profiles[label] = NodeTypeProfile(
                 label=label, count=0, property_profiles=props
@@ -98,7 +123,11 @@ class MemgraphInspector(CypherInspector):
         return profiles
 
     def _build_rel_profiles(
-        self, connection: Any
+        self,
+        connection: Any,
+        constraints: list[ConstraintInfo],
+        *,
+        graph_definition: GraphDefinition | None = None,
     ) -> dict[str, RelationshipTypeProfile]:
         rows = self._run_query(connection, MemgraphRelPropertiesQuery)
 
@@ -120,6 +149,9 @@ class MemgraphInspector(CypherInspector):
                     present_count=1 if r.mandatory else 0,
                     total_count=1,
                     observed_types=r.property_types,
+                    constraint_required=is_presence_constraint_for(
+                        constraints, "RELATIONSHIP", rel_type, name
+                    ),
                 )
 
             profiles[rel_type] = RelationshipTypeProfile(
@@ -135,6 +167,40 @@ class MemgraphInspector(CypherInspector):
                 MemgraphEndpointLabelsQuery,
                 MemgraphCardinalityQuery,
             )
+
+            # Partitioned cardinality — only for conditional relationship types
+            # when a definition is provided.  A type conditional on both
+            # endpoints is profiled on both sides (E41.7).
+            if graph_definition is not None:
+                rel_model = graph_definition.get_relationship_type(rel_type)
+                if rel_model is not None:
+                    for card_attr, side, side_query in (
+                        (
+                            "__source_cardinality__",
+                            "source",
+                            MemgraphSourcePartitionedCardinalityQuery,
+                        ),
+                        (
+                            "__target_cardinality__",
+                            "target",
+                            MemgraphTargetPartitionedCardinalityQuery,
+                        ),
+                    ):
+                        card = getattr(rel_model, card_attr, None)
+                        if isinstance(card, ConditionalCardinality):
+                            discriminators = _extract_discriminators(card)
+                            if discriminators is not None:
+                                src_disc, tgt_disc = discriminators
+                                profiles[rel_type] = (
+                                    self._enrich_with_partitioned_cardinality(
+                                        connection,
+                                        profiles[rel_type],
+                                        side_query,
+                                        src_disc,
+                                        tgt_disc,
+                                        side,
+                                    )
+                                )
 
         return profiles
 
@@ -157,5 +223,5 @@ def validate_database(
     graph_definition: GraphDefinition,
 ) -> ValidationResult:
     """Validate a Memgraph database against a GraphDefinition."""
-    profile = MemgraphInspector().inspect(connection)
+    profile = MemgraphInspector().inspect(connection, graph_definition=graph_definition)
     return compare_profile_to_definition(profile, graph_definition)

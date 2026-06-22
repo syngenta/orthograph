@@ -293,10 +293,10 @@ def test_compare_cardinality_violation(
     profiles["LIVES_IN"] = lives_in.model_copy(
         update={
             "cardinality_stats": CardinalityStats(
-                min_degree=0,  # violates "1..1" (min=1)
-                max_degree=3,
-                avg_degree=1.5,
-                sample_size=100,
+                count=100,
+                min=0,  # violates "1..1" (min=1)
+                max=3,
+                mean=1.5,
             )
         }
     )

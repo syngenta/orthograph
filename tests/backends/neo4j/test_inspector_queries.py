@@ -357,7 +357,9 @@ def test_apoc_catalogue_registered_names() -> None:
     assert "inspect.cardinality" in names
     assert "neo4j.inspect.constraints" in names
     assert "inspect.endpoint_labels" in names
-    assert len(names) == 7
+    assert "inspect.partitioned_cardinality.source" in names
+    assert "inspect.partitioned_cardinality.target" in names
+    assert len(names) == 9
 
 
 def test_cypher_catalogue_registered_names() -> None:
@@ -366,7 +368,9 @@ def test_cypher_catalogue_registered_names() -> None:
     assert "neo4j.inspect.cypher.node_properties" in names
     assert "neo4j.inspect.cypher.rel_properties" in names
     assert "inspect.endpoint_labels" in names
-    assert len(names) == 7
+    assert "inspect.partitioned_cardinality.source" in names
+    assert "inspect.partitioned_cardinality.target" in names
+    assert len(names) == 9
 
 
 def test_schema_catalogue_registered_names() -> None:
@@ -384,7 +388,9 @@ def test_schema_catalogue_registered_names() -> None:
     assert "inspect.cardinality" in names
     assert "neo4j.inspect.constraints" in names
     assert "inspect.endpoint_labels" in names
-    assert len(names) == 9
+    assert "inspect.partitioned_cardinality.source" in names
+    assert "inspect.partitioned_cardinality.target" in names
+    assert len(names) == 11
 
 
 def test_catalogue_all_reads_have_output_schema() -> None:

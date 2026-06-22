@@ -27,13 +27,29 @@ _DB_NOTEBOOKS: dict[str, str] = {
     "04.06_cypher_query_definitions.ipynb": "neo4j",
 }
 
+# Notebooks that require optional UI dependencies (dash, plotly) and cannot run
+# in standard CI.  Excluded from collection unconditionally unless the
+# NOTEBOOKS_UI environment variable is set to "1".
+_UI_NOTEBOOKS: set[str] = {
+    "06.01_fastapi_integration.ipynb",
+    "06.02_dash_profile_explorer.ipynb",
+}
+
 
 def pytest_ignore_collect(collection_path: Path, config) -> bool | None:  # noqa: ANN001
-    """Ignore DB-requiring notebooks unless the CLI flag is passed."""
+    """Ignore DB-requiring and UI notebooks unless the corresponding flag is passed."""
     if collection_path.parent != _HERE:
         return None
 
     name = collection_path.name
+
+    # UI notebooks: skip unless NOTEBOOKS_UI=1 is set in the environment.
+    if name in _UI_NOTEBOOKS:
+        import os
+
+        if os.environ.get("NOTEBOOKS_UI") != "1":
+            return True  # Ignore this file
+
     if name not in _DB_NOTEBOOKS:
         return None
 

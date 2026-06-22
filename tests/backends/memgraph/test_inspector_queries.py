@@ -163,7 +163,7 @@ def test_mg_cardinality_materialize() -> None:
         {"min_degree": 1, "max_degree": 3, "avg_degree": 2.0, "sample_size": 50}
     )
     assert isinstance(row, CardinalityStats)
-    assert row.sample_size == 50
+    assert row.count == 50
 
 
 def test_mg_cardinality_injected_label_raises() -> None:
@@ -221,7 +221,9 @@ def test_memgraph_catalogue_registered_names() -> None:
     assert "memgraph.inspect.constraints" in names
     assert "memgraph.inspect.cardinality" in names
     assert "memgraph.inspect.endpoint_labels" in names
-    assert len(names) == 5
+    assert "memgraph.inspect.partitioned_cardinality.source" in names
+    assert "memgraph.inspect.partitioned_cardinality.target" in names
+    assert len(names) == 7
 
 
 def test_memgraph_catalogue_all_reads_have_output_schema() -> None:

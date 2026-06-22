@@ -3,7 +3,7 @@
 from orthograph.diagnostics.result import ValidationIssue, ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import CardinalitySpec, ConditionalCardinality
-from orthograph.graph_profile.models import GraphProfile
+from orthograph.graph_profile.models import BoundedDistribution, GraphProfile
 
 
 def _format_conditional(card: ConditionalCardinality) -> str:
@@ -85,6 +85,20 @@ def model_to_text(graph_definition: GraphDefinition) -> str:
     return "\n".join(lines)
 
 
+def _format_value_distribution(dist: BoundedDistribution) -> str:
+    """Render a BoundedDistribution compactly.
+
+    Shows top-N histogram entries; appends a ``+N more`` truncation marker when
+    ``sample_complete=False``.  Returns an empty string when ``histogram`` is
+    ``None``.
+    """
+    if dist.histogram is None:
+        return ""
+    pairs = ", ".join(f"{k}:{v}" for k, v in dist.histogram.items())
+    suffix = f", +{dist.other_count} more" if not dist.sample_complete else ""
+    return f"[{pairs}{suffix}]"
+
+
 def profile_to_text(profile: GraphProfile) -> str:
     """Render a GraphProfile as a plain text table.
 
@@ -106,11 +120,23 @@ def profile_to_text(profile: GraphProfile) -> str:
         for prop_name, pp in ntp.property_profiles.items():
             pct = f"{pp.completeness:.0%}"
             types_str = ", ".join(pp.observed_types) if pp.observed_types else "n/a"
-            mandatory = "mandatory" if pp.is_required else "partial"
+            constraint_tag = (
+                " [constrained]"
+                if pp.constraint_required is True
+                else " [unconstrained]"
+                if pp.constraint_required is False
+                else ""
+            )
+            dist_str = (
+                f" values={_format_value_distribution(pp.value_distribution)}"
+                if pp.value_distribution is not None
+                and pp.value_distribution.histogram is not None
+                else ""
+            )
             lines.append(
                 f"    {prop_name}: {pct} complete "
-                f"({pp.present_count}/{pp.total_count}) "
-                f"[{mandatory}] types=[{types_str}]"
+                f"({pp.present_count}/{pp.total_count})"
+                f"{constraint_tag} types=[{types_str}]{dist_str}"
             )
         lines.append("")
 
@@ -124,17 +150,31 @@ def profile_to_text(profile: GraphProfile) -> str:
         lines.append(f"    targets: {sorted(rtp.target_labels)}")
         if rtp.cardinality_stats:
             cs = rtp.cardinality_stats
+            mean_str = f"{cs.mean:.1f}" if cs.mean is not None else "n/a"
             lines.append(
-                f"    cardinality: min={cs.min_degree}, max={cs.max_degree}, "
-                f"avg={cs.avg_degree:.1f}, sample_size={cs.sample_size}"
+                f"    cardinality: min={cs.min}, max={cs.max}, "
+                f"avg={mean_str}, sample_size={cs.count}"
             )
         for prop_name, pp in rtp.property_profiles.items():
             pct = f"{pp.completeness:.0%}"
             types_str = ", ".join(pp.observed_types) if pp.observed_types else "n/a"
+            constraint_tag = (
+                " [constrained]"
+                if pp.constraint_required is True
+                else " [unconstrained]"
+                if pp.constraint_required is False
+                else ""
+            )
+            dist_str = (
+                f" values={_format_value_distribution(pp.value_distribution)}"
+                if pp.value_distribution is not None
+                and pp.value_distribution.histogram is not None
+                else ""
+            )
             lines.append(
                 f"    {prop_name}: {pct} complete "
-                f"({pp.present_count}/{pp.total_count}) "
-                f"types=[{types_str}]"
+                f"({pp.present_count}/{pp.total_count})"
+                f"{constraint_tag} types=[{types_str}]{dist_str}"
             )
         lines.append("")
 

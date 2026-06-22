@@ -178,6 +178,53 @@ def test_propmatch_none_condition_does_not_match_absent_key():
     assert p.matches({"kind": None}) is True
 
 
+def test_propmatch_matches_plain_enum_member_against_literal_condition():
+    """A plain Enum-valued observation matches a rule authored with the literal.
+
+    A plain ``enum.Enum`` member does NOT ``==`` its underlying value, so without
+    normalisation ``PropMatch({"genre": "drama"})`` would never match a node whose
+    ``model_dump()`` yielded ``Genre.DRAMA``.  ``matches`` normalises the observed
+    value to ``.value`` so the literal-authored rule still matches.
+    """
+    import enum
+
+    class Genre(enum.Enum):
+        DRAMA = "drama"
+        ACTION = "action"
+
+    # Guard the premise: a plain enum member is not equal to its value.
+    member: object = Genre.DRAMA
+    assert (member == "drama") is False
+
+    p = PropMatch({"genre": "drama"})
+    assert p.matches({"genre": Genre.DRAMA}) is True
+    assert p.matches({"genre": Genre.ACTION}) is False
+
+
+def test_propmatch_matches_str_mixin_enum_member_against_literal_condition():
+    """A str-mixin Enum already ==-equals its value; matching still holds."""
+    import enum
+
+    class Genre(str, enum.Enum):
+        DRAMA = "drama"
+
+    member: object = Genre.DRAMA
+    assert (member == "drama") is True  # premise: str-mixin equals its value
+    assert PropMatch({"genre": "drama"}).matches({"genre": Genre.DRAMA}) is True
+
+
+def test_propmatch_matches_int_enum_member_against_literal_condition():
+    """An int-valued Enum normalises to its int value for matching."""
+    import enum
+
+    class Tier(enum.Enum):
+        ONE = 1
+        TWO = 2
+
+    assert PropMatch({"tier": 1}).matches({"tier": Tier.ONE}) is True
+    assert PropMatch({"tier": 1}).matches({"tier": Tier.TWO}) is False
+
+
 def test_propmatch_conditions_is_mapping_not_writable():
     """Scope: conditions is a genuinely read-only mapping after construction.
 

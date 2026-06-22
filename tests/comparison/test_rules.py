@@ -17,6 +17,7 @@ C2 tests cover:
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Optional
 
 import pytest
@@ -27,6 +28,8 @@ from orthograph.comparison.rules import (
     MissingNodeLabelRule,
     MissingPropertyRule,
     MissingRelTypeRule,
+    PropertyConstraintPresenceRule,
+    PropertyEnumValueRule,
     PropertyIncompleteRule,
     PropertyTypeMismatchRule,
     Rule,
@@ -48,10 +51,13 @@ from orthograph.graph_definition.models import (
     PropMatch,
     RelationshipModel,
 )
+from orthograph.graph_definition.property_spec import TypeInfo
 from orthograph.graph_profile.models import (
+    BoundedDistribution,
     CardinalityStats,
     GraphProfile,
     NodeTypeProfile,
+    PartitionKey,
     PropertyProfile,
     RelationshipTypeProfile,
 )
@@ -298,9 +304,7 @@ _STD_PROFILE = GraphProfile(
             count=3,
             source_labels={"Person"},
             target_labels={"Movie"},
-            cardinality_stats=CardinalityStats(
-                min_degree=1, max_degree=3, avg_degree=1.5, sample_size=2
-            ),
+            cardinality_stats=CardinalityStats(count=2, min=1, max=3, mean=1.5),
         ),
     },
 )
@@ -591,15 +595,13 @@ def test_invalid_endpoint_rule_satisfies_protocol():
 
 def test_cardinality_violation_rule_code_and_severity():
     rule = CardinalityViolationRule()
-    # _ActedIn has source_cardinality ONE_OR_MORE (min=1); min_degree=0 violates
+    # _ActedIn has source_cardinality ONE_OR_MORE (min=1); min=0 violates
     rtp = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=2,
         source_labels={"Person"},
         target_labels={"Movie"},
-        cardinality_stats=CardinalityStats(
-            min_degree=0, max_degree=3, avg_degree=1.5, sample_size=2
-        ),
+        cardinality_stats=CardinalityStats(count=2, min=0, max=3, mean=1.5),
     )
     ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
     issues = list(rule(ctx))
@@ -616,9 +618,7 @@ def test_cardinality_violation_rule_no_issue_when_satisfied():
         count=2,
         source_labels={"Person"},
         target_labels={"Movie"},
-        cardinality_stats=CardinalityStats(
-            min_degree=1, max_degree=3, avg_degree=2.0, sample_size=2
-        ),
+        cardinality_stats=CardinalityStats(count=2, min=1, max=3, mean=2.0),
     )
     ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
     assert list(rule(ctx)) == []
@@ -645,9 +645,9 @@ def test_cardinality_violation_rule_satisfies_protocol():
 # ---------------------------------------------------------------------------
 
 
-def test_standard_rules_returns_ten_rules():
+def test_standard_rules_returns_twelve_rules():
     rules = standard_rules()
-    assert len(rules) == 10
+    assert len(rules) == 12
 
 
 def test_standard_rules_all_satisfy_protocol():
@@ -670,6 +670,8 @@ def test_standard_rules_expected_keys():
         "property.unexpected",
         "property.incomplete",
         "property.type_mismatch",
+        "property.constraint_presence",
+        "property.enum_value",
         "rel.endpoint",
         "rel.cardinality",
     }
@@ -958,9 +960,16 @@ def test_case_b_extension_via_injection():
     )
     assert missing_issues[0].entity_id == "Movie.title"
 
-    # Total: 2 issues — 1 from standard rules, 1 from the injected Case-B rule
-    assert len(result.issues) == 2, (
-        f"Expected exactly 2 issues total; got {len(result.issues)}: "
+    # E45.4: Person.name is declared-required but the profile carries no
+    # constraint_required (None) → PropertyConstraintPresenceRule emits one
+    # CONSTRAINT_UNVERIFIABLE (INFO), honest per ADR-033/ADR-034 §8.
+    unverifiable = [i for i in result.issues if i.code == "CONSTRAINT_UNVERIFIABLE"]
+    assert len(unverifiable) == 1
+    assert unverifiable[0].entity_id == "Person.name"
+
+    # Total: 3 issues — 1 MISSING_PROPERTY, 1 injected Case-B, 1 CONSTRAINT_UNVERIFIABLE
+    assert len(result.issues) == 3, (
+        f"Expected exactly 3 issues total; got {len(result.issues)}: "
         + str([(i.code, i.entity_id) for i in result.issues])
     )
 
@@ -1020,9 +1029,7 @@ _E407_PROFILE = GraphProfile(
             count=2,
             source_labels={"Operation"},
             target_labels={"Sample"},
-            cardinality_stats=CardinalityStats(
-                min_degree=1, max_degree=2, avg_degree=1.5, sample_size=1
-            ),
+            cardinality_stats=CardinalityStats(count=1, min=1, max=2, mean=1.5),
         ),
     },
 )
@@ -1046,9 +1053,7 @@ def test_cardinality_violation_rule_conditional_yields_unverifiable():
         count=2,
         source_labels={"Operation"},
         target_labels={"Sample"},
-        cardinality_stats=CardinalityStats(
-            min_degree=1, max_degree=2, avg_degree=1.5, sample_size=1
-        ),
+        cardinality_stats=CardinalityStats(count=1, min=1, max=2, mean=1.5),
     )
     ctx = _e407_ctx(address="HAS_OUTPUT", left=_HasOutputConditional, right=rtp)
     issues = list(rule(ctx))
@@ -1068,9 +1073,7 @@ def test_cardinality_violation_rule_conditional_no_cardinality_violation():
         count=0,
         source_labels={"Operation"},
         target_labels={"Sample"},
-        cardinality_stats=CardinalityStats(
-            min_degree=0, max_degree=0, avg_degree=0.0, sample_size=0
-        ),
+        cardinality_stats=CardinalityStats(count=0, min=0, max=0, mean=0.0),
     )
     ctx = _e407_ctx(address="HAS_OUTPUT", left=_HasOutputConditional, right=rtp)
     codes = [i.code for i in rule(ctx)]
@@ -1086,11 +1089,1033 @@ def test_cardinality_violation_rule_constant_unchanged_regression():
         count=2,
         source_labels={"Person"},
         target_labels={"Movie"},
-        cardinality_stats=CardinalityStats(
-            min_degree=0, max_degree=3, avg_degree=1.5, sample_size=2
-        ),
+        cardinality_stats=CardinalityStats(count=2, min=0, max=3, mean=1.5),
     )
     ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
     issues = list(rule(ctx))
     assert len(issues) == 1
     assert issues[0].code == "CARDINALITY_VIOLATION"
+
+
+# ===========================================================================
+# E45.4 — Comparison rules: presence (3 sources), enum/value, total-count diff-only
+#
+# Implements the ADR-034 §8 non-cardinality rows.  Settled severities
+# (recorded in ADR-034 §8):
+#   - PROPERTY_INCOMPLETE          WARNING  (declared-required & completeness<1)
+#   - PROPERTY_UNCONSTRAINED       WARNING  (declared-required & constraint False)
+#   - UNDECLARED_CONSTRAINT        INFO     (constraint True & not declared-required)
+#   - CONSTRAINT_UNVERIFIABLE      INFO     (declared-required & constraint None)
+#   - UNDECLARED_PROPERTY_VALUE    WARNING  (declared enum; observed value not in enum)
+#   - UNOBSERVED_PROPERTY_VALUE    INFO     (declared enum value never observed)
+#   - PROPERTY_VALUE_UNVERIFIABLE  INFO     (declared enum; value_distribution None)
+# ===========================================================================
+
+
+class _Status(Enum):
+    """Declared enum for value-comparison tests."""
+
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
+# ---------------------------------------------------------------------------
+# PropertyIncompleteRule — declared-required vs occurrence (ADR-034 §8)
+# ---------------------------------------------------------------------------
+
+
+def test_property_incomplete_rule_fires_on_completeness_below_one():
+    """Declared-required + completeness < 1.0 → PROPERTY_INCOMPLETE (WARNING)."""
+    rule = PropertyIncompleteRule()
+    ctx = _ctx(
+        address="Person.age",
+        left=TypeInfo(python_type=int, is_required=True),
+        right=PropertyProfile(name="age", present_count=3, total_count=5),
+        extra={"label": "Person", "prop_name": "age", "entity_type": EntityType.NODE},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_INCOMPLETE"
+    assert issues[0].severity == Severity.WARNING
+
+
+# ---------------------------------------------------------------------------
+# PropertyConstraintPresenceRule — declared-required vs constraint (3 outcomes)
+# ---------------------------------------------------------------------------
+
+
+def _constraint_ctx(
+    constraint_required: bool | None, *, is_required: bool = True
+) -> RuleContext:
+    return _ctx(
+        address="Person.name",
+        left=TypeInfo(python_type=str, is_required=is_required),
+        right=PropertyProfile(
+            name="name",
+            present_count=5,
+            total_count=5,
+            constraint_required=constraint_required,
+        ),
+        extra={"label": "Person", "prop_name": "name", "entity_type": EntityType.NODE},
+    )
+
+
+def test_constraint_presence_rule_satisfies_protocol():
+    assert isinstance(PropertyConstraintPresenceRule(), Rule)
+
+
+def test_constraint_presence_rule_declared_required_false_warns():
+    """Declared-required & constraint_required is False → PROPERTY_UNCONSTRAINED."""
+    rule = PropertyConstraintPresenceRule()
+    issues = list(rule(_constraint_ctx(False)))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_UNCONSTRAINED"
+    assert issues[0].severity == Severity.WARNING
+    assert issues[0].entity_id == "Person.name"
+
+
+def test_constraint_presence_rule_declared_required_none_unverifiable():
+    """Declared-required & constraint_required is None → CONSTRAINT_UNVERIFIABLE."""
+    rule = PropertyConstraintPresenceRule()
+    issues = list(rule(_constraint_ctx(None)))
+    assert len(issues) == 1
+    assert issues[0].code == "CONSTRAINT_UNVERIFIABLE"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_constraint_presence_rule_declared_required_true_silent():
+    """Declared-required & constraint_required is True → no issue (the happy path)."""
+    rule = PropertyConstraintPresenceRule()
+    assert list(rule(_constraint_ctx(True))) == []
+
+
+def test_constraint_presence_rule_undeclared_constraint_info():
+    """constraint True, not declared-required → UNDECLARED_CONSTRAINT (INFO)."""
+    rule = PropertyConstraintPresenceRule()
+    issues = list(rule(_constraint_ctx(True, is_required=False)))
+    assert len(issues) == 1
+    assert issues[0].code == "UNDECLARED_CONSTRAINT"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_constraint_presence_rule_optional_false_or_none_silent():
+    """Not declared-required + constraint False/None → nothing to report."""
+    rule = PropertyConstraintPresenceRule()
+    assert list(rule(_constraint_ctx(False, is_required=False))) == []
+    assert list(rule(_constraint_ctx(None, is_required=False))) == []
+
+
+# ---------------------------------------------------------------------------
+# PropertyEnumValueRule — declared enum vs observed value_distribution
+# ---------------------------------------------------------------------------
+
+
+def _enum_ctx(distribution: BoundedDistribution | None) -> RuleContext:
+    return _ctx(
+        address="Person.status",
+        left=TypeInfo(python_type=_Status, is_required=True),
+        right=PropertyProfile(
+            name="status",
+            present_count=5,
+            total_count=5,
+            value_distribution=distribution,
+        ),
+        extra={
+            "label": "Person",
+            "prop_name": "status",
+            "entity_type": EntityType.NODE,
+        },
+    )
+
+
+def test_enum_value_rule_satisfies_protocol():
+    assert isinstance(PropertyEnumValueRule(), Rule)
+
+
+def test_enum_value_rule_undeclared_value_warns():
+    """Observed value not in the declared enum → UNDECLARED_PROPERTY_VALUE (WARNING)."""
+    rule = PropertyEnumValueRule()
+    dist = BoundedDistribution(count=5, histogram={"active": 3, "pending": 2})
+    issues = list(rule(_enum_ctx(dist)))
+    undeclared = [i for i in issues if i.code == "UNDECLARED_PROPERTY_VALUE"]
+    assert len(undeclared) == 1
+    assert undeclared[0].severity == Severity.WARNING
+    assert undeclared[0].entity_id == "Person.status"
+    assert "pending" in undeclared[0].message
+
+
+def test_enum_value_rule_unobserved_declared_value_info():
+    """Declared enum value never observed → UNOBSERVED_PROPERTY_VALUE (INFO)."""
+    rule = PropertyEnumValueRule()
+    dist = BoundedDistribution(count=5, histogram={"active": 5})
+    issues = list(rule(_enum_ctx(dist)))
+    unobserved = [i for i in issues if i.code == "UNOBSERVED_PROPERTY_VALUE"]
+    assert len(unobserved) == 1
+    assert unobserved[0].severity == Severity.INFO
+    assert "inactive" in unobserved[0].message
+
+
+def test_enum_value_rule_all_values_match_silent():
+    """All observed values declared and all declared values observed → no issue."""
+    rule = PropertyEnumValueRule()
+    dist = BoundedDistribution(count=5, histogram={"active": 3, "inactive": 2})
+    assert list(rule(_enum_ctx(dist))) == []
+
+
+def test_enum_value_rule_none_distribution_unverifiable():
+    """Declared enum but value_distribution is None → PROPERTY_VALUE_UNVERIFIABLE."""
+    rule = PropertyEnumValueRule()
+    issues = list(rule(_enum_ctx(None)))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_VALUE_UNVERIFIABLE"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_enum_value_rule_no_histogram_unverifiable():
+    """Declared enum, distribution present but histogram None → unverifiable."""
+    rule = PropertyEnumValueRule()
+    dist = BoundedDistribution(count=5)  # histogram defaults to None
+    issues = list(rule(_enum_ctx(dist)))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_VALUE_UNVERIFIABLE"
+
+
+def test_enum_value_rule_silent_for_non_enum_property():
+    """Non-enum declared property → rule no-ops (value comparison is enum-only)."""
+    rule = PropertyEnumValueRule()
+    ctx = _ctx(
+        address="Person.name",
+        left=TypeInfo(python_type=str, is_required=True),
+        right=PropertyProfile(
+            name="name",
+            present_count=5,
+            total_count=5,
+            value_distribution=BoundedDistribution(
+                count=5, histogram={"alice": 3, "bob": 2}
+            ),
+        ),
+        extra={"label": "Person", "prop_name": "name", "entity_type": EntityType.NODE},
+    )
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# PropertyEnumValueRule — truncated value_distribution (ADR-034 §2 honesty)
+#
+# A histogram capped at ``limit`` (``sample_complete is False``) hides
+# ``other_count`` observations.  The rule must NOT make absence-based verdicts on
+# a truncated histogram: an undeclared value could be hidden in the remainder
+# (silent false negative — the severe direction), and a declared value absent
+# from the shown keys could still be present in the remainder (false UNOBSERVED).
+# ---------------------------------------------------------------------------
+
+
+def test_enum_value_rule_truncated_histogram_is_unverifiable_not_unobserved():
+    """Truncated histogram → PROPERTY_VALUE_UNVERIFIABLE, never a false UNOBSERVED.
+
+    Only 'active' is shown; 'inactive' is absent from the shown keys but may be
+    among the 40 hidden observations, so claiming it was 'never observed' would be
+    a false verdict.  The rule emits a single UNVERIFIABLE INFO instead.
+    """
+    rule = PropertyEnumValueRule()
+    dist = BoundedDistribution(
+        count=100,
+        histogram={"active": 60},
+        sample_complete=False,
+        limit=1,
+        other_count=40,
+    )
+    issues = list(rule(_enum_ctx(dist)))
+    codes = {i.code for i in issues}
+    assert "PROPERTY_VALUE_UNVERIFIABLE" in codes
+    assert "UNOBSERVED_PROPERTY_VALUE" not in codes
+    unverifiable = next(i for i in issues if i.code == "PROPERTY_VALUE_UNVERIFIABLE")
+    assert unverifiable.severity == Severity.INFO
+    assert unverifiable.context["other_count"] == 40
+    assert unverifiable.context["limit"] == 1
+
+
+def test_enum_value_rule_truncated_histogram_still_flags_shown_undeclared_value():
+    """A shown value not in the enum is a true breach even when truncated.
+
+    'pending' is in the shown histogram (definitely observed) → WARNING fires;
+    the truncation INFO is also emitted to flag that further undeclared values
+    may be hidden.
+    """
+    rule = PropertyEnumValueRule()
+    dist = BoundedDistribution(
+        count=100,
+        histogram={"active": 50, "pending": 30},
+        sample_complete=False,
+        limit=2,
+        other_count=20,
+    )
+    issues = list(rule(_enum_ctx(dist)))
+    undeclared = [i for i in issues if i.code == "UNDECLARED_PROPERTY_VALUE"]
+    assert len(undeclared) == 1
+    assert undeclared[0].severity == Severity.WARNING
+    assert "pending" in undeclared[0].message
+    # Truncation is still signalled.
+    assert any(i.code == "PROPERTY_VALUE_UNVERIFIABLE" for i in issues)
+    # No false UNOBSERVED while truncated.
+    assert not any(i.code == "UNOBSERVED_PROPERTY_VALUE" for i in issues)
+
+
+def test_enum_value_rule_complete_histogram_still_reports_unobserved():
+    """A *complete* histogram (sample_complete) keeps the UNOBSERVED verdict."""
+    rule = PropertyEnumValueRule()
+    dist = BoundedDistribution(
+        count=100, histogram={"active": 100}, sample_complete=True
+    )
+    issues = list(rule(_enum_ctx(dist)))
+    assert [i.code for i in issues] == ["UNOBSERVED_PROPERTY_VALUE"]
+    assert not any(i.code == "PROPERTY_VALUE_UNVERIFIABLE" for i in issues)
+
+
+# ---------------------------------------------------------------------------
+# PropertyTypeMismatchRule — enum-typed properties (no spurious mismatch)
+#
+# A graph DB stores an enum's underlying scalar (a String for a str-valued enum,
+# a Long for an int-valued enum), never the Python enum object.  The structural
+# type check must compare the observed DB type against the enum's *value* type,
+# not the enum class — otherwise every enum property a backend reports as
+# 'String' raises a false PROPERTY_TYPE_MISMATCH ERROR.
+# ---------------------------------------------------------------------------
+
+
+def _type_ctx(python_type: type, observed_types: list[str]) -> RuleContext:
+    return _ctx(
+        address="Movie.genre",
+        left=TypeInfo(python_type=python_type, is_required=True),
+        right=PropertyProfile(
+            name="genre",
+            present_count=10,
+            total_count=10,
+            observed_types=observed_types,
+        ),
+        extra={"label": "Movie", "prop_name": "genre", "entity_type": EntityType.NODE},
+    )
+
+
+def test_type_mismatch_rule_no_false_mismatch_for_str_valued_plain_enum():
+    """Plain str-valued enum observed as 'String' → no PROPERTY_TYPE_MISMATCH."""
+    rule = PropertyTypeMismatchRule()
+
+    class Genre(Enum):
+        DRAMA = "drama"
+        ACTION = "action"
+
+    assert list(rule(_type_ctx(Genre, ["String"]))) == []
+
+
+def test_type_mismatch_rule_no_false_mismatch_for_str_mixin_enum():
+    """str-mixin enum observed as 'String' → no PROPERTY_TYPE_MISMATCH."""
+    rule = PropertyTypeMismatchRule()
+
+    class Genre(str, Enum):
+        DRAMA = "drama"
+
+    assert list(rule(_type_ctx(Genre, ["String"]))) == []
+
+
+def test_type_mismatch_rule_no_false_mismatch_for_int_valued_enum():
+    """int-valued enum observed as 'Long' → no PROPERTY_TYPE_MISMATCH."""
+    rule = PropertyTypeMismatchRule()
+
+    class Rating(Enum):
+        LOW = 1
+        HIGH = 2
+
+    assert list(rule(_type_ctx(Rating, ["Long"]))) == []
+
+
+def test_type_mismatch_rule_flags_enum_observed_as_wrong_scalar():
+    """str-valued enum observed as 'Long' IS a genuine mismatch → ERROR.
+
+    The enum's storage type is ``str``; a 'Long' observation is a real
+    structural breach (the data is stored as an int, not the enum's string).
+    """
+    rule = PropertyTypeMismatchRule()
+
+    class Genre(Enum):
+        DRAMA = "drama"
+
+    issues = list(rule(_type_ctx(Genre, ["Long"])))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_TYPE_MISMATCH"
+    assert issues[0].severity == Severity.ERROR
+
+
+def test_type_mismatch_rule_mixed_value_type_enum_stands_down():
+    """An enum with mixed value types has no single storage type → rule no-ops."""
+    rule = PropertyTypeMismatchRule()
+
+    class Mixed(Enum):
+        A = "a"
+        B = 2  # str + int members → no single storage type
+
+    assert list(rule(_type_ctx(Mixed, ["String"]))) == []
+    assert list(rule(_type_ctx(Mixed, ["Long"]))) == []
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: enum-typed property through compare_profile_to_definition
+#
+# The user-facing contract: when a property is declared as an enum, comparison
+# must flag both sides of the value-coverage question and must NOT raise a
+# spurious type mismatch:
+#   * observed value not in the enum  → UNDECLARED_PROPERTY_VALUE (WARNING, severe)
+#   * declared value never observed   → UNOBSERVED_PROPERTY_VALUE (INFO, benign)
+#   * enum stored as its scalar       → no PROPERTY_TYPE_MISMATCH
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_enum_property_flags_both_coverage_directions_no_type_mismatch():
+    """compare_profile_to_definition surfaces both coverage signals for an enum."""
+    import enum
+
+    from orthograph.comparison.engine import compare_profile_to_definition
+
+    class Genre(str, enum.Enum):
+        DRAMA = "drama"
+        ACTION = "action"
+        COMEDY = "comedy"
+
+    class Movie(NodeModel):
+        __label__ = "Movie"
+        __uid_field__ = "title"
+        title: str
+        genre: Genre
+
+    model = GraphDefinition(name="Films", node_types=[Movie], relationship_types=[])
+
+    # Observed: drama + action present; 'romance' undeclared; 'comedy' never seen.
+    profile = GraphProfile(
+        source="test",
+        node_type_profiles={
+            "Movie": NodeTypeProfile(
+                label="Movie",
+                count=10,
+                property_profiles={
+                    "title": PropertyProfile(
+                        name="title",
+                        present_count=10,
+                        total_count=10,
+                        observed_types=["String"],
+                        constraint_required=True,
+                    ),
+                    "genre": PropertyProfile(
+                        name="genre",
+                        present_count=10,
+                        total_count=10,
+                        observed_types=["String"],  # enum stored as its scalar
+                        constraint_required=True,
+                        value_distribution=BoundedDistribution(
+                            count=10,
+                            histogram={"drama": 5, "action": 3, "romance": 2},
+                            sample_complete=True,
+                        ),
+                    ),
+                },
+            ),
+        },
+    )
+
+    result = compare_profile_to_definition(profile, model)
+    codes = [
+        (i.code, i.severity) for i in result.issues if i.entity_id == "Movie.genre"
+    ]
+
+    # The severe direction: observed 'romance' is not in the enum.
+    assert ("UNDECLARED_PROPERTY_VALUE", Severity.WARNING) in codes
+    # The benign direction: declared 'comedy' was never observed.
+    assert ("UNOBSERVED_PROPERTY_VALUE", Severity.INFO) in codes
+    # No spurious structural mismatch for an enum stored as a String.
+    assert not any(c == "PROPERTY_TYPE_MISMATCH" for c, _ in codes)
+    # UNDECLARED is the only error-or-warning-severity finding for genre values.
+    assert {c for c, s in codes if s in (Severity.ERROR, Severity.WARNING)} == {
+        "UNDECLARED_PROPERTY_VALUE"
+    }
+
+
+# ---------------------------------------------------------------------------
+# Total count is diff-only — never a profile↔description finding (ADR-034 §6)
+# ---------------------------------------------------------------------------
+
+
+def test_total_count_never_produces_description_finding():
+    """compare_profile_to_definition must never emit a count-delta finding.
+
+    Profile node counts differ wildly from any notion the model could carry,
+    yet no COUNT_* code may appear.
+    """
+    from orthograph.comparison.engine import compare_profile_to_definition
+
+    profile = GraphProfile(
+        source="test",
+        node_type_profiles={
+            "Person": NodeTypeProfile(
+                label="Person",
+                count=999_999,
+                property_profiles={
+                    "name": PropertyProfile(
+                        name="name",
+                        present_count=999_999,
+                        total_count=999_999,
+                        observed_types=["String"],
+                    ),
+                },
+            ),
+            "Movie": NodeTypeProfile(
+                label="Movie",
+                count=1,
+                property_profiles={
+                    "title": PropertyProfile(
+                        name="title",
+                        present_count=1,
+                        total_count=1,
+                        observed_types=["String"],
+                    ),
+                },
+            ),
+        },
+        rel_type_profiles={
+            "ACTED_IN": RelationshipTypeProfile(
+                rel_type="ACTED_IN",
+                count=42,
+                source_labels={"Person"},
+                target_labels={"Movie"},
+                cardinality_stats=CardinalityStats(count=2, min=1, max=3, mean=2.0),
+            ),
+        },
+    )
+    result = compare_profile_to_definition(profile, _STD_MODEL)
+    count_codes = [i.code for i in result.issues if "COUNT" in i.code]
+    assert count_codes == [], f"count must be diff-only; got {count_codes}"
+
+
+# ---------------------------------------------------------------------------
+# standard_rules() — updated membership after E45.4
+# ---------------------------------------------------------------------------
+
+
+def test_standard_rules_includes_e45_4_rules():
+    keys = {r.key for r in standard_rules()}
+    assert "property.constraint_presence" in keys
+    assert "property.enum_value" in keys
+
+
+# ===========================================================================
+# E41.5 — CardinalityViolationRule: per-pair enforcement of conditional bounds
+#
+# Implements the cardinality rows of the ADR-034 §8 comparison matrix.  When
+# the declared side is ConditionalCardinality and the observed profile carries
+# ``partitioned_cardinality``, each declared rule's bound is enforced against
+# the matching observed partition (full bound via spec.contains, both min and
+# max — aligned with the in-memory per-node verdict, E41.5).  When the
+# breakdown is absent, the E40.7 CARDINALITY_UNVERIFIABLE fallback is kept.
+# ===========================================================================
+
+
+def _partition(source_value: str | None, target_value: str | None) -> str:
+    """Shorthand for the observed partition dict key (str(PartitionKey))."""
+    return str(PartitionKey(source_value=source_value, target_value=target_value))
+
+
+def _e415_ctx(rel_profile: RelationshipTypeProfile, **kwargs: Any) -> RuleContext:
+    """Build a RuleContext over the E40.7 conditional model + a given profile."""
+    profile = GraphProfile(
+        source="e415_test",
+        node_type_profiles={
+            "Operation": NodeTypeProfile(label="Operation", count=1),
+            "Sample": NodeTypeProfile(label="Sample", count=2),
+        },
+        rel_type_profiles={"HAS_OUTPUT": rel_profile},
+    )
+    return RuleContext(
+        left_graph=DefinitionView(_E407_MODEL),
+        right_graph=ProfileView(profile),
+        address="HAS_OUTPUT",
+        left=_HasOutputConditional,
+        right=rel_profile,
+        **kwargs,
+    )
+
+
+def _e415_profile(
+    partitioned_cardinality: dict[str, BoundedDistribution] | None,
+) -> RelationshipTypeProfile:
+    """A HAS_OUTPUT profile with the given source-side partitioned breakdown."""
+    return RelationshipTypeProfile(
+        rel_type="HAS_OUTPUT",
+        count=2,
+        source_labels={"Operation"},
+        target_labels={"Sample"},
+        cardinality_stats=CardinalityStats(count=1, min=1, max=2, mean=1.5),
+        source_partitioned_cardinality=partitioned_cardinality,
+    )
+
+
+def test_cardinality_conditional_within_bounds_no_violation():
+    """Conditional declared + matching partition within bounds → no violation."""
+    rule = CardinalityViolationRule()
+    # subsampling->subsampling declared 1..2; observed degree 2 is within bounds.
+    rtp = _e415_profile(
+        {
+            _partition("subsampling", "subsampling"): BoundedDistribution(
+                count=1, min=2, max=2, mean=2.0
+            ),
+        }
+    )
+    issues = list(rule(_e415_ctx(rtp)))
+    assert [i.code for i in issues if i.code == "CARDINALITY_VIOLATION"] == []
+
+
+def test_cardinality_conditional_partition_out_of_bounds_violation():
+    """A partition out of bounds → CARDINALITY_VIOLATION (ERROR) naming the pair."""
+    rule = CardinalityViolationRule()
+    # subsampling->subsampling declared 1..2; observed max 3 exceeds the bound.
+    rtp = _e415_profile(
+        {
+            _partition("subsampling", "subsampling"): BoundedDistribution(
+                count=1, min=3, max=3, mean=3.0
+            ),
+        }
+    )
+    issues = [i for i in rule(_e415_ctx(rtp)) if i.code == "CARDINALITY_VIOLATION"]
+    assert len(issues) == 1
+    assert issues[0].severity == Severity.ERROR
+    assert issues[0].entity_type == EntityType.RELATIONSHIP
+    assert issues[0].entity_id == "HAS_OUTPUT"
+    assert issues[0].context["source_value"] == "subsampling"
+    assert issues[0].context["target_value"] == "subsampling"
+
+
+def test_cardinality_conditional_absent_partition_min_violation():
+    """A declared partition absent from the breakdown with min>0 → violation (0)."""
+    rule = CardinalityViolationRule()
+    # subsampling->subsampling declared 1..2 but never observed; degree 0 < min 1.
+    rtp = _e415_profile(
+        {
+            _partition("nothing", "nothing"): BoundedDistribution(
+                count=1, min=0, max=0, mean=0.0
+            ),
+        }
+    )
+    issues = [i for i in rule(_e415_ctx(rtp)) if i.code == "CARDINALITY_VIOLATION"]
+    assert any(
+        i.context.get("source_value") == "subsampling"
+        and i.context.get("target_value") == "subsampling"
+        for i in issues
+    )
+
+
+def test_cardinality_conditional_no_breakdown_unverifiable():
+    """Profile without partitioned_cardinality → CARDINALITY_UNVERIFIABLE INFO."""
+    rule = CardinalityViolationRule()
+    rtp = _e415_profile(None)
+    issues = list(rule(_e415_ctx(rtp)))
+    assert len(issues) == 1
+    assert issues[0].code == "CARDINALITY_UNVERIFIABLE"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_cardinality_conditional_unmatched_kind_info():
+    """An observed partition matching no declared rule → CARDINALITY_UNMATCHED_KIND."""
+    rule = CardinalityViolationRule()
+    # subsampling->subsampling (declared 1..2) satisfied; 'nothing' matches no rule
+    # and the default 0..* admits degree 1, so no default-floor violation fires.
+    rtp = _e415_profile(
+        {
+            _partition("subsampling", "subsampling"): BoundedDistribution(
+                count=1, min=2, max=2, mean=2.0
+            ),
+            _partition("nothing", "nothing"): BoundedDistribution(
+                count=1, min=1, max=1, mean=1.0
+            ),
+        }
+    )
+    issues = list(rule(_e415_ctx(rtp)))
+    unmatched = [i for i in issues if i.code == "CARDINALITY_UNMATCHED_KIND"]
+    assert len(unmatched) == 1
+    assert unmatched[0].severity == Severity.INFO
+    assert "CARDINALITY_VIOLATION" not in {i.code for i in issues}
+
+
+def test_cardinality_conditional_unmatched_kind_default_floor_violation():
+    """Unmatched-kind partition with min>0 default + zero degree → default-floor ERROR.
+
+    Uses a conditional whose default is ``1..*`` so an unmatched node with zero
+    observed degree violates the default (mirrors validation._default_floor_issue
+    / E40.5).
+    """
+
+    class _HasOutputFloorDefault(RelationshipModel):
+        __label__ = "HAS_OUTPUT_FLOOR"
+        __source_label__ = "Operation"
+        __target_label__ = "Sample"
+        __source_cardinality__ = ConditionalCardinality(
+            rules=(
+                ConditionalRule(
+                    source=PropMatch({"kind": "subsampling"}),
+                    target=PropMatch({"kind": "subsampling"}),
+                    spec=CardinalitySpec(min=1, max=2),
+                ),
+            ),
+            default="1..*",
+        )
+
+    model = GraphDefinition(
+        name="e415_floor",
+        node_types=[_OperationNode, _SampleNode],
+        relationship_types=[_HasOutputFloorDefault],
+    )
+    rule = CardinalityViolationRule()
+    rtp = RelationshipTypeProfile(
+        rel_type="HAS_OUTPUT_FLOOR",
+        count=0,
+        source_labels={"Operation"},
+        target_labels={"Sample"},
+        cardinality_stats=CardinalityStats(count=1, min=0, max=0, mean=0.0),
+        source_partitioned_cardinality={
+            _partition("nothing", "nothing"): BoundedDistribution(
+                count=1, min=0, max=0, mean=0.0
+            ),
+        },
+    )
+    ctx = RuleContext(
+        left_graph=DefinitionView(model),
+        right_graph=ProfileView(
+            GraphProfile(
+                source="e415_floor", rel_type_profiles={"HAS_OUTPUT_FLOOR": rtp}
+            )
+        ),
+        address="HAS_OUTPUT_FLOOR",
+        left=_HasOutputFloorDefault,
+        right=rtp,
+    )
+    issues = list(rule(ctx))
+    codes = {i.code for i in issues}
+    assert "CARDINALITY_UNMATCHED_KIND" in codes
+    floor = [
+        i
+        for i in issues
+        if i.code == "CARDINALITY_VIOLATION" and i.context.get("default") is True
+    ]
+    assert len(floor) == 1
+    assert floor[0].severity == Severity.ERROR
+
+
+def _floor_default_model(
+    default: str,
+) -> tuple[GraphDefinition, type[RelationshipModel]]:
+    """Operation -[HAS_OUTPUT_FLOOR]-> Sample with a conditional source side.
+
+    The single rule pins subsampling->subsampling = 1..2; the supplied default
+    governs any source node whose kind matches no rule.
+    """
+
+    class _HasOutputFloor(RelationshipModel):
+        __label__ = "HAS_OUTPUT_FLOOR"
+        __source_label__ = "Operation"
+        __target_label__ = "Sample"
+        __source_cardinality__ = ConditionalCardinality(
+            rules=(
+                ConditionalRule(
+                    source=PropMatch({"kind": "subsampling"}),
+                    target=PropMatch({"kind": "subsampling"}),
+                    spec=CardinalitySpec(min=1, max=2),
+                ),
+            ),
+            default=default,
+        )
+
+    model = GraphDefinition(
+        name="e415_floor_multi",
+        node_types=[_OperationNode, _SampleNode],
+        relationship_types=[_HasOutputFloor],
+    )
+    return model, _HasOutputFloor
+
+
+def _floor_ctx(
+    model: GraphDefinition,
+    rt_class: type[RelationshipModel],
+    partitioned: dict[str, BoundedDistribution],
+) -> RuleContext:
+    rtp = RelationshipTypeProfile(
+        rel_type="HAS_OUTPUT_FLOOR",
+        count=sum(int(d.max or 0) for d in partitioned.values()),
+        source_labels={"Operation"},
+        target_labels={"Sample"},
+        cardinality_stats=CardinalityStats(count=1, min=0, max=2, mean=1.0),
+        source_partitioned_cardinality=partitioned,
+    )
+    return RuleContext(
+        left_graph=DefinitionView(model),
+        right_graph=ProfileView(
+            GraphProfile(
+                source="e415_floor_multi", rel_type_profiles={"HAS_OUTPUT_FLOOR": rtp}
+            )
+        ),
+        address="HAS_OUTPUT_FLOOR",
+        left=rt_class,
+        right=rtp,
+    )
+
+
+def test_cardinality_default_floor_uses_total_across_partitions_no_violation():
+    """An unmatched value spanning two partitions is floored on its TOTAL degree.
+
+    default = 2..*; an unmatched source value 'nothing' has one edge to a
+    subsampling target and one to a nothing target → two partitions, each degree
+    1, total 2 → satisfies 2..*.  Parity with the in-memory per-node floor, which
+    checks the node's total side degree, not each partition independently
+    (finding 1).  A single drift INFO is emitted and no default-floor ERROR.
+    """
+    model, rt_class = _floor_default_model("2..*")
+    rule = CardinalityViolationRule()
+    partitioned = {
+        _partition("nothing", "subsampling"): BoundedDistribution(
+            count=1, min=1, max=1, mean=1.0
+        ),
+        _partition("nothing", "nothing"): BoundedDistribution(
+            count=1, min=1, max=1, mean=1.0
+        ),
+    }
+    issues = list(rule(_floor_ctx(model, rt_class, partitioned)))
+    unmatched = [i for i in issues if i.code == "CARDINALITY_UNMATCHED_KIND"]
+    floor = [
+        i
+        for i in issues
+        if i.code == "CARDINALITY_VIOLATION" and i.context.get("default") is True
+    ]
+    # One drift signal for the single unmatched value 'nothing'; no false floor.
+    assert len(unmatched) == 1
+    assert floor == []
+
+
+def test_cardinality_default_floor_uses_total_across_partitions_violation():
+    """The summed total below the floor → exactly one default-floor ERROR.
+
+    default = 3..*; the same 'nothing' value spans two partitions totalling 2 <
+    3 → one CARDINALITY_VIOLATION (not one per partition).
+    """
+    model, rt_class = _floor_default_model("3..*")
+    rule = CardinalityViolationRule()
+    partitioned = {
+        _partition("nothing", "subsampling"): BoundedDistribution(
+            count=1, min=1, max=1, mean=1.0
+        ),
+        _partition("nothing", "nothing"): BoundedDistribution(
+            count=1, min=1, max=1, mean=1.0
+        ),
+    }
+    issues = list(rule(_floor_ctx(model, rt_class, partitioned)))
+    floor = [
+        i
+        for i in issues
+        if i.code == "CARDINALITY_VIOLATION" and i.context.get("default") is True
+    ]
+    assert len(floor) == 1
+    assert floor[0].severity == Severity.ERROR
+    assert floor[0].context["observed_min"] == 2
+
+
+def test_cardinality_constant_max_exceeded_violation():
+    """Constant finite-max spec with observed aggregate max over the bound → ERROR.
+
+    Aggregate path now checks the full bound (both min and max) via
+    spec.contains() — aligned with the in-memory per-node verdict (E41.5).
+    """
+
+    class _BoundedRel(RelationshipModel):
+        __label__ = "BOUNDED"
+        __source_label__ = "Operation"
+        __target_label__ = "Sample"
+        __source_cardinality__ = "1..2"
+
+    model = GraphDefinition(
+        name="e415_bounded",
+        node_types=[_OperationNode, _SampleNode],
+        relationship_types=[_BoundedRel],
+    )
+    rule = CardinalityViolationRule()
+    rtp = RelationshipTypeProfile(
+        rel_type="BOUNDED",
+        count=3,
+        source_labels={"Operation"},
+        target_labels={"Sample"},
+        # min 1 is within 1..2, but max 3 exceeds it.
+        cardinality_stats=CardinalityStats(count=2, min=1, max=3, mean=2.0),
+    )
+    ctx = RuleContext(
+        left_graph=DefinitionView(model),
+        right_graph=ProfileView(
+            GraphProfile(source="e415_bounded", rel_type_profiles={"BOUNDED": rtp})
+        ),
+        address="BOUNDED",
+        left=_BoundedRel,
+        right=rtp,
+    )
+    issues = [i for i in rule(ctx) if i.code == "CARDINALITY_VIOLATION"]
+    assert len(issues) == 1
+    assert issues[0].severity == Severity.ERROR
+
+
+# ===========================================================================
+# E41.7 — both-endpoint conditional cardinality: enforce each side independently
+# ===========================================================================
+
+
+def _both_sides_model() -> tuple[GraphDefinition, type[RelationshipModel]]:
+    """Operation -[MAKES]-> Sample, conditional on BOTH endpoints.
+
+    Source side: (assembler, final) = 2..2.  Target side: (assembler, final) =
+    1..1.  Both discriminate on ``kind`` per the absolute convention.
+    """
+
+    source_card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "assembler"}),
+                target=PropMatch({"kind": "final"}),
+                spec=CardinalitySpec(min=2, max=2),
+            ),
+        ),
+        default="0..*",
+    )
+    target_card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "assembler"}),
+                target=PropMatch({"kind": "final"}),
+                spec=CardinalitySpec(min=1, max=1),
+            ),
+        ),
+        default="0..*",
+    )
+
+    class _Makes(RelationshipModel):
+        __label__ = "MAKES"
+        __source_label__ = "Operation"
+        __target_label__ = "Sample"
+        __source_cardinality__ = source_card
+        __target_cardinality__ = target_card
+
+    model = GraphDefinition(
+        name="e417_both",
+        node_types=[_OperationNode, _SampleNode],
+        relationship_types=[_Makes],
+    )
+    return model, _Makes
+
+
+def _both_sides_ctx(
+    model: GraphDefinition,
+    rt_class: type[RelationshipModel],
+    source_partitioned: dict[str, BoundedDistribution] | None,
+    target_partitioned: dict[str, BoundedDistribution] | None,
+) -> RuleContext:
+    rtp = RelationshipTypeProfile(
+        rel_type="MAKES",
+        count=2,
+        source_labels={"Operation"},
+        target_labels={"Sample"},
+        cardinality_stats=CardinalityStats(count=1, min=1, max=2, mean=1.5),
+        source_partitioned_cardinality=source_partitioned,
+        target_partitioned_cardinality=target_partitioned,
+    )
+    return RuleContext(
+        left_graph=DefinitionView(model),
+        right_graph=ProfileView(
+            GraphProfile(source="e417_both", rel_type_profiles={"MAKES": rtp})
+        ),
+        address="MAKES",
+        left=rt_class,
+        right=rtp,
+    )
+
+
+def test_cardinality_both_sides_one_violating_yields_one_violation():
+    """Both-sides conditional, source in bounds, target violating → one ERROR.
+
+    E41.7: each conditional side is enforced independently; only the breaching
+    side yields a violation.
+    """
+    model, rt_class = _both_sides_model()
+    rule = CardinalityViolationRule()
+    pair = _partition("assembler", "final")
+    issues = list(
+        rule(
+            _both_sides_ctx(
+                model,
+                rt_class,
+                # Source side within 2..2.
+                source_partitioned={
+                    pair: BoundedDistribution(count=1, min=2, max=2, mean=2.0)
+                },
+                # Target side declares 1..1 but observed 2 → violation.
+                target_partitioned={
+                    pair: BoundedDistribution(count=2, min=2, max=2, mean=2.0)
+                },
+            )
+        )
+    )
+    violations = [i for i in issues if i.code == "CARDINALITY_VIOLATION"]
+    assert len(violations) == 1
+    assert violations[0].severity == Severity.ERROR
+    # The violation names the target-side partition (the side that breached).
+    assert violations[0].context["source_value"] == "assembler"
+    assert violations[0].context["target_value"] == "final"
+
+
+def test_cardinality_both_sides_both_in_bounds_no_violation():
+    """Both-sides conditional, both sides within bounds → no violation (E41.7)."""
+    model, rt_class = _both_sides_model()
+    rule = CardinalityViolationRule()
+    pair = _partition("assembler", "final")
+    issues = list(
+        rule(
+            _both_sides_ctx(
+                model,
+                rt_class,
+                source_partitioned={
+                    pair: BoundedDistribution(count=1, min=2, max=2, mean=2.0)
+                },
+                target_partitioned={
+                    pair: BoundedDistribution(count=2, min=1, max=1, mean=1.0)
+                },
+            )
+        )
+    )
+    assert [i for i in issues if i.code == "CARDINALITY_VIOLATION"] == []
+
+
+def test_cardinality_both_sides_target_absent_is_unverifiable_for_that_side():
+    """A both-sides type with only the source breakdown present (E41.7).
+
+    The source side is enforced (in bounds → silent); the target side has no
+    breakdown → exactly one CARDINALITY_UNVERIFIABLE INFO for the target side,
+    never a false verdict.  This is the regression guard for single-side profiles
+    behaving as in E41.5.
+    """
+    model, rt_class = _both_sides_model()
+    rule = CardinalityViolationRule()
+    pair = _partition("assembler", "final")
+    issues = list(
+        rule(
+            _both_sides_ctx(
+                model,
+                rt_class,
+                source_partitioned={
+                    pair: BoundedDistribution(count=1, min=2, max=2, mean=2.0)
+                },
+                target_partitioned=None,
+            )
+        )
+    )
+    unverifiable = [i for i in issues if i.code == "CARDINALITY_UNVERIFIABLE"]
+    assert len(unverifiable) == 1
+    assert unverifiable[0].severity == Severity.INFO
+    assert "CARDINALITY_VIOLATION" not in {i.code for i in issues}

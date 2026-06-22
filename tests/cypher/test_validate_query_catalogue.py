@@ -648,6 +648,56 @@ def test_inspect_cardinality_query_emits_identifier_injection_issue(
     assert any("inspect.cardinality" in i.message for i in injection_issues)
 
 
+def test_inspect_partitioned_cardinality_query_emits_identifier_injection_issue(
+    graph_definition: GraphDefinition,
+) -> None:
+    """Both partitioned cardinality queries (four <<...>> slots, two of which are
+    property-name discriminators) emit QUERY_USES_IDENTIFIER_INJECTION."""
+    from orthograph.graph_profile.queries.shared import (
+        InspectSourcePartitionedCardinalityQuery,
+        InspectTargetPartitionedCardinalityQuery,
+    )
+
+    catalogue = QueryCatalogue()
+    catalogue.register_read(
+        InspectSourcePartitionedCardinalityQuery(
+            identifiers={
+                "label": "Movie",
+                "rel_type": "LIKES",
+                "source_discriminator": "kind",
+                "target_discriminator": "kind",
+            }
+        )
+    )
+    catalogue.register_read(
+        InspectTargetPartitionedCardinalityQuery(
+            identifiers={
+                "label": "Movie",
+                "rel_type": "LIKES",
+                "source_discriminator": "kind",
+                "target_discriminator": "kind",
+            }
+        )
+    )
+
+    result = validate_query_catalogue(catalogue, graph_definition)
+
+    injection_issues = [
+        i for i in result.issues if i.code == "QUERY_USES_IDENTIFIER_INJECTION"
+    ]
+    assert len(injection_issues) >= 1, (
+        "The partitioned cardinality queries splice <<label>>, <<rel_type>>, "
+        "<<source_discriminator>> and <<target_discriminator>>, so they should "
+        "emit at least one QUERY_USES_IDENTIFIER_INJECTION INFO issue"
+    )
+    assert any(
+        "inspect.partitioned_cardinality.source" in i.message for i in injection_issues
+    )
+    assert any(
+        "inspect.partitioned_cardinality.target" in i.message for i in injection_issues
+    )
+
+
 # ---------------------------------------------------------------------------
 # E37.3: CypherQuery registration and catalogue validation
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from orthograph.comparison.diff_rules import (
     CardinalityChangedRule,
+    CountChangedRule,
     EndpointsChangedRule,
     NodeLabelOnlyInLeftRule,
     NodeLabelOnlyInRightRule,
@@ -235,9 +236,9 @@ _PROP_EXTRA_REL = {
 # ---------------------------------------------------------------------------
 
 
-def test_diff_rules_returns_nine_rules():
+def test_diff_rules_returns_ten_rules():
     rules = diff_rules()
-    assert len(rules) == 9
+    assert len(rules) == 10
 
 
 def test_diff_rules_order():
@@ -252,6 +253,7 @@ def test_diff_rules_order():
         "diff.property.type_changed",
         "diff.rel.endpoints_changed",
         "diff.rel.cardinality_changed",
+        "diff.count_changed",
     ]
     assert [r.key for r in diff_rules()] == expected
 
@@ -702,16 +704,12 @@ def test_cardinality_changed_fires_profile():
     rtp_left = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
-        cardinality_stats=CardinalityStats(
-            min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5
-        ),
+        cardinality_stats=CardinalityStats(count=5, min=1, max=3, mean=2.0),
     )
     rtp_right = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
-        cardinality_stats=CardinalityStats(
-            min_degree=2, max_degree=5, avg_degree=3.0, sample_size=5
-        ),
+        cardinality_stats=CardinalityStats(count=5, min=2, max=5, mean=3.0),
     )
     ctx = _pctx(
         left=rtp_left,
@@ -727,7 +725,7 @@ def test_cardinality_changed_fires_profile():
 
 def test_cardinality_changed_noop_identical_stats():
     rule = CardinalityChangedRule()
-    stats = CardinalityStats(min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5)
+    stats = CardinalityStats(count=5, min=1, max=3, mean=2.0)
     rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5, cardinality_stats=stats)
     ctx = _pctx(
         left=rtp, right=rtp, address="ACTED_IN", extra={"address_type": "rel_type"}
@@ -803,9 +801,7 @@ def test_cardinality_changed_noop_for_property_address():
     rtp = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
-        cardinality_stats=CardinalityStats(
-            min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5
-        ),
+        cardinality_stats=CardinalityStats(count=5, min=1, max=3, mean=2.0),
     )
     ctx = _pctx(left=rtp, right=rtp, address="ACTED_IN.role", extra=_PROP_EXTRA_REL)
     assert list(rule(ctx)) == []
@@ -880,9 +876,7 @@ def test_cardinality_changed_noop_asymmetric_stats_none_left():
     rtp_with_stats = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
-        cardinality_stats=CardinalityStats(
-            min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5
-        ),
+        cardinality_stats=CardinalityStats(count=5, min=1, max=3, mean=2.0),
     )
     ctx = _pctx(
         left=rtp_no_stats,
@@ -899,9 +893,7 @@ def test_cardinality_changed_noop_asymmetric_stats_none_right():
     rtp_with_stats = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
-        cardinality_stats=CardinalityStats(
-            min_degree=1, max_degree=3, avg_degree=2.0, sample_size=5
-        ),
+        cardinality_stats=CardinalityStats(count=5, min=1, max=3, mean=2.0),
     )
     rtp_no_stats = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
     ctx = _pctx(
@@ -1270,3 +1262,87 @@ def test_cardinality_changed_conditional_context_has_no_min_max_keys():
     assert "left_max" not in ctx_keys
     assert "right_min" not in ctx_keys
     assert "right_max" not in ctx_keys
+
+
+# ===========================================================================
+# E45.4 — total-count delta is diff-only (ADR-034 §6, §8)
+#
+# Total count is excluded from profile↔description and participates *only* in
+# profile↔profile as an INFO drift signal (COUNT_CHANGED).
+# ===========================================================================
+
+
+def test_count_changed_rule_satisfies_protocol():
+    assert isinstance(CountChangedRule(), Rule)
+
+
+def test_count_changed_fires_for_node_label_when_counts_differ():
+    rule = CountChangedRule()
+    left = NodeTypeProfile(label="Person", count=5)
+    right = NodeTypeProfile(label="Person", count=8)
+    ctx = _pctx(
+        left=left, right=right, address="Person", extra={"address_type": "node_label"}
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "COUNT_CHANGED"
+    assert issues[0].severity == Severity.INFO
+    assert issues[0].entity_type == EntityType.NODE
+    assert issues[0].entity_id == "Person"
+    assert issues[0].context["left"] == 5
+    assert issues[0].context["right"] == 8
+
+
+def test_count_changed_fires_for_rel_type_when_counts_differ():
+    rule = CountChangedRule()
+    left = RelationshipTypeProfile(rel_type="ACTED_IN", count=10)
+    right = RelationshipTypeProfile(rel_type="ACTED_IN", count=3)
+    ctx = _pctx(
+        left=left, right=right, address="ACTED_IN", extra={"address_type": "rel_type"}
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "COUNT_CHANGED"
+    assert issues[0].severity == Severity.INFO
+    assert issues[0].entity_type == EntityType.RELATIONSHIP
+
+
+def test_count_changed_noop_when_counts_equal():
+    rule = CountChangedRule()
+    left = NodeTypeProfile(label="Person", count=5)
+    right = NodeTypeProfile(label="Person", count=5)
+    ctx = _pctx(
+        left=left, right=right, address="Person", extra={"address_type": "node_label"}
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_count_changed_noop_when_one_side_absent():
+    rule = CountChangedRule()
+    left = NodeTypeProfile(label="Person", count=5)
+    ctx = _pctx(
+        left=left, right=None, address="Person", extra={"address_type": "node_label"}
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_count_changed_noop_for_definition_operands():
+    """Definitions carry no observed count → rule does nothing for model classes."""
+    rule = CountChangedRule()
+    ctx = _ctx(
+        left=_ActedIn,
+        right=_ActedInAlt,
+        address="ACTED_IN",
+        extra={"address_type": "rel_type"},
+        left_gd=_GD_LEFT,
+        right_gd=_GD_ALT,
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_count_changed_noop_for_property_address():
+    rule = CountChangedRule()
+    left = PropertyProfile(name="name", present_count=3, total_count=3)
+    right = PropertyProfile(name="name", present_count=4, total_count=4)
+    ctx = _pctx(left=left, right=right, address="Person.name", extra=_PROP_EXTRA_NODE)
+    assert list(rule(ctx)) == []

@@ -68,10 +68,11 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E38 | CypherQuery Signature Collapse — `Params` + `Identifiers` Only | Medium | **done** (2026-06-18; collapsed three parameter representations to single typed source) |
 | E39 | Async Query Runner — `AsyncExecutor` & Caller-Owned Transactions | High | planned (independent; ADR-028; query-runner async for the MP-backend consumer) |
 | E40 | Conditional Cardinality — In-Memory (Phase 1) | High | **done** (2026-06-19; ADR-029; relationship-declared, endpoint-property-discriminated cardinality; in-memory enforcement + `UNVERIFIABLE` on profile) |
-| E41 | Conditional Cardinality — Profiling & Live-DB Enforcement (Phase 2) | Medium | planned (blocked by E40; ADR-030; additive per-pair observed stats across 3 backends) |
+| E41 | Conditional Cardinality — Profiling & Live-DB Enforcement (Phase 2) | Medium | planned (blocked by E40; ADR-030 + ADR-034; partitioned per-pair observed stats as `BoundedDistribution` across 3 backends, on the reshaped model — E45 done) |
 | E42 | Unify Cardinality on UML Notation | Medium | **done** (2026-06-19; ADR-031; `CardinalitySpec.parse`⇄`.notation`, removes `Cardinality.*`/`EXACTLY`, one notation everywhere incl. YAML; `*` canonical for unbounded) |
 | E43 | General Conditional-Cardinality Partitioning | High | **done** (2026-06-19; ADR-032; partition by both endpoints, removes `by_kind`, definition-time guard — closes the silent-wrong-validation hole; coordinate with E42 on models.py) |
 | E44 | Neo4j `db.schema.*` Inspection Strategy — Reproducible Type Detection | Medium | **done** (2026-06-19; ADR-033; three-way APOC→SCHEMA→CYPHER detection; `use_apoc` deprecated in favour of `Neo4jInspectionStrategy` enum; landed before E41) |
+| E45 | GraphProfile Statistical Model & Comparison-Contract Reshape | High | **done** (2026-06-22; ADR-034; shared `BoundedDistribution`, presence-source split + `constraint_required`, bounded value distributions, full comparison matrix non-cardinality rows) |
 
 ---
 
@@ -101,8 +102,14 @@ INDEPENDENT — can start immediately:
         ✓ done (2026-06-19)
 
 AFTER E40:
-  E41  Conditional Cardinality — Profiling (ADR-030; per-pair observed statistics + live-DB
-       enforcement across NetworkX/Neo4j/Memgraph)
+   E45  GraphProfile Statistical Model & Comparison-Contract Reshape (ADR-034; shared
+        BoundedDistribution, presence-source split + constraint_required, bounded value
+        distributions, full comparison matrix; breaking reshape — no external consumers;
+        BLOCKS E41)
+        ✓ done (2026-06-22)
+   E41  Conditional Cardinality — Profiling (ADR-030 + ADR-034; per-pair observed statistics
+        as BoundedDistribution + live-DB enforcement across NetworkX/Neo4j/Memgraph;
+        runs on the reshaped model — E45 done)
   E42  Unify Cardinality on UML Notation (ADR-031; CardinalitySpec.parse⇄.notation, removes
         Cardinality.*/EXACTLY, one notation everywhere incl. YAML — refactor, mostly mechanical)
         ✓ done (2026-06-19)
@@ -226,6 +233,7 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E43 — General Conditional-Cardinality Partitioning](archived_epics/E43_general_conditional_cardinality_partitioning.md) *(done 2026-06-19)*
 - [E44 — Neo4j `db.schema.*` Inspection Strategy](archived_epics/E44_neo4j_db_schema_inspection_strategy.md) *(done 2026-06-19)*
 - [E42 — Unify Cardinality on UML Notation](archived_epics/E42_unify_cardinality_uml_notation.md) *(done 2026-06-19)*
+- [E45 — GraphProfile Statistical Model & Comparison-Contract Reshape](archived_epics/E45_graphprofile_statistical_model_reshape.md) *(done 2026-06-22; ADR-034; shared `BoundedDistribution`, presence-source split + `constraint_required`, bounded value distributions, full comparison matrix non-cardinality rows)*
 - [E6 — Cypher Query Catalogue](archived_epics/E6_query_catalogue.md)
 - [E12 — Shared Catalogue Interface](archived_epics/E12_shared_catalogue_interface.md)
 - [E13 — Typed Query Catalogue Contract](archived_epics/E13_typed_query_catalogue_contract.md)

@@ -15,6 +15,7 @@ from orthograph.graph_definition.models import (
     ConditionalCardinality,
     NodeModel,
     RelationshipModel,
+    coerce_match_value,
     representative_spec,
 )
 
@@ -223,8 +224,17 @@ def _referenced_target_keys(card: ConditionalCardinality) -> frozenset[str]:
 
 
 def _select(props: Mapping[str, object], keys: frozenset[str]) -> _EndpointProps:
-    """Project *props* onto *keys*, sorted, as a canonical partition component."""
-    return tuple(sorted((k, props.get(k)) for k in keys))
+    """Project *props* onto *keys*, sorted, as a canonical partition component.
+
+    Enum-valued discriminators are reduced to their ``.value`` (via
+    :func:`coerce_match_value`) so an observed partition key built from a node's
+    ``model_dump()`` (which preserves a plain ``enum.Enum`` member) shares the
+    identity of the declared partition authored with the underlying literal.
+    Without this, the observed ``(kind, Genre.DRAMA)`` partition and the declared
+    ``(kind, "drama")`` partition would never coincide, splitting the count and
+    producing a spurious violation.
+    """
+    return tuple(sorted((k, coerce_match_value(props.get(k))) for k in keys))
 
 
 def _partition_endpoints(
