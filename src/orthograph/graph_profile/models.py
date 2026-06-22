@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, computed_field
 
 
 class BoundedDistribution(BaseModel):
-    """A bounded statistical summary with an honest truncation signal (ADR-034 §3).
+    """A bounded statistical summary with an honest truncation signal.
 
     Reused for both property-value distributions and cardinality-degree
     distributions.  ``count`` is the only required field; every moment is
@@ -61,7 +61,7 @@ class BoundedDistribution(BaseModel):
 class CardinalityStats(BoundedDistribution):
     """Observed cardinality statistics for a relationship type.
 
-    A specialisation of :class:`BoundedDistribution` (ADR-034 §3): the degree
+    A specialisation of :class:`BoundedDistribution`: the degree
     moments map ``min``/``max``/``mean``/``count`` (gaining ``variance``).
     """
 
@@ -98,7 +98,7 @@ class PropertyProfile(BaseModel):
     name: str
     present_count: int = Field(
         description=(
-            "Non-null occurrences of this property (ADR-034 §5): a value "
+            "Non-null occurrences of this property: a value "
             "explicitly set to ``null`` is *not* present."
         ),
     )
@@ -106,10 +106,10 @@ class PropertyProfile(BaseModel):
     constraint_required: bool | None = Field(
         default=None,
         description=(
-            "Constraint-derived presence (ADR-034 §4): ``True`` when a DB "
+            "Constraint-derived presence: ``True`` when a DB "
             "presence/existence constraint covers this property, ``False`` when "
             "inspected with none found, ``None`` when constraint info is "
-            "unavailable for this backend/strategy (ADR-033)."
+            "unavailable for this backend/strategy."
         ),
     )
     observed_types: list[str] = Field(
@@ -133,7 +133,7 @@ class PropertyProfile(BaseModel):
     value_distribution: BoundedDistribution | None = Field(
         default=None,
         description=(
-            "Bounded value breakdown (ADR-034 §3/§4): ``histogram`` holds "
+            "Bounded value breakdown: ``histogram`` holds "
             "``str(value) → count``; ``sample_complete=False`` when the "
             "distinct-value count exceeded ``limit`` (top-N kept, remainder "
             "in ``other_count``).  ``None`` when the backend does not supply "
@@ -192,7 +192,7 @@ class RelationshipTypeProfile(BaseModel):
         default=None,
         description=(
             "Per-pair cardinality breakdown for the **source side** of a "
-            "conditional relationship type (E41/ADR-034).  The counted degree is "
+            "conditional relationship type.  The counted degree is "
             "the source-label node's outgoing degree, grouped by the absolute "
             "``(source_discriminator, target_discriminator)`` partition.  Key = "
             "``str(PartitionKey)`` (``src=<v>|tgt=<v>``); value = "
@@ -209,11 +209,11 @@ class RelationshipTypeProfile(BaseModel):
         default=None,
         description=(
             "Per-pair cardinality breakdown for the **target side** of a "
-            "conditional relationship type (E41.7/ADR-032).  Symmetric to "
+            "conditional relationship type.  Symmetric to "
             "``source_partitioned_cardinality`` but the counted degree is the "
             "target-label node's incoming degree; the partition key still reads "
-            "the source discriminator first and the target discriminator second "
-            "(absolute convention, ADR-032 §1a).  Splitting the two sides into "
+            "the source discriminator first and the target discriminator second.  "
+            "Splitting the two sides into "
             "separate fields prevents a source-counted and a target-counted "
             "partition from colliding on the same ``str(PartitionKey)`` when a "
             "relationship type is conditional on **both** endpoints.  ``None`` "
@@ -269,11 +269,11 @@ class CardinalityIdentifiers(BaseModel):
 
 
 class PartitionedCardinalityIdentifiers(BaseModel):
-    """Identifier group for the grouped (per-pair) cardinality query (E41.3).
+    """Identifier group for the grouped (per-pair) cardinality query.
 
     ``source_discriminator`` and ``target_discriminator`` are **property names**
     (e.g. ``"kind"``); like every spliced identifier they pass through
-    ``validate_identifier`` (ADR-008, validate-and-reject) — never f-stringed.
+    ``validate_identifier`` (validate-and-reject) — never f-stringed.
     """
 
     label: str
@@ -295,7 +295,7 @@ class EndpointLabelsRow(BaseModel):
 
 
 class PartitionedCardinalityRow(BaseModel):
-    """One per-pair row of the grouped cardinality query (E41.3).
+    """One per-pair row of the grouped cardinality query.
 
     ``source_value`` / ``target_value`` are the source/target discriminator
     values for this partition; ``None`` encodes the null/absent-edge partition
@@ -303,7 +303,7 @@ class PartitionedCardinalityRow(BaseModel):
     :class:`BoundedDistribution` (the degree distribution of this partition) —
     constructed as the base class directly, **not** the ``CardinalityStats``
     marker subclass, so that round-tripping ``partitioned_cardinality`` (which is
-    typed on ``BoundedDistribution``) preserves the exact type (E41.1).
+    typed on ``BoundedDistribution``) preserves the exact type.
     """
 
     source_value: str | None

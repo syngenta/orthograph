@@ -1046,7 +1046,7 @@ def test_entity_presence_reports_both_missing_node_and_rel_types():
     assert "REQ_REL" in entity_ids
 
 
-# --- E40.3/E40.5: conditional cardinality on the validation path ---
+# --- conditional cardinality on the validation path ---
 
 
 def test_validate_conditional_cardinality_does_not_crash():
@@ -1058,7 +1058,7 @@ def test_validate_conditional_cardinality_does_not_crash():
         __label__ = "CDirector"
         __uid_field__ = "name"
         name: str
-        kind: str  # required — E40.4 requires discriminators to be required props
+        kind: str  # required — discriminators to be required props
 
     class CFilm(NodeModel):
         __label__ = "CFilm"
@@ -1116,14 +1116,14 @@ def test_validate_conditional_cardinality_does_not_crash():
 
 
 # ---------------------------------------------------------------------------
-# E40.5: in-memory partitioned conditional-cardinality validation (ADR-029)
+# in-memory partitioned conditional-cardinality validation
 # ---------------------------------------------------------------------------
 
 
 def _operation_sample_model(
     source_cardinality: ConditionalCardinality,
 ) -> GraphDefinition:
-    """Build the ADR-029 Operation -[HAS_OUTPUT]-> Sample model with a given
+    """Build the Operation -[HAS_OUTPUT]-> Sample model with a given
     source-side conditional cardinality (both nodes discriminated by ``kind``)."""
 
     class Operation(NodeModel):
@@ -1153,7 +1153,7 @@ def _operation_sample_model(
 
 
 def test_conditional_deciding_scenario_valid_with_permissive_default():
-    """Scope: ADR-029 deciding scenario resolves valid when default is ZERO_OR_MORE."""
+    """Scope: deciding scenario resolves valid when default is ZERO_OR_MORE."""
     card = ConditionalCardinality(
         rules=(
             ConditionalRule(
@@ -1182,7 +1182,7 @@ def test_conditional_deciding_scenario_valid_with_permissive_default():
 
 
 def test_conditional_deciding_scenario_violation_with_zero_default():
-    """Scope: ADR-029 deciding scenario emits one violation naming
+    """Scope: deciding scenario emits one violation naming
     (subsampling, nothing) when default is ZERO."""
     card = ConditionalCardinality(
         rules=(
@@ -1351,7 +1351,7 @@ def test_conditional_target_cardinality_partitioned_by_source_kind():
 
 def test_conditional_default_floor_enforced_on_unmatched_zero_edge_node():
     """Scope: an unmatched node with zero edges violates a default with min>0
-    (ADR-029 §5/§7 default floor — no silent pass)."""
+    (default floor — no silent pass)."""
     # subsampling consumes nothing; every other kind must consume at least one.
     card = ConditionalCardinality(
         rules=(

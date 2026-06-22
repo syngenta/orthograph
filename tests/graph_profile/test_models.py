@@ -35,7 +35,7 @@ def test_property_profile_empty():
     assert p.completeness == 0.0
 
 
-# --- PropertyProfile presence-source split (ADR-034 §4) ---
+# --- PropertyProfile presence-source split ---
 
 
 def test_property_profile_is_required_removed():
@@ -152,7 +152,7 @@ def test_property_profile_distinct_count_serialises():
 
 
 # ---------------------------------------------------------------------------
-# How to add a Case-A observed-only field (ADR-015 §3)
+# How to add a Case-A observed-only field
 # ---------------------------------------------------------------------------
 # Recipe: add a field to PropertyProfile with default=None/{}. That is all.
 #
@@ -176,7 +176,7 @@ def test_property_profile_frozen():
         p.name = "y"  # type: ignore[misc]
 
 
-# --- BoundedDistribution (ADR-034 §3) ---
+# --- BoundedDistribution ---
 
 
 def test_bounded_distribution_complete_round_trip():
@@ -255,7 +255,7 @@ def test_bounded_distribution_frozen():
         d.count = 2  # type: ignore[misc]
 
 
-# --- CardinalityStats (re-expressed on BoundedDistribution, ADR-034 §3) ---
+# --- CardinalityStats (re-expressed on BoundedDistribution) ---
 
 
 def test_cardinality_stats():
@@ -368,7 +368,7 @@ def test_graph_profile_with_data():
     assert profile.relationship_types == {"ACTED_IN"}
 
 
-# --- PropertyProfile value_distribution (E45.3) ---
+# --- PropertyProfile value_distribution ---
 
 
 def test_property_profile_value_distribution_default_none():
@@ -462,11 +462,11 @@ def test_graph_profile_serialisation():
     assert loaded.node_labels == {"A"}
 
 
-# --- Full reshaped GraphProfile round-trip (E45.5 serialisation contract) ---
+# --- Full reshaped GraphProfile round-trip ---
 
 
 def test_full_reshaped_graph_profile_round_trip():
-    """Full GraphProfile with all E45 fields round-trips through model_dump/validate."""
+    """Full GraphProfile with all fields round-trips through model_dump/validate."""
     from orthograph.graph_profile.models import ConstraintInfo
 
     dist_complete = BoundedDistribution(
@@ -616,7 +616,7 @@ def test_full_profile_round_trip_equality():
 
 
 # ---------------------------------------------------------------------------
-# E41.1 — PartitionKey and partitioned_cardinality
+# PartitionKey and partitioned_cardinality
 # ---------------------------------------------------------------------------
 
 
@@ -724,7 +724,7 @@ def test_relationship_type_profile_with_partitioned_cardinality():
 
 
 def test_relationship_type_profile_both_sides_independent_no_collision():
-    """Both per-side breakdowns coexist without colliding on the same key (E41.7).
+    """Both per-side breakdowns coexist without colliding on the same key.
 
     The same ``str(PartitionKey)`` may appear on both sides with different degree
     distributions (source-counted vs target-counted); the two named fields keep

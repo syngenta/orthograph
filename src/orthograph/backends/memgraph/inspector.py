@@ -60,8 +60,7 @@ class MemgraphInspector(CypherInspector):
         When ``graph_definition`` is supplied, relationship types whose declared
         side is a :class:`~orthograph.graph_definition.models.ConditionalCardinality`
         additionally receive per-side partitioned cardinality breakdowns
-        (``source_partitioned_cardinality`` / ``target_partitioned_cardinality``;
-        E41/ADR-034 §7, both for a both-endpoint-conditional type — E41.7).
+        (``source_partitioned_cardinality`` / ``target_partitioned_cardinality``).
         Without a definition the breakdowns are left ``None`` (comparison
         then reports ``CARDINALITY_UNVERIFIABLE``).
         """
@@ -170,7 +169,7 @@ class MemgraphInspector(CypherInspector):
 
             # Partitioned cardinality — only for conditional relationship types
             # when a definition is provided.  A type conditional on both
-            # endpoints is profiled on both sides (E41.7).
+            # endpoints is profiled on both sides.
             if graph_definition is not None:
                 rel_model = graph_definition.get_relationship_type(rel_type)
                 if rel_model is not None:

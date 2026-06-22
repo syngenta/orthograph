@@ -4,7 +4,7 @@ Each check is a dataclass implementing the :class:`RuleSetCheck` Protocol.
 :func:`standard_cardinality_checks` returns the ordered standard list.
 
 Extend by appending additional :class:`RuleSetCheck` implementations to a
-custom list and passing it to ``GraphDefinition`` (E41+).
+custom list and passing it to ``GraphDefinition``.
 """
 
 from collections.abc import Iterable
@@ -31,7 +31,7 @@ class RuleSetCheck(Protocol):
         Run the check.  Return an empty iterable when satisfied; yield
         issues otherwise.  ``side`` is ``"source"`` or ``"target"``.
 
-        Absolute convention (ADR-032 §1a): ``self_node`` is always the
+        Absolute convention: ``self_node`` is always the
         relationship's **source-label** node and ``other_node`` the
         **target-label** node, for both sides — so ``rule.source`` predicates are
         validated against ``self_node`` and ``rule.target`` against ``other_node``

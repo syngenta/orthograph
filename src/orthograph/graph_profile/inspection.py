@@ -19,7 +19,7 @@ def _extract_discriminators(card: Any) -> tuple[str, str] | None:
 
     Reads the union of property names used as conditions across all rules on
     each endpoint.  Returns ``None`` when the discriminator is multi-property
-    (unsupported in the E41 first cut) or when no conditions exist.
+    or when no conditions exist.
 
     Mirrors the single-``kind`` constraint of :func:`_discriminator_value` in
     the NetworkX reference inspector.
@@ -151,12 +151,11 @@ class CypherInspector(GraphInspector):
         is assembled into ``dict[str, BoundedDistribution]`` keyed by
         ``str(PartitionKey)`` and attached to ``{side}_partitioned_cardinality``.
         Calling it once per conditional side lets a both-endpoint-conditional type
-        carry both breakdowns without collision (E41.7).
+        carry both breakdowns without collision.
 
         Zero-degree rows (emitted by ``OPTIONAL MATCH`` for anchor nodes that have
         no matching edge) are suppressed so the result matches the NetworkX
-        reference, which only emits partitions for observed edges (ADR-009 /
-        E41.4 parity note).
+        reference, which only emits partitions for observed edges.
 
         When no labels are known for the side or the query returns only zero-degree
         rows, the targeted field is left ``None`` (honest).
@@ -181,7 +180,7 @@ class CypherInspector(GraphInspector):
             )
             for row in rows:
                 # Suppress zero-degree rows from OPTIONAL MATCH (parity with
-                # NetworkX, which only emits observed edges -- see E41.4 notes).
+                # NetworkX, which only emits observed edges).
                 # A zero-degree partition has all anchor nodes at 0 degree:
                 # min == 0 and max == 0.  Absent partitions are handled at
                 # comparison time by treating a missing key as degree 0.

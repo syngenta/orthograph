@@ -214,7 +214,7 @@ class CardinalitySpec(BaseModel):
     def _coerce_notation(cls, value: Any) -> Any:
         """Coerce a UML-notation string into field data; pass other inputs through.
 
-        This is the single seam (ADR-031) through which notation strings reach
+        This is the single seam through which notation strings reach
         ``CardinalitySpec`` — raw construction, YAML parsing, and the
         ``CardinalitySpec``-typed fields of the conditional models. Dicts and
         instances are returned untouched so the normal field pipeline (and the
@@ -452,7 +452,7 @@ class ConditionalCardinality(BaseModel):
 
         Raises :exc:`AmbiguousCardinalityError` when two rules of equal
         top specificity both match (defence-in-depth; prevented at definition
-        time by E40.4 checks).
+        time).
         """
         matched = _matching_rules(self.rules, self_props, other_props)
         if not matched:
@@ -511,7 +511,7 @@ def representative_spec(
     This avoids the ``AttributeError`` that arises from accessing ``.min`` /
     ``.max`` / ``.contains()`` on a ``ConditionalCardinality`` (which has none
     of those attributes). Per-endpoint resolution for the validation path is
-    tracked separately (E40.5).
+    tracked separately.
     """
     if isinstance(cardinality, ConditionalCardinality):
         return cardinality.default

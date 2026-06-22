@@ -1,8 +1,8 @@
-"""Tests for CardinalitySpec UML-notation (de)serialization (E42.1).
+"""Tests for CardinalitySpec UML-notation (de)serialization.
 
 Covers ``parse`` / ``notation`` round-trip, the ``mode="before"`` coercion
 seam, the ``*``-using ``__repr__``, and ``CardinalityParseError`` on every
-illegal grammar case from ADR-031.
+illegal grammar case.
 """
 
 import pytest

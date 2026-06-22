@@ -365,8 +365,7 @@ class PropertyTypeMismatchRule:
 
 @dataclass
 class PropertyConstraintPresenceRule:
-    """Reconcile a declared-required property against the observed DB constraint
-    (ADR-034 §4/§8 — the *declared-vs-constraint* row).
+    """Reconcile a declared-required property against the observed DB constraint.
 
     Three outcomes, all distinct from the *declared-vs-occurrence* check
     (:class:`PropertyIncompleteRule`):
@@ -374,7 +373,7 @@ class PropertyConstraintPresenceRule:
     - declared-required & ``constraint_required is False`` → ``PROPERTY_UNCONSTRAINED``
       (WARNING): the contract demands presence but no DB constraint guards it.
     - declared-required & ``constraint_required is None`` → ``CONSTRAINT_UNVERIFIABLE``
-      (INFO): the backend/strategy could not read constraints (ADR-033) — never a
+      (INFO): the backend/strategy could not read constraints — never a
       false verdict.
     - declared (but *not* declared-required, i.e. declared-optional) &
       ``constraint_required is True`` → ``UNDECLARED_CONSTRAINT`` (INFO): the DB is
@@ -444,7 +443,7 @@ class PropertyConstraintPresenceRule:
 
 @dataclass
 class PropertyEnumValueRule:
-    """Compare the observed value distribution against a declared enum (ADR-034 §8).
+    """Compare the observed value distribution against a declared enum.
 
     Fires only when the declared property type is an :class:`enum.Enum` subclass.
     The declared allowed values are ``{str(member.value) for member in enum}``;
@@ -454,19 +453,18 @@ class PropertyEnumValueRule:
     - observed value ∉ declared → ``UNDECLARED_PROPERTY_VALUE`` (WARNING): the data
       violates the declared contract.  Emitted for every *shown* value regardless
       of truncation, since a shown value was definitely observed.
-    - declared value never observed → ``UNOBSERVED_PROPERTY_VALUE`` (INFO): drift.
-      Emitted only when the histogram is **complete** (``sample_complete``) — a
+    - declared value never observed → ``UNOBSERVED_PROPERTY_VALUE`` (INFO): drift.  Emitted only when the histogram is **complete** (``sample_complete``) — a
       truncated histogram cannot prove a declared value is absent.
     - ``value_distribution`` (or its ``histogram``) is ``None`` →
       ``PROPERTY_VALUE_UNVERIFIABLE`` (INFO): the backend did not supply per-value
       counts — never a false verdict.
-    - ``value_distribution.sample_complete is False`` (the histogram was capped at
+     - ``value_distribution.sample_complete is False`` (the histogram was capped at
       ``limit`` and ``other_count`` observations are hidden) →
       ``PROPERTY_VALUE_UNVERIFIABLE`` (INFO): an undeclared value may be hidden in
       the truncated remainder and unobserved declared values cannot be confirmed,
-      so the absence-based verdicts stand down (ADR-034 §2).  A declared enum
+      so the absence-based verdicts stand down.  A declared enum
       should be profiled with a complete histogram so this never fires.
-    """
+    """  # NOQA E501
 
     key: str = "property.enum_value"
 
@@ -661,7 +659,7 @@ def _conditional_sides(
     Mirrors the inspector's ``_conditional_sides`` (NetworkX reference): source
     then target; undirected relationships are skipped (they are not partitioned).
     A relationship type conditional on both endpoints yields two entries, each
-    enforced against its own per-side observed breakdown (E41.7).  Returns an
+    enforced against its own per-side observed breakdown.  Returns an
     empty list when no side is conditional.
     """
     from orthograph.graph_definition.models import ConditionalCardinality
@@ -681,7 +679,7 @@ def _conditional_sides(
 def _single_disc_key(matches: "Iterable[Any]") -> str | None:
     """Return the single discriminator property name across rule predicates.
 
-    The single-``kind`` first cut (E41) discriminates on one property per
+    The single-``kind`` first cut discriminates on one property per
     endpoint; more (or zero) keys yield ``None`` (the null-partition component),
     matching the inspector's ``_discriminator_value`` convention.
     """
@@ -709,7 +707,7 @@ def _degree_bounds(dist: Any) -> "tuple[int, int | None]":
     """Return ``(min, max)`` degree from a partition distribution.
 
     An absent partition (``dist is None``) — a declared pair never observed —
-    counts as degree 0 (the missing-partition convention, E41.2).  ``max`` is
+    counts as degree 0 (the missing-partition convention).  ``max`` is
     ``None`` only when the backend supplied a ``min`` but no ``max``.
     """
     if dist is None:
@@ -739,15 +737,15 @@ class CardinalityViolationRule:
       naming the pair.  An observed partition matching no declared rule yields
       ``CARDINALITY_UNMATCHED_KIND`` (INFO) plus a default-floor
       ``CARDINALITY_VIOLATION`` (ERROR) when a ``min > 0`` default is unmet
-      (mirrors the in-memory default floor, E40.5 / ADR-029 §7).
+      (mirrors the in-memory default floor).
     - when the side's breakdown is absent, falls back to
       ``CARDINALITY_UNVERIFIABLE`` (INFO) — never a false verdict (E40.7).
 
     A relationship type conditional on **both** endpoints is enforced
-    independently per side (E41.7), matching the in-memory per-side verdict.
-    This implements the cardinality rows of the ADR-034 §8 comparison matrix.
+    independently per side , matching the in-memory per-side verdict.
+    This implements the cardinality rows of the comparison matrix.
     The single-``kind`` first cut assumes one string-valued discriminator per
-    endpoint (E41); multi-property / non-string discriminators are a guarded
+    endpoint; multi-property / non-string discriminators are a guarded
     follow-on.
     """
 

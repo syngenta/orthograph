@@ -231,7 +231,7 @@ class GraphDefinition:
             src_node = self.get_node_type(rt.__source_label__)
             tgt_node = self.get_node_type(rt.__target_label__)
 
-            # Absolute convention (ADR-032 §1a): rule.source always describes the
+            # Absolute convention: rule.source always describes the
             # source-label node, rule.target the target-label node — for BOTH the
             # source and target cardinality. The checks validate rule.source
             # against the first node and rule.target against the second, so both

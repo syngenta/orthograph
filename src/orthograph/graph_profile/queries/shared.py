@@ -76,8 +76,7 @@ def _materialize_partitioned_row(raw: Any) -> PartitionedCardinalityRow:
     Cypher (which endpoint they anchor on / whose degree they count), not in row
     shape.  ``stats`` is a :class:`BoundedDistribution` directly (not the
     ``CardinalityStats`` marker): the per-side fields are typed on
-    ``BoundedDistribution``, so a subclass value would lose its subtype on reload
-    (E41.1).
+    ``BoundedDistribution``, so a subclass value would lose its subtype on reload.
     """
     return PartitionedCardinalityRow(
         source_value=raw["sk"],
@@ -94,17 +93,17 @@ def _materialize_partitioned_row(raw: Any) -> PartitionedCardinalityRow:
 class InspectSourcePartitionedCardinalityQuery(
     CypherReadQuery[NoParams, PartitionedCardinalityRow]
 ):
-    """Per-pair cardinality for the **source side** (E41.3).
+    """Per-pair cardinality for the **source side**.
 
     Anchors on the source ``<<label>>`` and counts each source node's **outgoing**
     degree of ``<<rel_type>>``, grouped by the absolute
-    ``(source_discriminator, target_discriminator)`` pair (ADR-032 §1a).  Source
+    ``(source_discriminator, target_discriminator)`` pair.  Source
     nodes with no such edge produce a ``(sk, null)`` zero-degree partition
     (suppressed by the inspector for parity with NetworkX).
 
     All four identifiers (``label``, ``rel_type``, and the two **property-name**
     discriminators) are spliced via the ``<<...>>`` mechanism, which validates each
-    through ``validate_identifier`` (ADR-008) before substitution — an unsafe
+    through ``validate_identifier`` before substitution — an unsafe
     discriminator name is rejected, never injected.
 
     The symmetric counterpart is :class:`InspectTargetPartitionedCardinalityQuery`.
@@ -130,7 +129,7 @@ class InspectSourcePartitionedCardinalityQuery(
 class InspectTargetPartitionedCardinalityQuery(
     CypherReadQuery[NoParams, PartitionedCardinalityRow]
 ):
-    """Per-pair cardinality for the **target side** (E41.7).
+    """Per-pair cardinality for the **target side**.
 
     Symmetric to :class:`InspectSourcePartitionedCardinalityQuery` but anchors on
     the target ``<<label>>`` and counts each target node's **incoming** degree of
@@ -139,7 +138,7 @@ class InspectTargetPartitionedCardinalityQuery(
 
     This is the query a both-endpoint-conditional relationship needs for its target
     side; using the source query there would store source-outgoing degree under the
-    target breakdown and diverge from the NetworkX/in-memory verdict (E41.7 fix).
+    target breakdown and diverge from the NetworkX/in-memory verdict.
 
     Identifier safety and zero-degree suppression are identical to the source
     query; only the anchor (``MATCH (m:..)`` / ``count(m)``) differs.

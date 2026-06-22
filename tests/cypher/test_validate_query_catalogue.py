@@ -699,7 +699,7 @@ def test_inspect_partitioned_cardinality_query_emits_identifier_injection_issue(
 
 
 # ---------------------------------------------------------------------------
-# E37.3: CypherQuery registration and catalogue validation
+# CypherQuery registration and catalogue validation
 # ---------------------------------------------------------------------------
 
 
@@ -860,14 +860,14 @@ def test_registered_cypher_query_appears_alongside_typed_query(
 
 
 # ---------------------------------------------------------------------------
-# E37.5.6 — typed-path regression: E37.1 re-expression is behaviour-preserving
+# typed-path regression: re-expression is behaviour-preserving
 # ---------------------------------------------------------------------------
 
 
 def test_typed_query_validation_emits_identical_codes_after_e37_refactor(
     graph_definition: GraphDefinition,
 ) -> None:
-    """Typed-path validation emits identical codes after the E37.1 validate_cypher_spec refactor.
+    """Typed-path validation emits identical codes after the validate_cypher_spec refactor.
 
     Proves the re-expression of validate_query_catalogue's typed branch onto the
     shared validate_cypher_spec core is behaviour-preserving: a model-consistent

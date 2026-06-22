@@ -28,7 +28,7 @@ _DegreeCounts = dict[tuple[str, str], int]
 
 # A partition value: the absolute (source-label-node, target-label-node)
 # discriminator key/value pairs, each side sorted by key so equal partitions
-# share one identity (ADR-032 §1, §1a — absolute convention, both endpoints).
+# share one identity (absolute convention, both endpoints).
 _EndpointProps = tuple[tuple[str, object], ...]
 _Partition = tuple[_EndpointProps, _EndpointProps]
 
@@ -176,7 +176,7 @@ def _cardinality_violation_issue(
         if direction != "incoming"
         else rel_type.target_cardinality()
     )
-    # E40.3/E40.5: conditional sides are resolved per pair elsewhere; this
+    # conditional sides are resolved per pair elsewhere; this
     # constant path collapses any residual conditional (e.g. an undirected
     # side, not partitioned) to its representative spec rather than crashing.
     cardinality = representative_spec(raw_cardinality)
@@ -203,7 +203,7 @@ def _cardinality_violation_issue(
 
 
 # ---------------------------------------------------------------------------
-# Conditional-cardinality checks (E40.5)
+# Conditional-cardinality checks
 # ---------------------------------------------------------------------------
 
 
@@ -405,9 +405,9 @@ def _default_floor_issue(
     this side breaks the ``default`` bound, else ``None``.
 
     A node whose discriminator matches no rule is governed solely by ``default``
-    (ADR-029 §7). Enforcing ``default`` against the node's *total* side degree
+    Enforcing ``default`` against the node's *total* side degree
     keeps a ``min > 0`` default from silently passing a node with no edges
-    (ADR-029 §5 anti-silent-pass). A permissive default (``min == 0``) admits a
+    A permissive default (``min == 0``) admits a
     zero total, so this never fires for the common ``ZERO_OR_MORE`` default.
     """
     if spec.contains(total):
@@ -460,7 +460,7 @@ def _check_conditional_side(
     partitions = set(observed) | _declared_partitions(card, side, self_props)
 
     for partition in partitions:
-        # Absolute convention (ADR-032 §1a): resolve always takes
+        # Absolute convention: resolve always takes
         # (source-label-node props, target-label-node props); rule.source is
         # matched against arg 1, rule.target against arg 2, regardless of side.
         src_props, tgt_props = _partition_endpoints(partition)
@@ -567,7 +567,7 @@ def _absolute_partition(
     """Build the absolute (source-label props, target-label props) partition key.
 
     Selects, from each endpoint, the keys any rule discriminates on for that
-    endpoint (ADR-032 §1a — absolute convention). A dangling/absent endpoint
+    endpoint (absolute convention). A dangling/absent endpoint
     reads its selected keys as ``None``.
     """
     src_props = src_node.props if src_node is not None else {}
@@ -589,7 +589,7 @@ def _accumulate_partition(
     """Increment the partition count for one edge of a conditional side.
 
     The partition is the absolute (source-label, target-label) discriminator key
-    (ADR-032 §1). The count is keyed by *uid* (the counted node for this side).
+    The count is keyed by *uid* (the counted node for this side).
     """
     partition = _absolute_partition(card, src_node, tgt_node)
     partitioned[(uid, rel_label)][partition] += 1

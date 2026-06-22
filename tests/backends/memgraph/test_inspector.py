@@ -133,7 +133,7 @@ def test_memgraph_inspect_produces_profile() -> None:
     assert "name" in person.property_profiles
     assert "age" in person.property_profiles
     assert person.property_profiles["name"].observed_types == ["String"]
-    # UNIQUE does not guarantee presence; EXISTS does (ADR-034 §4).
+    # UNIQUE does not guarantee presence; EXISTS does.
     assert person.property_profiles["name"].constraint_required is False
     assert person.property_profiles["age"].constraint_required is True
 
@@ -158,7 +158,7 @@ def test_memgraph_inspect_produces_profile() -> None:
     assert {c.constraint_type for c in profile.constraints} == {"UNIQUE", "EXISTS"}
 
 
-# --- value_distribution (E45.3) ---
+# --- value_distribution ---
 
 
 def test_memgraph_value_distribution_is_none() -> None:
@@ -287,7 +287,7 @@ def test_memgraph_validate_database(graph_definition: GraphDefinition) -> None:
     assert result.is_valid, [str(e) for e in result.errors]
 
 
-# --- partitioned_cardinality (E41.4) ---
+# --- partitioned_cardinality ---
 
 
 def _conditional_operation_sample_definition() -> GraphDefinition:
@@ -349,7 +349,7 @@ def _partitioned_row(
 def test_memgraph_partitioned_cardinality_assembles_expected_partitions() -> None:
     """Given grouped-query rows, MemgraphInspector assembles partitioned_cardinality.
 
-    Parity note (E41.4): variance is None on DB side (Cypher does not compute it).
+    Parity note: variance is None on DB side (Cypher does not compute it).
     Parity assertions check min/max/count only.
     """
     driver = MagicMock()
@@ -901,7 +901,7 @@ def test_memgraph_unprocessable_first_side_falls_through_to_processable_second()
 
 
 def _both_sides_definition() -> GraphDefinition:
-    """MAKES conditional on BOTH endpoints (E41.7).
+    """MAKES conditional on BOTH endpoints.
 
     Source side (assembler, final) = 2..2; target side (assembler, final) = 1..1.
     """
@@ -951,12 +951,12 @@ def _both_sides_definition() -> GraphDefinition:
 
 
 def test_memgraph_partitioned_cardinality_both_sides_parity_with_networkx() -> None:
-    """Both-sides conditional: each side's breakdown matches NetworkX (E41.7).
+    """Both-sides conditional: each side's breakdown matches NetworkX.
 
     The ``side_effect`` dispatches the partitioned queries on the rendered Cypher
     (source anchors on ``count(n)``, target on ``count(m)``), so issuing the wrong
     query for a side would return the wrong degree rows and fail parity — the
-    regression guard for the E41.7 both-sides bug.
+    regression guard for the both-sides bug.
     """
     import networkx as nx
 

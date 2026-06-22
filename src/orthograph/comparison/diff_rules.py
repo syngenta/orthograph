@@ -4,12 +4,9 @@ Each rule implements the :class:`~orthograph.comparison.rules.Rule` Protocol,
 reads ``context.left`` / ``context.right`` symmetrically, and emits only
 ``Severity.INFO`` issues.
 
-This module is created in E27.T4.  The :func:`diff_rules` factory is
-imported by :mod:`orthograph.comparison.engine` for
-:func:`~orthograph.comparison.engine.compare_profiles` and
-:func:`~orthograph.comparison.engine.compare_definitions`.
+This module implements the symmetric diff rules.
 
-Two questions, two rule families (per E27 spec):
+Two questions, two rule families:
 
 - **Satisfaction** (profile ↔ definition): ``standard_rules()`` — asymmetric,
   uses left=declared/right=observed semantics, emits ERROR/WARNING/INFO.
@@ -541,7 +538,7 @@ class CardinalityChangedRule:
 @dataclass
 class CountChangedRule:
     """Emits ``COUNT_CHANGED`` (INFO) when both sides observe a node label or
-    relationship type but the entity ``count`` differs (ADR-034 §6/§8).
+    relationship type but the entity ``count`` differs.
 
     Total count is **diff-only**: it never participates in profile↔description
     comparison.  It applies only to :class:`NodeTypeProfile` /

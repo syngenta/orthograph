@@ -1,4 +1,4 @@
-"""Tests for the vendor-free constraint cross-reference (ADR-034 §4)."""
+"""Tests for the vendor-free constraint cross-reference."""
 
 from orthograph.graph_profile.constraints import is_presence_constraint_for
 from orthograph.graph_profile.models import ConstraintInfo

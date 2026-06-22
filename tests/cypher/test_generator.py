@@ -312,7 +312,7 @@ def test_create_relationship_rejects_injected_property_key(
 # types, so injection must come through a malicious __label__ / __uid_field__
 # on the model rather than caller-supplied data. Labels are not validated at
 # class-definition time, so those types can be constructed directly.
-# __uid_field__ IS validated at class-definition time (E29 T1), so a malicious
+# __uid_field__ IS validated at class-definition time, so a malicious
 # __uid_field__ value (e.g. "uid) REMOVE n //") is caught before the generator
 # is reached. The reason it is always caught: such a string can never be a
 # valid Python identifier, so the "field not declared" check (Check A) rejects
@@ -348,10 +348,10 @@ class _InjectedRel(RelationshipModel):
 
 
 def test_generate_constraints_rejects_injected_uid_field():
-    """A malicious __uid_field__ is now caught at class-definition time (E29 T1).
+    """A malicious __uid_field__ is now caught at class-definition time.
 
-    Before E29 T1, the CypherIdentifierError was raised inside generate_constraints.
-    After E29 T1, MissingClassVarError fires when the class body is evaluated,
+    Before the fix, the CypherIdentifierError was raised inside generate_constraints.
+    After the fix, MissingClassVarError fires when the class body is evaluated,
     so the generator is never reached.
     """
     from orthograph.graph_definition.exceptions import MissingClassVarError
@@ -553,7 +553,7 @@ def test_match_by_uid_query_references_only_model_identifiers(
 def test_match_by_uid_query_passes_definition_time_validation(
     graph_definition: GraphDefinition,
 ):
-    """A generated query constructs without raising — proving E16's
+    """A generated query constructs without raising — proving the
     $param ↔ Params alignment holds for the synthesised class."""
     gen = CypherGenerator(graph_definition)
     # Construction itself runs the class-definition-time validator.

@@ -298,7 +298,7 @@ class HasOutput(RelationshipModel):
 
 
 def test_mermaid_conditional_cardinality_renders():
-    """Scope: model_to_mermaid renders conditional cardinality without crashing."""
+    """model_to_mermaid renders conditional cardinality without crashing."""
     m = GraphDefinition(
         name="ConditionalTest",
         node_types=[Operation, Sample],
@@ -314,7 +314,7 @@ def test_mermaid_conditional_cardinality_renders():
 
 
 def test_mermaid_constant_cardinality_unchanged():
-    """Scope: Constant cardinality rendering in mermaid is unchanged (regression)."""
+    """Constant cardinality rendering in mermaid is unchanged (regression)."""
     m = GraphDefinition(
         name="ConstantTest",
         node_types=[Person, Movie],

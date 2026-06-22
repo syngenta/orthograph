@@ -1,10 +1,10 @@
-"""Cross-reference flat constraints onto individual properties (ADR-034 §4).
+"""Cross-reference flat constraints onto individual properties.
 
 A :class:`~orthograph.graph_profile.models.GraphProfile` carries constraints in a
 flat list.  Comparison needs to ask, per property, *"is this property's presence
 guaranteed by a database constraint?"*.  This module answers that question in a
 vendor-free way so every inspector links constraints onto ``PropertyProfile``
-identically (ADR-009 parity).
+identically.
 
 Only constraints that *guarantee presence* count: existence/presence constraints
 and key constraints (a key implies the keyed properties exist).  A uniqueness

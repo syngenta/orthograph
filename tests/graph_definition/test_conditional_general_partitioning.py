@@ -1,4 +1,4 @@
-"""General both-endpoint conditional-cardinality partitioning (ADR-032 / E43).
+"""General both-endpoint conditional-cardinality partitioning.
 
 These tests author rules with explicit ``ConditionalRule`` / ``PropMatch`` (the
 authoring surface after ``by_kind`` removal) and exercise the cases the
@@ -317,7 +317,7 @@ def test_both_endpoints_lead_partition_missing_violates_min():
 
 
 # ---------------------------------------------------------------------------
-# Definition-time guard: a key on neither endpoint is unenforceable (ADR-032 §4)
+# Definition-time guard: a key on neither endpoint is unenforceable
 # ---------------------------------------------------------------------------
 
 

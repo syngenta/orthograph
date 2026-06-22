@@ -774,8 +774,8 @@ def test_cardinality_changed_noop_identical_definition():
 
 
 def test_cardinality_changed_conditional_definition_does_not_crash():
-    """E40.7: a conditional source cardinality on one side must not raise
-    AttributeError; the context omits min/max keys (E40.7 — conditional specs
+    """a conditional source cardinality on one side must not raise
+    AttributeError; the context omits min/max keys (conditional specs
     have no .min/.max attributes; representative_spec is not used for context)."""
     rule = CardinalityChangedRule()
     ctx = _ctx(
@@ -788,7 +788,7 @@ def test_cardinality_changed_conditional_definition_does_not_crash():
     assert len(issues) == 1
     issue = issues[0]
     assert issue.code == "CARDINALITY_CHANGED"
-    # E40.7: when either side is conditional, context has no min/max keys.
+    # when either side is conditional, context has no min/max keys.
     ctx_keys = set(issue.context or {})
     assert "left_min" not in ctx_keys
     assert "left_max" not in ctx_keys
@@ -1136,7 +1136,7 @@ def test_property_type_changed_unknown_type_same_as_known_mapped_noop():
 
 
 # ===========================================================================
-# E40.7 — CardinalityChangedRule: conditional definition ↔ definition
+# CardinalityChangedRule: conditional definition ↔ definition
 # ===========================================================================
 
 
@@ -1265,7 +1265,7 @@ def test_cardinality_changed_conditional_context_has_no_min_max_keys():
 
 
 # ===========================================================================
-# E45.4 — total-count delta is diff-only (ADR-034 §6, §8)
+# total-count delta is diff-only
 #
 # Total count is excluded from profile↔description and participates *only* in
 # profile↔profile as an INFO drift signal (COUNT_CHANGED).

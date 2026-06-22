@@ -91,7 +91,7 @@ def test_inspect_property_types():
 
 
 def test_inspect_explicit_null_not_present():
-    """An explicit ``None`` value is not counted as present (ADR-034 §5)."""
+    """An explicit ``None`` value is not counted as present."""
     g = _make_graph()
     g.add_node("a", __label__="Person", name="Alice", nickname="Al")
     g.add_node("b", __label__="Person", name="Bob", nickname=None)
@@ -211,7 +211,7 @@ def test_inspect_full_graph():
     assert acted_in_stats.max == 2  # Alice has 2
 
 
-# --- value_distribution (E45.3) ---
+# --- value_distribution ---
 
 
 def test_inspect_value_distribution_low_cardinality():
@@ -281,7 +281,7 @@ def test_inspect_value_distribution_top_n_zero_disables():
 
 
 def test_inspect_value_distribution_null_values_excluded():
-    """Null values are excluded from the histogram (ADR-034 §5)."""
+    """Null values are excluded from the histogram."""
     g = _make_graph()
     g.add_node("a", __label__="X", colour="red")
     g.add_node("b", __label__="X", colour=None)
@@ -299,7 +299,7 @@ def test_inspect_value_distribution_null_values_excluded():
     assert dist.count == 2  # only non-null
 
 
-# --- partitioned_cardinality (E41.2) ---
+# --- partitioned_cardinality ---
 
 
 def _operation_sample_model(

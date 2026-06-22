@@ -61,13 +61,13 @@ class NetworkxInspector(GraphInspector):
 
         When ``graph_definition`` is supplied, relationship types whose declared
         side is a :class:`ConditionalCardinality` additionally receive a per-pair
-        breakdown grouped by the endpoints' discriminator values
-        (E41/ADR-034 §7), in ``source_partitioned_cardinality`` and/or
-        ``target_partitioned_cardinality`` — a type conditional on **both**
-        endpoints carries both (E41.7).  Without a definition the breakdowns are
-        left ``None`` (comparison then reports ``CARDINALITY_UNVERIFIABLE``) — an
-        additive keyword keeps existing single-argument callers working.
-        """
+        breakdown grouped by the endpoints' discriminator values,
+        in ``source_partitioned_cardinality`` and/or ``target_partitioned_cardinality`` —
+        a type conditional on **both** endpoints carries both.  Without a definition
+        the breakdowns are left ``None`` (comparison then reports
+        ``CARDINALITY_UNVERIFIABLE``) — an additive keyword keeps existing
+        single-argument callers working.
+        """  # NOQA E501
         node_type_profiles = self._inspect_nodes(connection)
         rel_type_profiles = self._inspect_relationships(
             connection, node_type_profiles, graph_definition
@@ -183,7 +183,7 @@ def _compute_property_profiles(
         value_counts: Counter[str] = Counter()
         for entity in entities:
             if key in entity and entity[key] is not None:
-                # ADR-034 §5: an explicit ``null`` is *not* present.
+                # an explicit ``null`` is *not* present.
                 present_count += 1
                 observed_types.add(type(entity[key]).__name__)
                 if value_counts_top_n:
@@ -221,7 +221,7 @@ def _build_value_distribution(
     # Truncate to top-N by frequency, ties broken by key for determinism.
     # Counter.most_common alone breaks ties by insertion order, which is not
     # stable across runs/backends; sorting by (-count, key) makes the kept set
-    # reproducible so profile comparisons (ADR-009 parity) don't drift.
+    # reproducible so profile comparisons don't drift.
     ranked = sorted(value_counts.items(), key=lambda kv: (-kv[1], kv[0]))
     top_histogram = dict(ranked[:top_n])
     top_total = sum(top_histogram.values())
@@ -243,7 +243,7 @@ def _compute_cardinality(degree_map: dict[str, int]) -> CardinalityStats | None:
     # Population variance (divide by N, not N-1): the degrees ARE the full
     # population for this (source-label, rel-type) pair, not a sample of it.
     # This is the reference estimator -- Neo4j/Memgraph must match it or
-    # cross-backend variance comparisons will drift (ADR-034 §3 / ADR-009).
+    # cross-backend variance comparisons will drift.
     variance = sum((d - mean) ** 2 for d in degrees) / len(degrees)
     return CardinalityStats(
         count=len(degrees),
@@ -255,12 +255,12 @@ def _compute_cardinality(degree_map: dict[str, int]) -> CardinalityStats | None:
 
 
 # ---------------------------------------------------------------------------
-# Conditional per-pair cardinality (E41.2 — reference implementation)
+# Conditional per-pair cardinality — reference implementation
 # ---------------------------------------------------------------------------
 #
-# This is the reference the Neo4j/Memgraph backends must match (ADR-009).  The
+# This is the reference the Neo4j/Memgraph backends must match.  The
 # partition key is the *absolute* (source-label-node discriminator, target-label-
-# node discriminator) pair (ADR-032 §1a): regardless of which side carries the
+# node discriminator) pair: regardless of which side carries the
 # conditional cardinality, the key always reads the discriminator from the
 # source-label node first and the target-label node second.  Only the *counted*
 # node differs — the source node on a source-side rule, the target node on a
@@ -285,7 +285,7 @@ def _conditional_sides(
 
     ``side`` is ``"source"`` or ``"target"`` and selects which endpoint's degree
     is counted.  A relationship type conditional on both endpoints yields two
-    entries (E41.7); a single-side type yields one; a constant or undirected type
+    entries; a single-side type yields one; a constant or undirected type
     yields none.  Undirected relationships are skipped (mirrors the in-memory
     path, which only partitions directed sides — ``validation._partition_counts``).
     """
@@ -312,7 +312,7 @@ def _discriminator_keys(matches: tuple[Any, ...]) -> frozenset[str]:
 def _discriminator_value(attrs: dict[str, Any], keys: frozenset[str]) -> str | None:
     """Read the single discriminator value for *keys* from *attrs*, as a string.
 
-    The single-``kind`` first cut (E41) discriminates on one property per
+    The single-``kind`` first cut discriminates on one property per
     endpoint; an endpoint with no discriminator, or a missing/``None`` value,
     maps to ``None`` (the null-partition component).  Multi-key endpoints are not
     supported in this first cut and also yield ``None`` (the guarded follow-on
@@ -364,7 +364,7 @@ def _stats_per_partition(
     Constructs :class:`BoundedDistribution` directly (not the
     :class:`CardinalityStats` marker subclass): the profile field is typed on
     the base, so a subclass value would be restored as its base on reload and
-    break round-trip equality (E41.1/E41.3).  Reuses the population-variance
+     break round-trip equality.  Reuses the population-variance
     estimator of :func:`_compute_cardinality` so partition and aggregate stats
     stay consistent.
     """
@@ -394,7 +394,7 @@ def _compute_partitioned_cardinality(
     Each element is ``None`` (the common case) when its side is not conditional,
     no definition is injected, the relationship type is unknown, or there are no
     edges — so non-conditional profiling cost is unchanged.  A type conditional on
-    **both** endpoints (E41.7) returns both breakdowns; the per-side fields keep
+    **both** endpoints returns both breakdowns; the per-side fields keep
     source-counted and target-counted partitions from colliding.
     """
     if graph_definition is None:

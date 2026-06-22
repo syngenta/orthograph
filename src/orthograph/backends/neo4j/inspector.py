@@ -118,8 +118,7 @@ class Neo4jInspector(CypherInspector):
         When ``graph_definition`` is supplied, relationship types whose declared
         side is a :class:`~orthograph.graph_definition.models.ConditionalCardinality`
         additionally receive per-side partitioned cardinality breakdowns
-        (``source_partitioned_cardinality`` / ``target_partitioned_cardinality``;
-        E41/ADR-034 §7, both for a both-endpoint-conditional type — E41.7).
+        (``source_partitioned_cardinality`` / ``target_partitioned_cardinality``).
         Without a definition the breakdowns are left ``None`` (comparison
         then reports ``CARDINALITY_UNVERIFIABLE``).
         """
@@ -148,7 +147,7 @@ class Neo4jInspector(CypherInspector):
             rel_type_map = self._fetch_rel_type_map(connection, execute_kwargs)
 
         # Constraints are read first so each PropertyProfile can be cross-
-        # referenced against them (ADR-034 §4).
+        # referenced against them.
         constraints = self._get_constraints(connection, execute_kwargs)
 
         node_profiles: dict[str, NodeTypeProfile] = {}
@@ -283,9 +282,11 @@ class Neo4jInspector(CypherInspector):
                 constraint_required=is_presence_constraint_for(
                     constraints, "NODE", label, row.property_name
                 ),
-                # TODO (ADR-015 B1): populate observed_type_counts once a query
-                # returns per-type value counts (APOC currently returns only
-                # distinct type names in propertyTypes, not per-type counts).
+                # observed_type_counts is left at its {} default: no current
+                # source (APOC propertyTypes / db.schema.*) returns per-type
+                # value counts, only distinct type names. Populating it needs a
+                # dedicated bounded value->type->count aggregation — tracked in
+                # E46 (ADR-015 B1 TODO).
             )
             if row.total_observations > total_count:
                 total_count = row.total_observations
@@ -330,9 +331,11 @@ class Neo4jInspector(CypherInspector):
                 constraint_required=is_presence_constraint_for(
                     constraints, "RELATIONSHIP", rel_type, row.property_name
                 ),
-                # TODO (ADR-015 B1): populate observed_type_counts once a query
-                # returns per-type value counts (APOC currently returns only
-                # distinct type names in propertyTypes, not per-type counts).
+                # observed_type_counts is left at its {} default: no current
+                # source (APOC propertyTypes / db.schema.*) returns per-type
+                # value counts, only distinct type names. Populating it needs a
+                # dedicated bounded value->type->count aggregation — tracked in
+                # E46 (ADR-015 B1 TODO).
             )
             if row.total_observations > total_count:
                 total_count = row.total_observations
@@ -353,7 +356,7 @@ class Neo4jInspector(CypherInspector):
         # a definition is provided.  Non-conditional and definition-less cases
         # leave both per-side fields None (comparison reports
         # CARDINALITY_UNVERIFIABLE).  A type conditional on both endpoints is
-        # profiled on both sides (E41.7).
+        # profiled on both sides.
         if graph_definition is not None:
             rel_model = graph_definition.get_relationship_type(rel_type)
             if rel_model is not None:

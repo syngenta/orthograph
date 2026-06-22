@@ -48,8 +48,8 @@ Design goals
   :class:`~orthograph.cypher.query_execution.CypherExecutor`.  Callers unpack
   rows themselves.  This keeps the class useful as a validation-only on-ramp
   before a consuming project is ready to declare typed ``Output`` models.
-* **Catalogue citizen.** Carries ``backend = Backend.CYPHER`` (metadata only —
-  ADR-011) and is registerable in ``QueryCatalogue`` via ``register_cypher_query``.
+* **Catalogue citizen.** Carries ``backend = Backend.CYPHER`` (metadata only) and is
+registerable in ``QueryCatalogue`` via ``register_cypher_query``.
 * **Validation timing.** Validation (``validate_query``) runs at call time, not
   class-definition time like the typed path.  The shared field name
   ``cypher_template`` does **not** imply the typed-path definition-time contract.
@@ -100,7 +100,7 @@ YAML serialization (JSON-Schema round-trip)::
      #   "params_schema": {...},       # JSON Schema of Params
      #   "identifiers_schema": {...},  # JSON Schema of Identifiers
      # }
-"""
+"""  # NOQA E501
 
 from __future__ import annotations
 

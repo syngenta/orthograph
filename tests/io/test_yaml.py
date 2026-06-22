@@ -242,18 +242,18 @@ def test_yaml_save_and_load(tmp_path: Path):
     assert a_type.get_required_property_names() == {"name", "count"}
 
 
-# --- E40.3: conditional cardinality must not crash YAML serialization ---
+# --- conditional cardinality must not crash YAML serialization ---
 
 
 def test_yaml_save_conditional_cardinality_uses_default_bound(tmp_path: Path):
     """Serializing a RelationshipModel with ConditionalCardinality round-trips
-    the full conditional rules (E40.6 delivers full round-trip)."""
+    the full conditional rules (full round-trip of conditional cardinality)."""
 
     class CDirector(NodeModel):
         __label__ = "CDirector"
         __uid_field__ = "name"
         name: str
-        kind: str  # required — E40.4 requires discriminators to be required props
+        kind: str  # required — discriminators must be required properties
 
     class CFilm(NodeModel):
         __label__ = "CFilm"
@@ -290,11 +290,11 @@ def test_yaml_save_conditional_cardinality_uses_default_bound(tmp_path: Path):
     loaded = load_yaml_file(path)
     rel = loaded.get_relationship_type("C_DIRECTED")
     assert rel is not None
-    # E40.6: full conditional round-trip — the loaded cardinality equals the original.
+    # full conditional round-trip — the loaded cardinality equals the original.
     assert rel.__source_cardinality__ == conditional
 
 
-# --- E40.6: YAML round-trip for conditional cardinality ---
+# --- YAML round-trip for conditional cardinality ---
 
 
 _CONDITIONAL_YAML = """\

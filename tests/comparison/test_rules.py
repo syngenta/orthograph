@@ -1,5 +1,4 @@
-"""Unit tests for the Rule abstraction and standard rule set (ADR-015 §4,
-Phase C1 + C2).
+"""Unit tests for the Rule abstraction and standard rule set.
 
 C1 tests cover:
 * RuleContext construction and field access.
@@ -10,7 +9,7 @@ C1 tests cover:
 
 C2 tests cover:
 * Each standard rule emits the exact code + severity as its legacy _check_*
-  counterpart (hard constraint — ADR-015).
+  counterpart (hard constraint).
 * Satisfaction path: rule emits no issues when constraint is met.
 * standard_rules() returns all ten rule instances in order.
 """
@@ -962,7 +961,7 @@ def test_case_b_extension_via_injection():
 
     # E45.4: Person.name is declared-required but the profile carries no
     # constraint_required (None) → PropertyConstraintPresenceRule emits one
-    # CONSTRAINT_UNVERIFIABLE (INFO), honest per ADR-033/ADR-034 §8.
+    # CONSTRAINT_UNVERIFIABLE (INFO).
     unverifiable = [i for i in result.issues if i.code == "CONSTRAINT_UNVERIFIABLE"]
     assert len(unverifiable) == 1
     assert unverifiable[0].entity_id == "Person.name"
@@ -975,7 +974,7 @@ def test_case_b_extension_via_injection():
 
 
 # ===========================================================================
-# E40.7 — CardinalityViolationRule: conditional side → CARDINALITY_UNVERIFIABLE
+# CardinalityViolationRule: conditional side → CARDINALITY_UNVERIFIABLE
 # ===========================================================================
 
 
@@ -994,7 +993,7 @@ class _SampleNode(NodeModel):
 
 
 class _HasOutputConditional(RelationshipModel):
-    """HAS_OUTPUT with a conditional source cardinality (E40.7 fixture)."""
+    """HAS_OUTPUT with a conditional source cardinality."""
 
     __label__ = "HAS_OUTPUT"
     __source_label__ = "Operation"
@@ -1082,7 +1081,7 @@ def test_cardinality_violation_rule_conditional_no_cardinality_violation():
 
 def test_cardinality_violation_rule_constant_unchanged_regression():
     """Scope: CardinalityViolationRule still emits CARDINALITY_VIOLATION for a
-    constant-spec declared cardinality (regression guard for E40.7)."""
+    constant-spec declared cardinality (regression guard)."""
     rule = CardinalityViolationRule()
     rtp = RelationshipTypeProfile(
         rel_type="ACTED_IN",
@@ -1098,7 +1097,7 @@ def test_cardinality_violation_rule_constant_unchanged_regression():
 
 
 # ===========================================================================
-# E45.4 — Comparison rules: presence (3 sources), enum/value, total-count diff-only
+# Comparison rules: presence (3 sources), enum/value, total-count diff-only
 #
 # Implements the ADR-034 §8 non-cardinality rows.  Settled severities
 # (recorded in ADR-034 §8):
@@ -1595,7 +1594,7 @@ def test_total_count_never_produces_description_finding():
 
 
 # ---------------------------------------------------------------------------
-# standard_rules() — updated membership after E45.4
+# standard_rules() — updated membership
 # ---------------------------------------------------------------------------
 
 
@@ -1623,7 +1622,7 @@ def _partition(source_value: str | None, target_value: str | None) -> str:
 
 
 def _e415_ctx(rel_profile: RelationshipTypeProfile, **kwargs: Any) -> RuleContext:
-    """Build a RuleContext over the E40.7 conditional model + a given profile."""
+    """Build a RuleContext over the conditional model + a given profile."""
     profile = GraphProfile(
         source="e415_test",
         node_type_profiles={
@@ -1964,7 +1963,7 @@ def test_cardinality_constant_max_exceeded_violation():
 
 
 # ===========================================================================
-# E41.7 — both-endpoint conditional cardinality: enforce each side independently
+# both-endpoint conditional cardinality: enforce each side independently
 # ===========================================================================
 
 

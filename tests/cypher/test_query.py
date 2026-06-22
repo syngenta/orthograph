@@ -7,7 +7,7 @@ Coverage:
 - list_arguments: derives required/optional from Params.model_fields
 - build: validates kwargs, returns CypherQueryData
 - validate_query: runs shared validate_cypher_spec core
-- Identifiers: opt-in identifier injection (ADR-010)
+- Identifiers: opt-in identifier injection
 - model_dump: JSON-Schema serialization via params_schema / identifiers_schema
 
 Deleted (no-longer-valid concepts from old query_args_* authoring style):
@@ -779,7 +779,7 @@ def test_repr_shows_query_structure() -> None:
 
 
 # ---------------------------------------------------------------------------
-# E37.4 — opt-in Identifiers tests
+# opt-in Identifiers tests
 # ---------------------------------------------------------------------------
 
 
@@ -851,7 +851,7 @@ def test_identifiers_missing_field_raises_at_build() -> None:
 
 
 # ---------------------------------------------------------------------------
-# E37.5 — shared validation + simple path behavioural tests
+# shared validation + simple path behavioural tests
 # ---------------------------------------------------------------------------
 
 
@@ -982,7 +982,7 @@ def test_cypher_query_validate_parity_with_typed_query(
     )
 
 
-# --- E38: Round-trip serialization tests ---
+# Round-trip serialization tests
 
 
 def test_cypher_query_python_to_dump_to_load_round_trip() -> None:

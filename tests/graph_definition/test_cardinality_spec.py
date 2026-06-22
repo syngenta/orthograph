@@ -1,7 +1,6 @@
 """Tests for CardinalitySpec, PropMatch, and ConditionalCardinality.
 
-Covers E40.1 (ZERO, EXACTLY, resolve_for_pair) and E40.2 (PropMatch,
-ConditionalCardinality, most-specific-wins, ambiguity guard).
+Covers cardinality specifications and conditional cardinality rules.
 """
 
 from typing import Any, cast
@@ -247,7 +246,7 @@ def test_propmatch_conditions_is_mapping_not_writable():
 _ONE_TO_TWO = CardinalitySpec(min=1, max=2)
 _DEFAULT = CardinalitySpec(min=0, max=None)
 
-# ADR-029 deciding table (movie domain: Director kind → Film kind)
+# Deciding table (movie domain: Director kind → Film kind)
 # - (documentary, documentary) → 1..2  (co-directed documentaries)
 # - (short, none) → ZERO               (short directors skip unclassified films)
 # - (feature, none) → ZERO             (feature directors skip unclassified films)

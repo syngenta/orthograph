@@ -2,7 +2,7 @@
 
 Pure tests — no database, no mocks.  Verify build()/materialize() and that
 injected identifiers are rejected before any Cypher is produced.  These queries
-moved out of the neo4j backend (E25 S1) because their Cypher is vendor-neutral.
+moved out of the neo4j backend because their Cypher is vendor-neutral.
 """
 
 import pytest
@@ -98,7 +98,7 @@ def test_endpoint_labels_injected_rel_type_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Partitioned cardinality queries (E41.3 source / E41.7 target)
+# Partitioned cardinality queries
 # ---------------------------------------------------------------------------
 
 
@@ -157,7 +157,7 @@ def test_source_query_anchors_on_source_outgoing_degree() -> None:
 
 
 def test_target_query_anchors_on_target_incoming_degree() -> None:
-    """The target query anchors ``MATCH (m:label)`` and counts ``count(m)`` (E41.7).
+    """The target query anchors ``MATCH (m:label)`` and counts ``count(m)``.
 
     This is what distinguishes it from the source query: the target side must
     count the target node's incoming degree, not the source node's outgoing one.
@@ -304,7 +304,7 @@ def test_partitioned_injected_rel_type_raises() -> None:
 
 
 def test_target_partitioned_injected_discriminator_raises() -> None:
-    """Identifier safety holds for the target query too (E41.7 parity)."""
+    """Identifier safety holds for the target query too."""
     q = InspectTargetPartitionedCardinalityQuery(
         identifiers={
             "label": "Sample",

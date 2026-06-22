@@ -225,7 +225,7 @@ def test_profile_to_text_property_completeness(sample_profile: GraphProfile):
 
 
 def test_profile_to_text_observed_ratio_no_mandatory_tag(sample_profile: GraphProfile):
-    """E45.5: [mandatory]/[partial] replaced by observed ratio (ADR-034 §4)."""
+    """[mandatory]/[partial] tags replaced by observed ratio."""
     text = profile_to_text(sample_profile)
     assert "[mandatory]" not in text
     assert "[partial]" not in text
@@ -551,7 +551,7 @@ class HasOutput(RelationshipModel):
 
 
 def test_model_to_text_conditional_cardinality():
-    """Scope: model_to_text renders conditional cardinality without crashing."""
+    """model_to_text renders conditional cardinality without crashing."""
     m = GraphDefinition(
         name="ConditionalTest",
         node_types=[Operation, Sample],
@@ -565,7 +565,7 @@ def test_model_to_text_conditional_cardinality():
 
 
 def test_model_to_text_conditional_cardinality_includes_rules():
-    """Scope: Conditional cardinality summary includes rules and default."""
+    """Conditional cardinality summary includes rules and default."""
     m = GraphDefinition(
         name="ConditionalTest",
         node_types=[Operation, Sample],
@@ -578,7 +578,7 @@ def test_model_to_text_conditional_cardinality_includes_rules():
 
 
 def test_model_to_text_constant_cardinality_unchanged():
-    """Scope: Constant cardinality rendering is unchanged (regression)."""
+    """Constant cardinality rendering is unchanged (regression)."""
     m = GraphDefinition(
         name="ConstantTest",
         node_types=[Person, Movie],

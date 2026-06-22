@@ -168,7 +168,7 @@ class MemgraphEndpointLabelsQuery(InspectEndpointLabelsQuery):
 class MemgraphSourcePartitionedCardinalityQuery(
     InspectSourcePartitionedCardinalityQuery
 ):
-    """Source-side partitioned cardinality under the Memgraph catalogue name (E41.4)."""
+    """Source-side partitioned cardinality under the Memgraph catalogue name."""
 
     name = "memgraph.inspect.partitioned_cardinality.source"
 
@@ -176,7 +176,7 @@ class MemgraphSourcePartitionedCardinalityQuery(
 class MemgraphTargetPartitionedCardinalityQuery(
     InspectTargetPartitionedCardinalityQuery
 ):
-    """Target-side partitioned cardinality under the Memgraph catalogue name (E41.7)."""
+    """Target-side partitioned cardinality under the Memgraph catalogue name."""
 
     name = "memgraph.inspect.partitioned_cardinality.target"
 

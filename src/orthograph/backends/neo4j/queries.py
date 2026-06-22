@@ -388,7 +388,7 @@ _PARTITIONED_PLACEHOLDER_IDENTIFIERS = {
 
 
 def _register_partitioned_cardinality(catalogue: QueryCatalogue) -> None:
-    """Register both per-side partitioned cardinality queries (E41.7).
+    """Register both per-side partitioned cardinality queries.
 
     Source and target are always registered together so every strategy catalogue
     (APOC / Cypher / SCHEMA) exposes the symmetric pair — a both-endpoint

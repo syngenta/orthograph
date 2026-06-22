@@ -26,53 +26,54 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 
 ## Epics
 
-| Epic | Title | Priority | Status |
-|------|-------|----------|--------|
-| E1 | API Ergonomics & Developer Experience | High | planned |
-| E2 | Code Deduplication & Internal Quality | Medium | planned |
-| E3 | Documentation & Onboarding | High | planned |
-| E4 | Extension Robustness & Consistency | Medium | planned |
-| E5 | Visualization Package | High | **done** (2026-04-15) |
-| E6 | Cypher Query Catalogue | — | **RETIRED → E16** |
-| E7 | Pilot Readiness (gate) | High | planned |
-| E8 | GQLAlchemy Query Catalogue | High | planned (blocked by E16) |
-| E9 | GQLAlchemy Client Review | High | planned |
-| E10 | Connection Ownership Audit | High | planned |
-| E11 | Auto-Generated CRUD Operations | Medium | planned (E16 + E17 done — unblocked) |
-| E12 | Shared Catalogue Interface Extraction | — | **RETIRED → E16** |
-| E13 | Typed Query Catalogue Contract | — | **RETIRED → E16** |
-| E14 | SQLAlchemy Backend Extension | Low | planned (not blocking — see E14 note) |
-| E15 | Typed Cypher Catalogue Backend | — | **RETIRED → E16** |
-| E16 | Query Catalogue — Typed Contract, Cypher Backend, Registry | High | **done** (2026-06-10) |
-| E17 | CypherGenerator — Injection Hardening, Typed-Query Realignment & Inspector Alignment | High | **done** (2026-06-10) |
-| E18 | Validation Correctness | High | planned |
-| E19 | YAML Query Authoring — Scoping and Decision | Medium | planned (blocked by E16; needs team scoping session) |
-| E20 | Technical Debt | Medium | planned (independent; cross-cutting) |
-| E21 | Technical Debt — E2E Test Activation & Configuration | — | **RETIRED → E28** |
-| E22 | E2E Test Coverage Audit & Shared-Contract Test Layer | — | **RETIRED → E28** |
-| E23 | Inspector Backend-Behaviour Injection Interface | Medium | **RETIRED → E25** (the `api.database.inspect` + `CypherInspector` + `backends/loader` seam delivers E23's substance; ADR-011) |
-| E24 | Synthetic Graph Data Generation | Medium | planned (was blocked by E23; now reads the GraphProfile contract directly — re-path via E25) |
-| E25 | Capability Seams & Vendor-Backend Isolation (Refactor) | High | **done** (2026-06-11; branch `architecture-refactoring`; superseded parts of E2/E4/E9/E10/E22/E23 — see ADR-011) |
-| E26 | CI Containerised E2E — Live-Database Tests in the Pipeline | — | **RETIRED → E28** |
-| E27 | Symmetric Comparison — Compare Any Two Graph Descriptions | Medium | **done** (2026-06-15) |
-| E28 | Testing Strategy — Activation Harness, Shared-Contract Layer, Shared Fixtures & CI | Medium | planned (independent; consolidates E21+E22+E26; delegation-ready tasks) |
-| E29 | `__uid_field__` Hardening — definition-time validation, nullable rejection, phantom-key fallback removal | Medium | **done** (2026-06-15) |
-| E30 | Query Contract Decisions — E31 precursor decision session | — | **done** (2026-06-16; produced E31) |
-| E31 | Query Contract Ergonomics — Implementation | High | in progress |
-| E32 | Bulk Write Query | Medium | planned |
-| E33 | Query Contract Ergonomics v2 — `row_mapper` / `materialize` alternative + write return expansion | High | planned (blocked by E31; **Q1 superseded by E34 — ADR-025, `row_mapper` rejected; the default-`materialize` alternative was also withdrawn — `materialize` stays explicit**; Q2 superseded by E35; grill via `.agentic/reviews/E33_grill_prompt.md`) |
+| Epic | Title | Priority | Status                                                                                                                                                                                                                                                                                 |
+|------|-------|----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| E1 | API Ergonomics & Developer Experience | High | planned                                                                                                                                                                                                                                                                                |
+| E2 | Code Deduplication & Internal Quality | Medium | planned                                                                                                                                                                                                                                                                                |
+| E3 | Documentation & Onboarding | High | planned                                                                                                                                                                                                                                                                                |
+| E4 | Extension Robustness & Consistency | Medium | planned                                                                                                                                                                                                                                                                                |
+| E5 | Visualization Package | High | **done** (2026-04-15)                                                                                                                                                                                                                                                                  |
+| E6 | Cypher Query Catalogue | — | **RETIRED → E16**                                                                                                                                                                                                                                                                      |
+| E7 | Pilot Readiness (gate) | High | planned                                                                                                                                                                                                                                                                                |
+| E8 | GQLAlchemy Query Catalogue | High | planned (blocked by E16)                                                                                                                                                                                                                                                               |
+| E9 | GQLAlchemy Client Review | High | planned                                                                                                                                                                                                                                                                                |
+| E10 | Connection Ownership Audit | High | planned                                                                                                                                                                                                                                                                                |
+| E11 | Auto-Generated CRUD Operations | Medium | planned (E16 + E17 done — unblocked)                                                                                                                                                                                                                                                   |
+| E12 | Shared Catalogue Interface Extraction | — | **RETIRED → E16**                                                                                                                                                                                                                                                                      |
+| E13 | Typed Query Catalogue Contract | — | **RETIRED → E16**                                                                                                                                                                                                                                                                      |
+| E14 | SQLAlchemy Backend Extension | Low | planned (not blocking — see E14 note)                                                                                                                                                                                                                                                  |
+| E15 | Typed Cypher Catalogue Backend | — | **RETIRED → E16**                                                                                                                                                                                                                                                                      |
+| E16 | Query Catalogue — Typed Contract, Cypher Backend, Registry | High | **done** (2026-06-10)                                                                                                                                                                                                                                                                  |
+| E17 | CypherGenerator — Injection Hardening, Typed-Query Realignment & Inspector Alignment | High | **done** (2026-06-10)                                                                                                                                                                                                                                                                  |
+| E18 | Validation Correctness | High | planned                                                                                                                                                                                                                                                                                |
+| E19 | YAML Query Authoring — Scoping and Decision | Medium | planned (blocked by E16; needs team scoping session)                                                                                                                                                                                                                                   |
+| E20 | Technical Debt | Medium | planned (independent; cross-cutting)                                                                                                                                                                                                                                                   |
+| E21 | Technical Debt — E2E Test Activation & Configuration | — | **RETIRED → E28**                                                                                                                                                                                                                                                                      |
+| E22 | E2E Test Coverage Audit & Shared-Contract Test Layer | — | **RETIRED → E28**                                                                                                                                                                                                                                                                      |
+| E23 | Inspector Backend-Behaviour Injection Interface | Medium | **RETIRED → E25** (the `api.database.inspect` + `CypherInspector` + `backends/loader` seam delivers E23's substance; ADR-011)                                                                                                                                                          |
+| E24 | Synthetic Graph Data Generation | Medium | planned (was blocked by E23; now reads the GraphProfile contract directly — re-path via E25)                                                                                                                                                                                           |
+| E25 | Capability Seams & Vendor-Backend Isolation (Refactor) | High | **done** (2026-06-11; branch `architecture-refactoring`; superseded parts of E2/E4/E9/E10/E22/E23 — see ADR-011)                                                                                                                                                                       |
+| E26 | CI Containerised E2E — Live-Database Tests in the Pipeline | — | **RETIRED → E28**                                                                                                                                                                                                                                                                      |
+| E27 | Symmetric Comparison — Compare Any Two Graph Descriptions | Medium | **done** (2026-06-15)                                                                                                                                                                                                                                                                  |
+| E28 | Testing Strategy — Activation Harness, Shared-Contract Layer, Shared Fixtures & CI | Medium | planned (independent; consolidates E21+E22+E26; delegation-ready tasks)                                                                                                                                                                                                                |
+| E29 | `__uid_field__` Hardening — definition-time validation, nullable rejection, phantom-key fallback removal | Medium | **done** (2026-06-15)                                                                                                                                                                                                                                                                  |
+| E30 | Query Contract Decisions — E31 precursor decision session | — | **done** (2026-06-16; produced E31)                                                                                                                                                                                                                                                    |
+| E31 | Query Contract Ergonomics — Implementation | High | in progress                                                                                                                                                                                                                                                                            |
+| E32 | Bulk Write Query | Medium | planned                                                                                                                                                                                                                                                                                |
+| E33 | Query Contract Ergonomics v2 — `row_mapper` / `materialize` alternative + write return expansion | High | planned (blocked by E31; **Q1 superseded by E34 — ADR-025, `row_mapper` rejected; the default-`materialize` alternative was also withdrawn — `materialize` stays explicit**; Q2 superseded by E35; grill via `.agentic/reviews/E33_grill_prompt.md`)                                   |
 | E34 | RETURN→Output Alignment Correctness & ~~`materialize` Default~~ | High | **partially reverted** (T1+T2 static-alignment **stand and ship**; T3 ADR-025 amended — `row_mapper` stays rejected but the **default `materialize` is withdrawn**; T4 **reverted** — auto-classifying default removed, `materialize` stays an explicit required one-liner; T5/T6 N/A) |
-| E35 | Write Query Return-Row Echo — surface `RETURN` rows from `write()` | High | planned (blocked by E34; ADR-026 gated; supersedes E33 Q2) |
-| E36 | CypherQuery Naming Convergence + Class-Based Query Definitions | Medium | **done** (2026-06-17) |
-| E37 | Simple Cypher Query — Shared Validation, Catalogue Parity, and Executor | Medium | **done** (2026-06-17) |
-| E38 | CypherQuery Signature Collapse — `Params` + `Identifiers` Only | Medium | **done** (2026-06-18; collapsed three parameter representations to single typed source) |
-| E39 | Async Query Runner — `AsyncExecutor` & Caller-Owned Transactions | High | planned (independent; ADR-028; query-runner async for the MP-backend consumer) |
-| E40 | Conditional Cardinality — In-Memory (Phase 1) | High | **done** (2026-06-19; ADR-029; relationship-declared, endpoint-property-discriminated cardinality; in-memory enforcement + `UNVERIFIABLE` on profile) |
-| E41 | Conditional Cardinality — Profiling & Live-DB Enforcement (Phase 2) | Medium | planned (blocked by E40; ADR-030 + ADR-034; partitioned per-pair observed stats as `BoundedDistribution` across 3 backends, on the reshaped model — E45 done) |
-| E42 | Unify Cardinality on UML Notation | Medium | **done** (2026-06-19; ADR-031; `CardinalitySpec.parse`⇄`.notation`, removes `Cardinality.*`/`EXACTLY`, one notation everywhere incl. YAML; `*` canonical for unbounded) |
-| E43 | General Conditional-Cardinality Partitioning | High | **done** (2026-06-19; ADR-032; partition by both endpoints, removes `by_kind`, definition-time guard — closes the silent-wrong-validation hole; coordinate with E42 on models.py) |
-| E44 | Neo4j `db.schema.*` Inspection Strategy — Reproducible Type Detection | Medium | **done** (2026-06-19; ADR-033; three-way APOC→SCHEMA→CYPHER detection; `use_apoc` deprecated in favour of `Neo4jInspectionStrategy` enum; landed before E41) |
-| E45 | GraphProfile Statistical Model & Comparison-Contract Reshape | High | **done** (2026-06-22; ADR-034; shared `BoundedDistribution`, presence-source split + `constraint_required`, bounded value distributions, full comparison matrix non-cardinality rows) |
+| E35 | Write Query Return-Row Echo — surface `RETURN` rows from `write()` | High | planned (blocked by E34; ADR-026 gated; supersedes E33 Q2)                                                                                                                                                                                                                             |
+| E36 | CypherQuery Naming Convergence + Class-Based Query Definitions | Medium | **done** (2026-06-17)                                                                                                                                                                                                                                                                  |
+| E37 | Simple Cypher Query — Shared Validation, Catalogue Parity, and Executor | Medium | **done** (2026-06-17)                                                                                                                                                                                                                                                                  |
+| E38 | CypherQuery Signature Collapse — `Params` + `Identifiers` Only | Medium | **done** (2026-06-18; collapsed three parameter representations to single typed source)                                                                                                                                                                                                |
+| E39 | Async Query Runner — `AsyncExecutor` & Caller-Owned Transactions | High | planned (independent; ADR-028; query-runner async for the MP-backend consumer)                                                                                                                                                                                                         |
+| E40 | Conditional Cardinality — In-Memory (Phase 1) | High | **done** (2026-06-19; ADR-029; relationship-declared, endpoint-property-discriminated cardinality; in-memory enforcement + `UNVERIFIABLE` on profile)                                                                                                                                  |
+| E41 | Conditional Cardinality — Profiling & Live-DB Enforcement (Phase 2) | Medium | **done** (2026-06-22); partitioned per-pair observed stats as `BoundedDistribution` across 3 backends, on the reshaped model — E45 done)                                                                                                                                               |
+| E42 | Unify Cardinality on UML Notation | Medium | **done** (2026-06-19; ADR-031; `CardinalitySpec.parse`⇄`.notation`, removes `Cardinality.*`/`EXACTLY`, one notation everywhere incl. YAML; `*` canonical for unbounded)                                                                                                                |
+| E43 | General Conditional-Cardinality Partitioning | High | **done** (2026-06-19; ADR-032; partition by both endpoints, removes `by_kind`, definition-time guard — closes the silent-wrong-validation hole; coordinate with E42 on models.py)                                                                                                      |
+| E44 | Neo4j `db.schema.*` Inspection Strategy — Reproducible Type Detection | Medium | **done** (2026-06-19; ADR-033; three-way APOC→SCHEMA→CYPHER detection; `use_apoc` deprecated in favour of `Neo4jInspectionStrategy` enum; landed before E41)                                                                                                                           |
+| E45 | GraphProfile Statistical Model & Comparison-Contract Reshape | High | **done** (2026-06-22; ADR-034; shared `BoundedDistribution`, presence-source split + `constraint_required`, bounded value distributions, full comparison matrix non-cardinality rows)                                                                                                  |
+| E46 | Populate `PropertyProfile.observed_type_counts` — Per-Type Value Counts for Prevalence-Aware Type Conformance | Medium | planned (independent; closes ADR-015 B1 TODO + the two `backends/neo4j/inspector.py` TODOs; builds on E44 three-catalogue surface + E45 statistical model — both done; needs ADR scoping session E46.0)                                                                                |
 
 ---
 
@@ -116,6 +117,12 @@ AFTER E40:
   E43  General Conditional-Cardinality Partitioning (ADR-032; partition enforcement by BOTH
        endpoints' discriminators, removes by_kind sugar, definition-time guard — closes the
        silent-wrong-validation hole; coordinate with E42 on models.py)
+
+AFTER E44 + E45 (both done):
+  E46  Populate observed_type_counts (closes ADR-015 B1 TODO + the two backends/neo4j/inspector.py
+       TODOs; new bounded value→type→count aggregation across 3 backends, registered in all three
+       E44 catalogues; refines PropertyTypeMismatchRule from "a wrong type exists" to "how
+       prevalent"; rides E45 bounded-sampling opt-in; E46.0 produces an ADR first)
 
 AFTER E23:
   E24  Synthetic Graph Data Generation (profile-driven mode requires consistent GraphProfile
@@ -216,7 +223,8 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E34 — RETURN→Output Alignment Correctness & `materialize` Default](active_epics/E34_return_output_alignment_correctness.md)
 - [E35 — Write Query Return-Row Echo](active_epics/E35_write_query_return_rows.md)
 - [E39 — Async Query Runner](active_epics/E39_async_query_runner.md)
-- [E41 — Conditional Cardinality — Profiling & Live-DB Enforcement (Phase 2)](active_epics/E41_conditional_cardinality_profiling.md)
+- [E41 — Conditional Cardinality — Profiling & Live-DB Enforcement (Phase 2)](archived_epics/E41_conditional_cardinality_profiling.md)
+- [E46 — Populate `observed_type_counts` — Per-Type Value Counts](active_epics/E46_observed_type_counts_population.md)
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 
