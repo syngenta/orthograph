@@ -78,6 +78,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E48 | Configuration — Thread Tunable Knobs Through the Public API | Medium | planned (**blocked by the not-yet-created new-API epic**; E48.0 ADR-036 may begin alongside the API decision; exposes E46's `severity_threshold` + inspector `value_counts_top_n`/`strategy`; no global settings/file/env layer this phase) |
 | E49 | Partitioned Cardinality — Profile Rendering & One-Sided Discriminator Extraction | Medium | planned (independent; T1 renders `*_partitioned_cardinality` in `profile_to_text`; T2 widens profiler `_extract_discriminators` for one-sided discriminators to mirror the ADR-032 enforcement path — surfaced by the 2026-06-24 MatProt pilot profiling exercise) |
 | E50 | Endpoint-Aware Relationship Identity | High | planned (independent; ADR-037; relationship identity becomes the `(source, label, target)` triple — fixes the observed-side blending of distinct shapes; breaking across declaration/profiling/comparison/Cypher + YAML format; supersedes the identity implication of ADR-014, amends ADR-015 §address-space + ADR-034 §7/§8; delegation-ready tasks Opus/Sonnet/Haiku) |
+| E51 | Multi-Label Endpoint Relationship Shapes | Medium | planned (depends on E50; ADR-038 decision-only; scopes and resolves asymmetry: observed side can discover multi-label endpoint nodes (causing double-count bugs), but declared side cannot declare them; decision pending: first-class multi-label declaration vs. detect-and-harden-warn/error; E51.0 = scoping session + ADR) |
 
 ---
 
@@ -106,10 +107,15 @@ INDEPENDENT — can start immediately:
         APOC→db.schema.*→pure-Cypher; backend-scoped to backends/neo4j/; landed before E41)
         ✓ done (2026-06-19)
   E50  Endpoint-Aware Relationship Identity (independent; ADR-037; relationship identity becomes
-        the (source, label, target) triple — fixes the observed-side blending of distinct shapes;
-        breaking across graph_definition/ + graph_profile/ + comparison/ + cypher/ + io/yaml;
-        supersedes the identity implication of ADR-014, amends ADR-015 §address-space and
-        ADR-034 §7/§8; E50.0 writes ADR-037 first; delegation-ready Opus/Sonnet/Haiku)
+         the (source, label, target) triple — fixes the observed-side blending of distinct shapes;
+         breaking across graph_definition/ + graph_profile/ + comparison/ + cypher/ + io/yaml;
+         supersedes the identity implication of ADR-014, amends ADR-015 §address-space and
+         ADR-034 §7/§8; E50.0 writes ADR-037 first; delegation-ready Opus/Sonnet/Haiku)
+   E51  Multi-Label Endpoint Relationship Shapes (depends on E50; ADR-038 scoping decision; observed
+         side can discover multi-label endpoint nodes (causing double-count bugs in profiles), but
+         declared side cannot declare them (NodeModel.__label__ is scalar); decision pending:
+         first-class multi-label declaration vs. detect-and-harden-warn/error; E51.0 = scoping
+         session + ADR; see epic file for open questions)
 
 AFTER E40:
    E45  GraphProfile Statistical Model & Comparison-Contract Reshape (ADR-034; shared
@@ -239,6 +245,7 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E48 — Configuration — Thread Tunable Knobs Through the Public API](active_epics/E48_configuration.md)
 - [E49 — Partitioned Cardinality — Profile Rendering & One-Sided Discriminator Extraction](active_epics/E49_partitioned_cardinality_rendering_and_extraction.md)
 - [E50 — Endpoint-Aware Relationship Identity](active_epics/E50_endpoint_aware_relationship_identity.md)
+- [E51 — Multi-Label Endpoint Relationship Shapes](active_epics/E51_multi_label_endpoint_relationship_shapes.md)
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 

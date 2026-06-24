@@ -238,7 +238,7 @@ def test_chemistry_inspect_and_validate_nx(chemistry_model: GraphDefinition):
     profile = inspector.inspect(g)
 
     assert "Molecule" in profile.node_labels
-    assert "REACTANT" in profile.relationship_types
+    assert "Molecule:REACTANT:ChemicalEquation" in profile.relationship_types
 
     result = compare_profile_to_definition(profile, chemistry_model)
     # This will have warnings/errors for missing types (not all types in graph)

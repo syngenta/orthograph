@@ -15,7 +15,7 @@ from orthograph.graph_definition.models import (
     PropMatch,
     RelationshipModel,
 )
-from orthograph.graph_profile.models import PartitionKey
+from orthograph.graph_profile.models import PartitionKey, RelTypeKey
 
 
 def _make_graph() -> nx.MultiDiGraph[str]:
@@ -128,10 +128,16 @@ def test_inspect_relationships():
 
     profile = NetworkxInspector().inspect(g)
 
-    assert "ACTED_IN" in profile.rel_type_profiles
-    assert "DIRECTED" in profile.rel_type_profiles
-    assert profile.rel_type_profiles["ACTED_IN"].count == 2
-    assert profile.rel_type_profiles["DIRECTED"].count == 1
+    acted_in = str(
+        RelTypeKey(source_label="Person", label="ACTED_IN", target_label="Movie")
+    )
+    directed = str(
+        RelTypeKey(source_label="Person", label="DIRECTED", target_label="Movie")
+    )
+    assert acted_in in profile.rel_type_profiles
+    assert directed in profile.rel_type_profiles
+    assert profile.rel_type_profiles[acted_in].count == 2
+    assert profile.rel_type_profiles[directed].count == 1
 
 
 def test_inspect_rel_source_target_labels():
@@ -141,10 +147,94 @@ def test_inspect_rel_source_target_labels():
     g.add_edge("a", "m1", __label__="ACTED_IN", role="Lead")
 
     profile = NetworkxInspector().inspect(g)
-    rel = profile.rel_type_profiles["ACTED_IN"]
+    acted_in = str(
+        RelTypeKey(source_label="Person", label="ACTED_IN", target_label="Movie")
+    )
+    rel = profile.rel_type_profiles[acted_in]
 
-    assert rel.source_labels == {"Person"}
-    assert rel.target_labels == {"Movie"}
+    assert rel.source_label == "Person"
+    assert rel.target_label == "Movie"
+
+
+def test_inspect_distinct_profile_per_endpoint_shape():
+    """Same label, different endpoints → two distinct, un-blended profiles (E50.4)."""
+    g = _make_graph()
+    # Person-KNOWS->Person (3 edges from p1) and Company-KNOWS->Company (1 edge).
+    g.add_node("p1", __label__="Person", name="Alice")
+    g.add_node("p2", __label__="Person", name="Bob")
+    g.add_node("p3", __label__="Person", name="Cara")
+    g.add_node("p4", __label__="Person", name="Dan")
+    g.add_node("c1", __label__="Company", name="Acme")
+    g.add_node("c2", __label__="Company", name="Globex")
+    g.add_edge("p1", "p2", __label__="KNOWS", weight=1)
+    g.add_edge("p1", "p3", __label__="KNOWS", weight=2)
+    g.add_edge("p1", "p4", __label__="KNOWS", weight=3)
+    g.add_edge("c1", "c2", __label__="KNOWS", weight=9)
+
+    profile = NetworkxInspector().inspect(g)
+    person = str(
+        RelTypeKey(source_label="Person", label="KNOWS", target_label="Person")
+    )
+    company = str(
+        RelTypeKey(source_label="Company", label="KNOWS", target_label="Company")
+    )
+
+    # Two distinct profiles, one per endpoint shape.
+    assert profile.relationship_types == {person, company}
+
+    # Counts are NOT blended.
+    assert profile.rel_type_profiles[person].count == 3
+    assert profile.rel_type_profiles[company].count == 1
+
+    # cardinality_stats are NOT blended (Person side: one source with degree 3).
+    person_stats = profile.rel_type_profiles[person].cardinality_stats
+    company_stats = profile.rel_type_profiles[company].cardinality_stats
+    assert person_stats is not None
+    assert person_stats.max == 3
+    assert company_stats is not None
+    assert company_stats.max == 1
+
+    # property_profiles are NOT blended (Person 'weight' present 3×, Company 1×).
+    assert (
+        profile.rel_type_profiles[person].property_profiles["weight"].present_count == 3
+    )
+    assert (
+        profile.rel_type_profiles[company].property_profiles["weight"].present_count
+        == 1
+    )
+
+    # Scalar endpoints are correct on each.
+    assert profile.rel_type_profiles[person].source_label == "Person"
+    assert profile.rel_type_profiles[person].target_label == "Person"
+    assert profile.rel_type_profiles[company].source_label == "Company"
+    assert profile.rel_type_profiles[company].target_label == "Company"
+
+
+def test_inspect_single_shape_one_profile_regression():
+    """A graph with only one endpoint shape still yields one profile (regression)."""
+    g = _make_graph()
+    g.add_node("p1", __label__="Person", name="Alice")
+    g.add_node("p2", __label__="Person", name="Bob")
+    g.add_edge("p1", "p2", __label__="KNOWS")
+
+    profile = NetworkxInspector().inspect(g)
+    person = str(
+        RelTypeKey(source_label="Person", label="KNOWS", target_label="Person")
+    )
+    assert profile.relationship_types == {person}
+    assert profile.rel_type_profiles[person].count == 1
+
+
+def test_inspect_edge_with_unlabelled_endpoint_skipped():
+    """An edge whose endpoint lacks __label__ cannot form a triple → skipped."""
+    g = _make_graph()
+    g.add_node("a", __label__="Person", name="Alice")
+    g.add_node("b")  # no __label__
+    g.add_edge("a", "b", __label__="KNOWS")
+
+    profile = NetworkxInspector().inspect(g)
+    # No valid identity triple → no relationship profile.
+    assert profile.rel_type_profiles == {}
 
 
 def test_inspect_cardinality_stats():
@@ -161,7 +251,10 @@ def test_inspect_cardinality_stats():
     g.add_edge("b", "m1", __label__="ACTED_IN")
 
     profile = NetworkxInspector().inspect(g)
-    stats = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
+    acted_in = str(
+        RelTypeKey(source_label="Person", label="ACTED_IN", target_label="Movie")
+    )
+    stats = profile.rel_type_profiles[acted_in].cardinality_stats
 
     assert stats is not None
     assert stats.min == 1
@@ -194,18 +287,27 @@ def test_inspect_full_graph():
     assert profile.node_type_profiles["City"].count == 1
 
     # Relationship profiles
-    assert set(profile.relationship_types) == {"ACTED_IN", "DIRECTED", "LIVES_IN"}
-    assert profile.rel_type_profiles["ACTED_IN"].count == 3
-    assert profile.rel_type_profiles["DIRECTED"].count == 1
-    assert profile.rel_type_profiles["LIVES_IN"].count == 1
+    acted_in = str(
+        RelTypeKey(source_label="Person", label="ACTED_IN", target_label="Movie")
+    )
+    directed = str(
+        RelTypeKey(source_label="Person", label="DIRECTED", target_label="Movie")
+    )
+    lives_in = str(
+        RelTypeKey(source_label="Person", label="LIVES_IN", target_label="City")
+    )
+    assert set(profile.relationship_types) == {acted_in, directed, lives_in}
+    assert profile.rel_type_profiles[acted_in].count == 3
+    assert profile.rel_type_profiles[directed].count == 1
+    assert profile.rel_type_profiles[lives_in].count == 1
 
     # Property profile on relationships
-    acted_in_props = profile.rel_type_profiles["ACTED_IN"].property_profiles
+    acted_in_props = profile.rel_type_profiles[acted_in].property_profiles
     assert "role" in acted_in_props
     assert acted_in_props["role"].present_count == 3
 
     # Cardinality
-    acted_in_stats = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
+    acted_in_stats = profile.rel_type_profiles[acted_in].cardinality_stats
     assert acted_in_stats is not None
     assert acted_in_stats.min == 1  # Bob has 1
     assert acted_in_stats.max == 2  # Alice has 2
@@ -380,7 +482,10 @@ def test_inspect_observed_type_counts_on_relationships():
     g.add_edge("a", "m2", __label__="ACTED_IN", role="Extra")
 
     profile = NetworkxInspector().inspect(g)
-    role = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
+    acted_in = str(
+        RelTypeKey(source_label="Person", label="ACTED_IN", target_label="Movie")
+    )
+    role = profile.rel_type_profiles[acted_in].property_profiles["role"]
 
     assert role.observed_type_counts == {"str": 2}
 
@@ -478,7 +583,10 @@ def test_inspect_partitioned_cardinality_deciding_scenario():
     g.add_edge("op1", "s3", __label__="HAS_OUTPUT")
 
     profile = NetworkxInspector().inspect(g, graph_definition=gd)
-    partitions = profile.rel_type_profiles["HAS_OUTPUT"].source_partitioned_cardinality
+    has_output = str(
+        RelTypeKey(source_label="Operation", label="HAS_OUTPUT", target_label="Sample")
+    )
+    partitions = profile.rel_type_profiles[has_output].source_partitioned_cardinality
 
     assert partitions is not None
     sub_sub = str(PartitionKey(source_value="subsampling", target_value="subsampling"))
@@ -503,7 +611,10 @@ def test_inspect_partitioned_cardinality_constant_is_none():
     g.add_edge("op1", "s1", __label__="HAS_OUTPUT")
 
     profile = NetworkxInspector().inspect(g, graph_definition=gd)
-    rel = profile.rel_type_profiles["HAS_OUTPUT"]
+    has_output = str(
+        RelTypeKey(source_label="Operation", label="HAS_OUTPUT", target_label="Sample")
+    )
+    rel = profile.rel_type_profiles[has_output]
 
     assert rel.source_partitioned_cardinality is None
     assert rel.target_partitioned_cardinality is None
@@ -520,7 +631,10 @@ def test_inspect_partitioned_cardinality_without_definition_is_none():
 
     profile = NetworkxInspector().inspect(g)
 
-    rel = profile.rel_type_profiles["HAS_OUTPUT"]
+    has_output = str(
+        RelTypeKey(source_label="Operation", label="HAS_OUTPUT", target_label="Sample")
+    )
+    rel = profile.rel_type_profiles[has_output]
     assert rel.source_partitioned_cardinality is None
     assert rel.target_partitioned_cardinality is None
 
@@ -543,7 +657,10 @@ def test_inspect_partitioned_cardinality_zero_output_partition_absent():
     g.add_edge("op1", "s2", __label__="HAS_OUTPUT")
 
     profile = NetworkxInspector().inspect(g, graph_definition=gd)
-    partitions = profile.rel_type_profiles["HAS_OUTPUT"].source_partitioned_cardinality
+    has_output = str(
+        RelTypeKey(source_label="Operation", label="HAS_OUTPUT", target_label="Sample")
+    )
+    partitions = profile.rel_type_profiles[has_output].source_partitioned_cardinality
 
     assert partitions is not None
     sub_sub = str(PartitionKey(source_value="subsampling", target_value="subsampling"))
@@ -602,7 +719,10 @@ def test_inspect_partitioned_cardinality_target_side():
     g.add_edge("p2", "a1", __label__="PRODUCES")
 
     profile = NetworkxInspector().inspect(g, graph_definition=gd)
-    rtp = profile.rel_type_profiles["PRODUCES"]
+    produces = str(
+        RelTypeKey(source_label="Producer", label="PRODUCES", target_label="Artifact")
+    )
+    rtp = profile.rel_type_profiles[produces]
     partitions = rtp.target_partitioned_cardinality
 
     assert partitions is not None
@@ -678,7 +798,10 @@ def test_inspect_partitioned_cardinality_both_sides():
     g.add_edge("op1", "a2", __label__="MAKES")
 
     profile = NetworkxInspector().inspect(g, graph_definition=gd)
-    rtp = profile.rel_type_profiles["MAKES"]
+    makes = str(
+        RelTypeKey(source_label="Operation", label="MAKES", target_label="Sample")
+    )
+    rtp = profile.rel_type_profiles[makes]
     pair = str(PartitionKey(source_value="assembler", target_value="final"))
 
     # Source side: op1 has outgoing degree 2 in the (assembler, final) partition.

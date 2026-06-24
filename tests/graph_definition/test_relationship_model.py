@@ -37,6 +37,26 @@ def test_relationship_model_simple():
     assert ActedIn.__target_cardinality__ == CardinalitySpec(min=0, max=None)
 
 
+def test_relationship_model_rel_key():
+    """rel_key() composes the identity triple as ``source:LABEL:target`` (ADR-037)."""
+
+    class ActedIn(RelationshipModel):
+        __label__ = "ACTED_IN"
+        __source_label__ = "Person"
+        __target_label__ = "Movie"
+
+    assert ActedIn.rel_key() == "Person:ACTED_IN:Movie"
+
+    class ActedInCity(RelationshipModel):
+        __label__ = "ACTED_IN"
+        __source_label__ = "Person"
+        __target_label__ = "City"
+
+    # Same label, different endpoints → distinct keys.
+    assert ActedInCity.rel_key() == "Person:ACTED_IN:City"
+    assert ActedIn.rel_key() != ActedInCity.rel_key()
+
+
 def test_relationship_model_with_cardinality():
     class LivesIn(RelationshipModel):
         __label__ = "LIVES_IN"

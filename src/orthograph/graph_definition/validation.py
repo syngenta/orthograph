@@ -22,8 +22,6 @@ from orthograph.graph_definition.models import (
 
 # Type alias for the (label, src_uid, tgt_uid, props) tuple used internally
 _RelRecord = tuple[str, str, str, dict[str, Any]]
-
-# Degree counters: maps (uid, rel_label) → count
 _DegreeCounts = dict[tuple[str, str], int]
 
 # A partition value: the absolute (source-label-node, target-label-node)
@@ -53,6 +51,21 @@ class _IndexedNode:
 # ---------------------------------------------------------------------------
 # Input unpacking helpers
 # ---------------------------------------------------------------------------
+
+
+def _rel_type_by_label(
+    graph_definition: GraphDefinition, label: str
+) -> type[RelationshipModel] | None:
+    """Resolve a relationship type from a bare label seen on a data record.
+
+    Runtime relationship records carry only the bare ``__label__`` (endpoints are
+    not yet threaded through this validator).  Identity is
+    the ``(source, label, target)`` triple, so a label may map to more
+    than one declared shape; this returns the first declared shape with the
+    label, preserving the single-shape behaviour every current caller relies on.
+    """
+    shapes = graph_definition.get_relationship_types_by_label(label)
+    return shapes[0] if shapes else None
 
 
 def _unpack_node(
@@ -610,7 +623,7 @@ def _partition_counts(
     partitioned: _PartitionCounts = defaultdict(lambda: defaultdict(int))
 
     for label, src_uid, tgt_uid, _ in rel_records:
-        rel_type = graph_definition.get_relationship_type(label)
+        rel_type = _rel_type_by_label(graph_definition, label)
         if rel_type is None or not rel_type.__directed__:
             continue
         src_node = node_index.get(src_uid)
@@ -656,7 +669,7 @@ def _count_rel_degrees(
     for label, src_uid, tgt_uid, _ in rel_records:
         outgoing[(src_uid, label)] += 1
         incoming[(tgt_uid, label)] += 1
-        rel_type = graph_definition.get_relationship_type(label)
+        rel_type = _rel_type_by_label(graph_definition, label)
         if rel_type and not rel_type.__directed__:
             undirected[(src_uid, label)] += 1
             undirected[(tgt_uid, label)] += 1
@@ -869,7 +882,7 @@ class GraphValidator:
                 )
                 continue
 
-            rel_type = self.graph_definition.get_relationship_type(label)
+            rel_type = _rel_type_by_label(self.graph_definition, label)
             if rel_type is None:
                 result.add(
                     ValidationIssue(
@@ -923,7 +936,7 @@ class GraphValidator:
         result = ValidationResult()
 
         for label, src_uid, tgt_uid, _ in rel_records:
-            rel_type = self.graph_definition.get_relationship_type(label)
+            rel_type = _rel_type_by_label(self.graph_definition, label)
             if rel_type is None:
                 continue
 

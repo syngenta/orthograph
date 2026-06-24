@@ -6,6 +6,28 @@ from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
+from orthograph.graph_definition.identity import RelTypeKey
+
+
+__all__ = [
+    "RelTypeKey",  # re-exported for the observed side
+    "BoundedDistribution",
+    "CardinalityStats",
+    "PartitionKey",
+    "PropertyProfile",
+    "ConstraintInfo",
+    "NodeTypeProfile",
+    "RelationshipTypeProfile",
+    "GraphProfile",
+    "NodeLabelIdentifiers",
+    "RelTypeIdentifiers",
+    "BareRelTypeIdentifiers",
+    "CardinalityIdentifiers",
+    "PartitionedCardinalityIdentifiers",
+    "EndpointLabelsRow",
+    "PartitionedCardinalityRow",
+]
+
 
 class BoundedDistribution(BaseModel):
     """A bounded statistical summary with an honest truncation signal.
@@ -178,14 +200,24 @@ class NodeTypeProfile(BaseModel):
 
 
 class RelationshipTypeProfile(BaseModel):
-    """Observed profile of a single relationship type."""
+    """Observed profile of a single relationship type.
+
+    A relationship type is identified by the triple
+    ``(source_label, label, target_label)``, so a profile describes exactly one
+    such shape: the endpoints are **scalar**, not blended ``set`` fields.
+    ``rel_type`` retains the bare label for display and grouping.
+    """
 
     model_config = {"frozen": True}
 
     rel_type: str
     count: int
-    source_labels: set[str] = Field(default_factory=set)
-    target_labels: set[str] = Field(default_factory=set)
+    source_label: str = Field(
+        description="The single source node label of this relationship shape."
+    )
+    target_label: str = Field(
+        description="The single target node label of this relationship shape."
+    )
     property_profiles: dict[str, PropertyProfile] = Field(default_factory=dict)
     cardinality_stats: CardinalityStats | None = None
     source_partitioned_cardinality: dict[str, BoundedDistribution] | None = Field(
@@ -231,7 +263,15 @@ class GraphProfile(BaseModel):
     source: str
     timestamp: datetime = Field(default_factory=datetime.now)
     node_type_profiles: dict[str, NodeTypeProfile] = Field(default_factory=dict)
-    rel_type_profiles: dict[str, RelationshipTypeProfile] = Field(default_factory=dict)
+    rel_type_profiles: dict[str, RelationshipTypeProfile] = Field(
+        default_factory=dict,
+        description=(
+            "Relationship-type profiles keyed by ``str(RelTypeKey)`` "
+            "(``source:LABEL:target``) — relationship identity is the endpoint "
+            "triple, so same-label/different-endpoint shapes are "
+            "distinct entries."
+        ),
+    )
     constraints: list[ConstraintInfo] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -241,6 +281,11 @@ class GraphProfile(BaseModel):
 
     @property
     def relationship_types(self) -> set[str]:
+        """The set of ``RelTypeKey`` strings (identity triples) profiled.
+
+        Keys, not bare labels: a label may appear under several endpoint shapes.
+        Consumers recover the parts via :meth:`RelTypeKey.parse`.
+        """
         return set(self.rel_type_profiles.keys())
 
 
@@ -256,16 +301,41 @@ class NodeLabelIdentifiers(BaseModel):
 
 
 class RelTypeIdentifiers(BaseModel):
-    """Identifier group for queries that filter by a single relationship type."""
+    """Identifier group for queries that filter one relationship *shape*.
 
+    A relationship type is identified by its endpoint triple, so the
+    per-shape relationship queries filter on both endpoint labels in addition to
+    the bare relationship type.  ``source_label`` / ``target_label`` are spliced
+    through ``validate_identifier`` (label grammar) like every other identifier.
+    """
+
+    source_label: str  # kind = "label"
     rel_type: str  # name ends in _rel_type -> kind = "relationship type"
+    target_label: str  # kind = "label"
+
+
+class BareRelTypeIdentifiers(BaseModel):
+    """Identifier group for queries scoped to a bare relationship type only.
+
+    Used by endpoint-pair **discovery** (``InspectEndpointLabelsQuery``), which
+    must match every ``(src)-[:REL]->(tgt)`` instance *before* the endpoint pairs
+    are known.  The per-shape scans then use :class:`RelTypeIdentifiers`.
+    """
+
+    rel_type: str  # kind = "relationship type"
 
 
 class CardinalityIdentifiers(BaseModel):
-    """Identifier group for the cardinality query (label + rel_type)."""
+    """Identifier group for the per-shape cardinality query.
+
+    Endpoint-aware: the cardinality scan is anchored on the source
+    ``label`` and filtered to edges whose target carries ``target_label``, so the
+    degree distribution belongs to exactly one ``(source, rel, target)`` shape.
+    """
 
     label: str
     rel_type: str  # kind = "relationship type"
+    target_label: str  # kind = "label"
 
 
 class PartitionedCardinalityIdentifiers(BaseModel):
@@ -274,10 +344,16 @@ class PartitionedCardinalityIdentifiers(BaseModel):
     ``source_discriminator`` and ``target_discriminator`` are **property names**
     (e.g. ``"kind"``); like every spliced identifier they pass through
     ``validate_identifier`` (validate-and-reject) — never f-stringed.
+
+    Endpoint-aware: ``endpoint_label`` filters the *other* endpoint of
+    the relationship to the discovered shape (the anchored side is ``label``), so
+    the breakdown belongs to one ``(source, rel, target)`` shape rather than a
+    bare label blended across endpoint pairs.
     """
 
     label: str
     rel_type: str  # kind = "relationship type"
+    endpoint_label: str  # the non-anchored endpoint label (kind = "label")
     source_discriminator: str  # property name (kind = "label" grammar)
     target_discriminator: str  # property name (kind = "label" grammar)
 

@@ -15,6 +15,7 @@ Two concrete adapters are provided:
 from typing import Any, Protocol, runtime_checkable
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
+from orthograph.graph_definition.identity import RelTypeKey
 from orthograph.graph_definition.property_spec import TypeInfo
 from orthograph.graph_profile.models import GraphProfile
 
@@ -33,15 +34,21 @@ class GraphView(Protocol):
 
     def node_labels(self) -> set[str]: ...
 
-    def relationship_types(self) -> set[str]: ...
+    def relationship_types(self) -> set[str]:
+        """The set of relationship-type identity keys (``str(RelTypeKey)``).
+
+        The relationship address space is keyed by the
+        ``(source, label, target)`` identity triple, not the bare label.
+        """
+        ...
 
     def node_at(self, label: str) -> Any | None:
         """Side-object for a node-label address
         (e.g. a NodeModel subclass or NodeTypeProfile)."""
         ...
 
-    def relationship_at(self, rel_type: str) -> Any | None:
-        """Side-object for a rel-type address
+    def relationship_at(self, rel_key: str) -> Any | None:
+        """Side-object for a rel-type address keyed by ``str(RelTypeKey)``
         (e.g. a RelationshipModel subclass or RelationshipTypeProfile)."""
         ...
 
@@ -50,9 +57,9 @@ class GraphView(Protocol):
         all properties of the given node label."""
         ...
 
-    def relationship_properties(self, rel_type: str) -> dict[str, Any]:
-        """Mapping of prop_name → side-object for
-        all properties of the given rel type."""
+    def relationship_properties(self, rel_key: str) -> dict[str, Any]:
+        """Mapping of prop_name → side-object for all properties of the rel
+        type identified by ``str(RelTypeKey)``."""
         ...
 
 
@@ -67,13 +74,16 @@ class DefinitionView:
         return self._gd.node_labels
 
     def relationship_types(self) -> set[str]:
-        return self._gd.relationship_labels
+        return self._gd.relationship_keys
 
     def node_at(self, label: str) -> Any | None:
         return self._gd.get_node_type(label)
 
-    def relationship_at(self, rel_type: str) -> Any | None:
-        return self._gd.get_relationship_type(rel_type)
+    def relationship_at(self, rel_key: str) -> Any | None:
+        key = RelTypeKey.parse(rel_key)
+        return self._gd.get_relationship_type(
+            key.source_label, key.label, key.target_label
+        )
 
     def node_properties(self, label: str) -> dict[str, Any]:
         model_type = self._gd.get_node_type(label)
@@ -81,8 +91,11 @@ class DefinitionView:
             return {}
         return model_type.get_property_specs()
 
-    def relationship_properties(self, rel_type: str) -> dict[str, Any]:
-        model_type = self._gd.get_relationship_type(rel_type)
+    def relationship_properties(self, rel_key: str) -> dict[str, Any]:
+        key = RelTypeKey.parse(rel_key)
+        model_type = self._gd.get_relationship_type(
+            key.source_label, key.label, key.target_label
+        )
         if model_type is None:
             return {}
         return model_type.get_property_specs()
@@ -104,8 +117,8 @@ class ProfileView:
     def node_at(self, label: str) -> Any | None:
         return self._profile.node_type_profiles.get(label)
 
-    def relationship_at(self, rel_type: str) -> Any | None:
-        return self._profile.rel_type_profiles.get(rel_type)
+    def relationship_at(self, rel_key: str) -> Any | None:
+        return self._profile.rel_type_profiles.get(rel_key)
 
     def node_properties(self, label: str) -> dict[str, Any]:
         node_profile = self._profile.node_type_profiles.get(label)
@@ -113,8 +126,8 @@ class ProfileView:
             return {}
         return node_profile.property_profiles
 
-    def relationship_properties(self, rel_type: str) -> dict[str, Any]:
-        rel_profile = self._profile.rel_type_profiles.get(rel_type)
+    def relationship_properties(self, rel_key: str) -> dict[str, Any]:
+        rel_profile = self._profile.rel_type_profiles.get(rel_key)
         if rel_profile is None:
             return {}
         return rel_profile.property_profiles

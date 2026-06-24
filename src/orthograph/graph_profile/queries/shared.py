@@ -9,13 +9,13 @@ from typing import Any
 from orthograph.cypher.base_models import CypherReadQuery
 from orthograph.cypher.bindings import NoParams
 from orthograph.graph_profile.models import (
+    BareRelTypeIdentifiers,
     BoundedDistribution,
     CardinalityIdentifiers,
     CardinalityStats,
     EndpointLabelsRow,
     PartitionedCardinalityIdentifiers,
     PartitionedCardinalityRow,
-    RelTypeIdentifiers,
 )
 
 
@@ -27,7 +27,13 @@ def coerce_types(raw_types: Any) -> list[str]:
 
 
 class InspectCardinalityQuery(CypherReadQuery[NoParams, CardinalityStats]):
-    """Cardinality statistics for one (label, rel_type) pair."""
+    """Cardinality statistics for one ``(source, rel_type, target)`` shape.
+
+    Endpoint-aware: anchors on the source ``<<label>>`` and counts each
+    source node's outgoing degree of ``<<rel_type>>`` **into a target carrying
+    ``<<target_label>>``**, so the degree distribution belongs to exactly one
+    relationship shape rather than a bare label blended across endpoint pairs.
+    """
 
     Params = NoParams
     Output = CardinalityStats
@@ -35,7 +41,7 @@ class InspectCardinalityQuery(CypherReadQuery[NoParams, CardinalityStats]):
     Identifiers = CardinalityIdentifiers
     cypher_template = (
         "MATCH (n:`<<label>>`)"
-        " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->()"
+        " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->(m:`<<target_label>>`)"
         " WITH n, count(r) AS degree"
         " RETURN min(degree) AS min_degree, max(degree) AS max_degree,"
         " avg(degree) AS avg_degree, count(n) AS sample_size"
@@ -51,12 +57,18 @@ class InspectCardinalityQuery(CypherReadQuery[NoParams, CardinalityStats]):
 
 
 class InspectEndpointLabelsQuery(CypherReadQuery[NoParams, EndpointLabelsRow]):
-    """Collect distinct source and target labels for a relationship type."""
+    """Discover the distinct ``(source_labels, target_labels)`` pairs for a rel type.
+
+    Matches every instance of the bare ``<<rel_type>>`` and returns the distinct
+    endpoint-label-list pairs. The inspector then fans the per-shape count /
+    property / cardinality scans out over each discovered
+    ``(source_label, target_label)`` pair.
+    """
 
     Params = NoParams
     Output = EndpointLabelsRow
     name = "inspect.endpoint_labels"
-    Identifiers = RelTypeIdentifiers
+    Identifiers = BareRelTypeIdentifiers
     cypher_template = (
         "MATCH (src)-[r:`<<rel_type>>`]->(tgt)"
         " RETURN DISTINCT labels(src) AS source_labels, labels(tgt) AS target_labels"
@@ -96,15 +108,16 @@ class InspectSourcePartitionedCardinalityQuery(
     """Per-pair cardinality for the **source side**.
 
     Anchors on the source ``<<label>>`` and counts each source node's **outgoing**
-    degree of ``<<rel_type>>``, grouped by the absolute
-    ``(source_discriminator, target_discriminator)`` pair.  Source
-    nodes with no such edge produce a ``(sk, null)`` zero-degree partition
-    (suppressed by the inspector for parity with NetworkX).
+    degree of ``<<rel_type>>`` into a target carrying ``<<endpoint_label>>``,
+    grouped by the absolute ``(source_discriminator, target_discriminator)`` pair.
+    The ``<<endpoint_label>>`` filter restricts the breakdown to one endpoint
+    shape. Source nodes with no such edge produce a ``(sk, null)``
+    zero-degree partition (suppressed by the inspector for parity with NetworkX).
 
-    All four identifiers (``label``, ``rel_type``, and the two **property-name**
-    discriminators) are spliced via the ``<<...>>`` mechanism, which validates each
-    through ``validate_identifier`` before substitution — an unsafe
-    discriminator name is rejected, never injected.
+    All five identifiers (``label``, ``rel_type``, ``endpoint_label``, and the two
+    **property-name** discriminators) are spliced via the ``<<...>>`` mechanism,
+    which validates each through ``validate_identifier`` before substitution — an
+    unsafe identifier is rejected, never injected.
 
     The symmetric counterpart is :class:`InspectTargetPartitionedCardinalityQuery`.
     """
@@ -115,7 +128,7 @@ class InspectSourcePartitionedCardinalityQuery(
     Identifiers = PartitionedCardinalityIdentifiers
     cypher_template = (
         "MATCH (n:`<<label>>`)"
-        " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->(m)"
+        " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->(m:`<<endpoint_label>>`)"
         " WITH n, n.`<<source_discriminator>>` AS sk,"
         " m.`<<target_discriminator>>` AS tk, count(r) AS degree"
         " RETURN sk, tk, min(degree) AS min_degree, max(degree) AS max_degree,"
@@ -150,7 +163,7 @@ class InspectTargetPartitionedCardinalityQuery(
     Identifiers = PartitionedCardinalityIdentifiers
     cypher_template = (
         "MATCH (m:`<<label>>`)"
-        " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->(m)"
+        " OPTIONAL MATCH (n:`<<endpoint_label>>`)-[r:`<<rel_type>>`]->(m)"
         " WITH m, n.`<<source_discriminator>>` AS sk,"
         " m.`<<target_discriminator>>` AS tk, count(r) AS degree"
         " RETURN sk, tk, min(degree) AS min_degree, max(degree) AS max_degree,"

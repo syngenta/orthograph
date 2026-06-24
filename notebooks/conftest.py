@@ -24,6 +24,7 @@ _DB_NOTEBOOKS: dict[str, str] = {
     "03.03_cypher_query_usage.ipynb": "neo4j",
     "04.02_neo4j_backend.ipynb": "neo4j",
     "04.03_gqlalchemy_backend.ipynb": "memgraph",
+    "04.04_multi_shape_relationships.ipynb": "neo4j",
     "04.06_cypher_query_definitions.ipynb": "neo4j",
 }
 

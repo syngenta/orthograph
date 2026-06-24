@@ -66,10 +66,15 @@ def _build_model(data: dict[str, Any]) -> GraphDefinition:
         node_cls = _build_node_class(label, spec)
         node_classes[label] = node_cls
 
-    rel_types_data = data.get("relationship_types", {})
+    rel_types_data = data.get("relationship_types", [])
     rel_classes: list[type[RelationshipModel]] = []
-    for label, spec in rel_types_data.items():
-        rel_cls = _build_rel_class(label, spec)
+    for entry in rel_types_data:
+        if "label" not in entry:
+            raise ValueError(
+                "A relationship_types list entry is missing required field 'label'."
+            )
+        label = entry["label"]
+        rel_cls = _build_rel_class(label, entry)
         rel_classes.append(rel_cls)
 
     return GraphDefinition(
@@ -248,10 +253,14 @@ def _serialize_model(graph_definition: GraphDefinition) -> dict[str, Any]:
         node_types[nt.__label__] = node_spec
     data["node_types"] = node_types
 
-    rel_types: dict[str, Any] = {}
-    for rt in graph_definition.relationship_types:
+    rel_types: list[dict[str, Any]] = []
+    for rt in sorted(graph_definition.relationship_types, key=lambda r: r.rel_key()):
         rel_spec = _serialize_rel_type(rt)
-        rel_types[rt.__label__] = rel_spec
+        rel_spec["label"] = rt.__label__
+        # Reorder so label is first for readability
+        rel_entry: dict[str, Any] = {"label": rel_spec.pop("label")}
+        rel_entry.update(rel_spec)
+        rel_types.append(rel_entry)
     data["relationship_types"] = rel_types
 
     return data

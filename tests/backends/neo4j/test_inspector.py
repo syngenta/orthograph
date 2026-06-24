@@ -239,7 +239,11 @@ def _schema_strategy_responses() -> list[Any]:
                 },
             ],
         ),
-        # CypherRelPropertiesQuery for ACTED_IN (true counts, types=[])
+        # endpoint_labels for ACTED_IN (discovery — before per-pair property scan)
+        mock_execute_query(
+            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
+        ),
+        # CypherRelPropertiesQuery for Person:ACTED_IN:Movie (true counts, types=[])
         mock_execute_query(
             [
                 {
@@ -251,11 +255,7 @@ def _schema_strategy_responses() -> list[Any]:
                 },
             ],
         ),
-        # endpoint_labels for ACTED_IN
-        mock_execute_query(
-            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
-        ),
-        # cardinality for ACTED_IN against Person
+        # cardinality for Person:ACTED_IN:Movie
         mock_execute_query(
             [
                 {
@@ -278,12 +278,13 @@ def test_schema_strategy_merges_counts_and_types() -> None:
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
         cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
-        # Dedicated instance-count queries are served out of band so existing
-        # strict-ordered response lists stay valid .
-        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
-            return mock_execute_query([{"count": 0}], ["count"])
-        # Property present-count queries  are likewise served out of
-        # band so the APOC no-scan correction does not shift response indices.
+        # Dedicated instance-count queries are served out of band.
+        # Node count (Person): 10; rel count (ACTED_IN shape): 7.
+        if "count(n) AS count" in cypher:
+            return mock_execute_query([{"count": 10}], ["count"])
+        if "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 7}], ["count"])
+        # Property present-count queries are likewise served out of band.
         if "AS present_count" in cypher:
             return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
@@ -308,7 +309,7 @@ def test_schema_strategy_merges_counts_and_types() -> None:
     assert email.observed_types == ["String"]
 
     # Rel: counts from scan, types from db.schema.
-    acted_in = profile.rel_type_profiles["ACTED_IN"]
+    acted_in = profile.rel_type_profiles["Person:ACTED_IN:Movie"]
     role = acted_in.property_profiles["role"]
     assert role.present_count == 7
     assert role.total_count == 7
@@ -376,7 +377,9 @@ def test_apoc_strategy_regression_lock() -> None:
         mock_execute_query([{"cnt": 3}], ["cnt"]),
         # node_labels
         mock_execute_query([{"label": "Person"}], ["label"]),
-        # rel_types
+        # rel_types (none)
+        mock_execute_query([], []),
+        # ApocRelTypesQuery bulk (none — no rel types)
         mock_execute_query([], []),
         # constraints (read before profiles so they can be cross-referenced)
         mock_execute_query([], []),
@@ -433,20 +436,42 @@ def _apoc_count_correction_driver(
 ) -> MagicMock:
     """Build an APOC-strategy driver dispatching on rendered Cypher (ADR-036).
 
-    Property *metadata* (types, APOC's sampled observations) comes from the
-    ordered ``apoc.meta.*`` responses; the instance counts and per-property
-    present-counts are dispatched by their distinctive Cypher so the test can
-    return a *true* count that differs from APOC's reported observation count.
+    For nodes, property *metadata* (types, APOC's sampled observations) comes
+    from the ordered ``apoc.meta.nodeTypeProperties`` responses; the instance
+    counts and per-property present-counts are dispatched by their distinctive
+    Cypher so the test can return a *true* count that differs from APOC's value.
+
+    For relationships (E50.5/ADR-037): the bulk ``ApocRelTypesQuery`` supplies
+    observed_types; the endpoint-filtered ``CypherRelPropertiesQuery`` supplies
+    the per-shape property *counts* (``rel_props``).  The ``rel_props`` rows
+    must set ``propertyObservations`` to the *true* per-shape count because the
+    pattern scan is authoritative — no separate ``RelPresentCountQuery`` runs.
     """
     driver = MagicMock()
     ordered = [
         mock_execute_query([{"cnt": 3}], ["cnt"]),  # apoc.meta present → APOC
-        mock_execute_query([{"label": "Person"}], ["label"]),
-        mock_execute_query([{"relationshipType": "ACTED_IN"}], ["relationshipType"]),
+        mock_execute_query([{"label": "Person"}], ["label"]),  # node_labels
+        mock_execute_query(
+            [{"relationshipType": "ACTED_IN"}], ["relationshipType"]
+        ),  # rel_types
+        # ApocRelTypesQuery bulk — supply observed_types for ACTED_IN.role
+        mock_execute_query(
+            [
+                {
+                    "relType": ":`ACTED_IN`",
+                    "propertyName": "role",
+                    "propertyTypes": ["String"],
+                }
+            ]
+        ),
         mock_execute_query([], []),  # constraints
         mock_execute_query(node_props),  # apoc node_properties (Person)
-        mock_execute_query(rel_props),  # apoc rel_properties (ACTED_IN)
+        # endpoint_labels for ACTED_IN (discovery)
         mock_execute_query([{"source_labels": ["Person"], "target_labels": ["Movie"]}]),
+        # CypherRelPropertiesQuery for Person:ACTED_IN:Movie (rel_props holds
+        # the per-shape pattern-scan rows with the true propertyObservations)
+        mock_execute_query(rel_props),
+        # cardinality for Person:ACTED_IN:Movie
         mock_execute_query(
             [{"min_degree": 1, "max_degree": 2, "avg_degree": 1.5, "sample_size": 3}]
         ),
@@ -477,12 +502,15 @@ def _apoc_count_correction_driver(
 
 
 def test_apoc_no_scan_corrects_rel_present_count_undercount() -> None:
-    """APOC no-scan: the relationship present_count comes from a real count().
+    """APOC no-scan: the relationship present_count comes from the pattern scan.
 
-    Reproduces the E46.2 finding: APOC reports propertyObservations=100 for
-    ACTED_IN.role while the true non-null count is 172.  ADR-036 sources
-    present_count from a dedicated count() … IS NOT NULL, so the profile reports
-    172, and total_count from the instance count (172 edges).
+    Reproduces the E46.2 finding: APOC reported propertyObservations=100 for
+    ACTED_IN.role while the true non-null count is 172.  E50.5 (ADR-037):
+    the per-shape ``CypherRelPropertiesQuery`` runs an endpoint-filtered
+    MATCH/UNWIND pattern scan whose ``present`` column IS the truthful per-shape
+    count — no separate ``_fetch_rel_present_count`` needed.  So present_count
+    is set to 172 directly via ``propertyObservations`` in the pattern-scan row,
+    and total_count comes from the per-shape instance count (172 edges).
     """
     driver = _apoc_count_correction_driver(
         node_props=[
@@ -497,26 +525,26 @@ def test_apoc_no_scan_corrects_rel_present_count_undercount() -> None:
         rel_props=[
             {
                 "propertyName": "role",
-                "propertyTypes": ["String"],
+                "propertyTypes": [],  # CypherRelPropertiesQuery always returns []
                 "mandatory": True,
-                "propertyObservations": 100,  # APOC undercount
-                "totalObservations": 100,
+                "propertyObservations": 172,  # true count from pattern scan
+                "totalObservations": 172,
             }
         ],
         node_total=10,
         rel_total=172,
         node_present={"name": 10},
-        rel_present={"role": 172},  # the true non-null count
+        rel_present={"role": 172},  # kept for helper compat; not dispatched
     )
 
     profile = Neo4jInspector().inspect(driver)
-    role = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
-    # present_count is the TRUE count, not APOC's undercounted 100.
+    role = profile.rel_type_profiles["Person:ACTED_IN:Movie"].property_profiles["role"]
+    # present_count is the TRUE count from the per-shape pattern scan.
     assert role.present_count == 172
-    # total_count is the property-independent instance count (edge count).
+    # total_count is the property-independent per-shape instance count.
     assert role.total_count == 172
     assert role.completeness == 1.0
-    # observed_types still come from APOC.
+    # observed_types come from the bulk ApocRelTypesQuery (not per-shape scan).
     assert role.observed_types == ["String"]
 
 
@@ -565,7 +593,9 @@ def test_apoc_null_property_row_is_skipped() -> None:
         mock_execute_query([{"cnt": 3}], ["cnt"]),
         # node_labels
         mock_execute_query([{"label": "Empty"}], ["label"]),
-        # rel_types
+        # rel_types (none)
+        mock_execute_query([], []),
+        # ApocRelTypesQuery bulk (none — no rel types)
         mock_execute_query([], []),
         # constraints (read before profiles so they can be cross-referenced)
         mock_execute_query([], []),
@@ -625,6 +655,16 @@ def test_neo4j_inspect_labels() -> None:
             [{"relationshipType": "ACTED_IN"}],
             ["relationshipType"],
         ),
+        # ApocRelTypesQuery bulk — observed_types for ACTED_IN (E50.5)
+        mock_execute_query(
+            [
+                {
+                    "relType": ":`ACTED_IN`",
+                    "propertyName": "role",
+                    "propertyTypes": ["String"],
+                },
+            ],
+        ),
         # constraints (read before profiles so they can be cross-referenced)
         mock_execute_query([], []),
         # node_properties for Movie (sorted)
@@ -651,21 +691,21 @@ def test_neo4j_inspect_labels() -> None:
                 },
             ],
         ),
-        # rel_properties for ACTED_IN
+        # endpoint_labels for ACTED_IN (discovery — before per-pair scan)
+        mock_execute_query(
+            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
+        ),
+        # CypherRelPropertiesQuery for Person:ACTED_IN:Movie (E50.5)
         mock_execute_query(
             [
                 {
                     "propertyName": "role",
-                    "propertyTypes": ["String"],
+                    "propertyTypes": [],
                     "mandatory": True,
                     "propertyObservations": 200,
                     "totalObservations": 200,
                 },
             ],
-        ),
-        # endpoint_labels for ACTED_IN (queried first to identify sources)
-        mock_execute_query(
-            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
         ),
         # cardinality for ACTED_IN against Person (confirmed source label)
         mock_execute_query(
@@ -701,7 +741,8 @@ def test_neo4j_inspect_labels() -> None:
     profile = inspector.inspect(driver)
 
     assert profile.node_labels == {"Person", "Movie"}
-    assert profile.relationship_types == {"ACTED_IN"}
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
+    assert profile.relationship_types == {"Person:ACTED_IN:Movie"}
 
 
 # --- Full profile ---
@@ -723,6 +764,16 @@ def test_neo4j_inspect_produces_profile() -> None:
         mock_execute_query(
             [{"relationshipType": "ACTED_IN"}],
             ["relationshipType"],
+        ),
+        # ApocRelTypesQuery bulk — observed_types for ACTED_IN (E50.5)
+        mock_execute_query(
+            [
+                {
+                    "relType": ":`ACTED_IN`",
+                    "propertyName": "role",
+                    "propertyTypes": ["String"],
+                },
+            ],
         ),
         # constraints (read before profiles so they can be cross-referenced):
         # a UNIQUENESS on Person.name (does NOT guarantee presence) and a
@@ -792,21 +843,21 @@ def test_neo4j_inspect_produces_profile() -> None:
                 },
             ],
         ),
-        # rel_properties for ACTED_IN
+        # endpoint_labels for ACTED_IN (discovery — before per-pair scan)
+        mock_execute_query(
+            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
+        ),
+        # CypherRelPropertiesQuery for Person:ACTED_IN:Movie (E50.5)
         mock_execute_query(
             [
                 {
                     "propertyName": "role",
-                    "propertyTypes": ["String"],
+                    "propertyTypes": [],
                     "mandatory": True,
                     "propertyObservations": 200,
                     "totalObservations": 200,
                 },
             ],
-        ),
-        # endpoint_labels for ACTED_IN (queried first to identify sources)
-        mock_execute_query(
-            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
         ),
         # cardinality for ACTED_IN against Person (confirmed source label)
         mock_execute_query(
@@ -843,7 +894,8 @@ def test_neo4j_inspect_produces_profile() -> None:
 
     assert profile.source == "neo4j"
     assert profile.node_labels == {"Person", "Movie"}
-    assert profile.relationship_types == {"ACTED_IN"}
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
+    assert profile.relationship_types == {"Person:ACTED_IN:Movie"}
 
     # Check node profiles
     person = profile.node_type_profiles["Person"]
@@ -862,17 +914,17 @@ def test_neo4j_inspect_produces_profile() -> None:
     # year is inspected with no covering constraint.
     assert movie.property_profiles["year"].constraint_required is False
 
-    # Check rel profile
-    acted_in = profile.rel_type_profiles["ACTED_IN"]
+    # Check rel profile (triple key, E50.5)
+    acted_in = profile.rel_type_profiles["Person:ACTED_IN:Movie"]
     assert "role" in acted_in.property_profiles
     assert acted_in.cardinality_stats is not None
     assert acted_in.cardinality_stats.count == 50
     # No relationship constraint → inspected, none found.
     assert acted_in.property_profiles["role"].constraint_required is False
 
-    # endpoint labels populated
-    assert acted_in.source_labels == {"Person"}
-    assert acted_in.target_labels == {"Movie"}
+    # endpoint labels populated (E50.5: scalar, not sets — ADR-037)
+    assert acted_in.source_label == "Person"
+    assert acted_in.target_label == "Movie"
 
     # Constraints
     assert len(profile.constraints) == 2
@@ -892,7 +944,9 @@ def test_neo4j_value_distribution_is_none() -> None:
     responses = [
         # node_labels (no strategy-detection call when strategy is explicit)
         mock_execute_query([{"label": "Person"}], ["label"]),
-        # rel_types
+        # rel_types (none)
+        mock_execute_query([], []),
+        # ApocRelTypesQuery bulk (none — no rel types)
         mock_execute_query([], []),
         # constraints
         mock_execute_query([], []),
@@ -1008,6 +1062,8 @@ def test_neo4j_partitioned_cardinality_assembles_expected_partitions() -> None:
         mock_execute_query([{"label": "Operation"}, {"label": "Sample"}], ["label"]),
         # rel_types
         mock_execute_query([{"relationshipType": "HAS_OUTPUT"}], ["relationshipType"]),
+        # ApocRelTypesQuery bulk (HAS_OUTPUT has no properties)
+        mock_execute_query([], []),
         # constraints
         mock_execute_query([], []),
         # node_properties for Operation
@@ -1048,12 +1104,12 @@ def test_neo4j_partitioned_cardinality_assembles_expected_partitions() -> None:
                 },
             ]
         ),
-        # rel_properties for HAS_OUTPUT (none)
-        mock_execute_query([], []),
-        # endpoint_labels for HAS_OUTPUT
+        # endpoint_labels for HAS_OUTPUT (discovery — before per-pair scan)
         mock_execute_query(
             [{"source_labels": ["Operation"], "target_labels": ["Sample"]}]
         ),
+        # CypherRelPropertiesQuery for Operation:HAS_OUTPUT:Sample (no properties)
+        mock_execute_query([], []),
         # aggregate cardinality for HAS_OUTPUT against Operation
         mock_execute_query(
             [{"min_degree": 1, "max_degree": 3, "avg_degree": 2.0, "sample_size": 1}]
@@ -1085,7 +1141,8 @@ def test_neo4j_partitioned_cardinality_assembles_expected_partitions() -> None:
     driver.execute_query.side_effect = side_effect
 
     profile = Neo4jInspector().inspect(driver, graph_definition=gd)
-    has_output = profile.rel_type_profiles["HAS_OUTPUT"]
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
+    has_output = profile.rel_type_profiles["Operation:HAS_OUTPUT:Sample"]
 
     partitions = has_output.source_partitioned_cardinality
     assert partitions is not None
@@ -1120,6 +1177,7 @@ def test_neo4j_partitioned_cardinality_zero_degree_rows_suppressed() -> None:
         mock_execute_query([{"cnt": 3}], ["cnt"]),  # APOC present
         mock_execute_query([{"label": "Operation"}, {"label": "Sample"}], ["label"]),
         mock_execute_query([{"relationshipType": "HAS_OUTPUT"}], ["relationshipType"]),
+        mock_execute_query([], []),  # ApocRelTypesQuery (HAS_OUTPUT has no properties)
         mock_execute_query([], []),  # constraints
         mock_execute_query(
             [
@@ -1143,10 +1201,12 @@ def test_neo4j_partitioned_cardinality_zero_degree_rows_suppressed() -> None:
                 }
             ]
         ),  # Sample props
-        mock_execute_query([], []),  # HAS_OUTPUT props
         mock_execute_query(
             [{"source_labels": ["Operation"], "target_labels": ["Sample"]}]
-        ),
+        ),  # endpoint_labels for HAS_OUTPUT
+        mock_execute_query(
+            [], []
+        ),  # CypherRelPropertiesQuery for Operation:HAS_OUTPUT:Sample
         mock_execute_query(
             [{"min_degree": 2, "max_degree": 2, "avg_degree": 2.0, "sample_size": 1}]
         ),
@@ -1178,7 +1238,8 @@ def test_neo4j_partitioned_cardinality_zero_degree_rows_suppressed() -> None:
     driver.execute_query.side_effect = side_effect
 
     profile = Neo4jInspector().inspect(driver, graph_definition=gd)
-    has_output = profile.rel_type_profiles["HAS_OUTPUT"]
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
+    has_output = profile.rel_type_profiles["Operation:HAS_OUTPUT:Sample"]
     partitions = has_output.source_partitioned_cardinality
 
     assert partitions is not None
@@ -1203,6 +1264,9 @@ def test_neo4j_partitioned_cardinality_constant_type_is_none() -> None:
         mock_execute_query([{"cnt": 3}], ["cnt"]),  # APOC present
         mock_execute_query([{"label": "Movie"}, {"label": "Person"}], ["label"]),
         mock_execute_query([{"relationshipType": "ACTED_IN"}], ["relationshipType"]),
+        mock_execute_query(
+            [], []
+        ),  # ApocRelTypesQuery (ACTED_IN has no properties here)
         mock_execute_query([], []),  # constraints
         # Movie props
         mock_execute_query(
@@ -1228,10 +1292,10 @@ def test_neo4j_partitioned_cardinality_constant_type_is_none() -> None:
                 }
             ]
         ),
-        # ACTED_IN props
-        mock_execute_query([], []),
-        # endpoint labels
+        # endpoint labels for ACTED_IN (discovery — before per-pair scan)
         mock_execute_query([{"source_labels": ["Person"], "target_labels": ["Movie"]}]),
+        # CypherRelPropertiesQuery for Person:ACTED_IN:Movie (no properties)
+        mock_execute_query([], []),
         # aggregate cardinality
         mock_execute_query(
             [{"min_degree": 1, "max_degree": 2, "avg_degree": 1.5, "sample_size": 10}]
@@ -1258,7 +1322,8 @@ def test_neo4j_partitioned_cardinality_constant_type_is_none() -> None:
     driver.execute_query.side_effect = side_effect
 
     profile = Neo4jInspector().inspect(driver, graph_definition=gd)
-    acted_in = profile.rel_type_profiles["ACTED_IN"]
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
+    acted_in = profile.rel_type_profiles["Person:ACTED_IN:Movie"]
 
     assert acted_in.source_partitioned_cardinality is None
     assert acted_in.target_partitioned_cardinality is None
@@ -1275,6 +1340,7 @@ def test_neo4j_partitioned_cardinality_no_definition_is_none() -> None:
         mock_execute_query([{"cnt": 3}], ["cnt"]),  # APOC present
         mock_execute_query([{"label": "Person"}], ["label"]),
         mock_execute_query([{"relationshipType": "ACTED_IN"}], ["relationshipType"]),
+        mock_execute_query([], []),  # ApocRelTypesQuery (ACTED_IN has no properties)
         mock_execute_query([], []),  # constraints
         mock_execute_query(
             [
@@ -1287,8 +1353,10 @@ def test_neo4j_partitioned_cardinality_no_definition_is_none() -> None:
                 }
             ]
         ),
-        mock_execute_query([], []),  # ACTED_IN props
-        mock_execute_query([{"source_labels": ["Person"], "target_labels": []}]),
+        # endpoint_labels for ACTED_IN — valid pair so a profile is built
+        mock_execute_query([{"source_labels": ["Person"], "target_labels": ["Movie"]}]),
+        # CypherRelPropertiesQuery for Person:ACTED_IN:Movie (no properties)
+        mock_execute_query([], []),
         mock_execute_query(
             [{"min_degree": 1, "max_degree": 1, "avg_degree": 1.0, "sample_size": 5}]
         ),
@@ -1313,8 +1381,19 @@ def test_neo4j_partitioned_cardinality_no_definition_is_none() -> None:
 
     # inspect() without graph_definition
     profile = Neo4jInspector().inspect(driver)
-    assert profile.rel_type_profiles["ACTED_IN"].source_partitioned_cardinality is None
-    assert profile.rel_type_profiles["ACTED_IN"].target_partitioned_cardinality is None
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
+    assert (
+        profile.rel_type_profiles[
+            "Person:ACTED_IN:Movie"
+        ].source_partitioned_cardinality
+        is None
+    )
+    assert (
+        profile.rel_type_profiles[
+            "Person:ACTED_IN:Movie"
+        ].target_partitioned_cardinality
+        is None
+    )
 
 
 # --- parity: same logical graph yields equivalent partitions on NetworkX / Neo4j ---
@@ -1344,7 +1423,7 @@ def test_neo4j_partitioned_cardinality_parity_with_networkx() -> None:
 
     nx_profile = NetworkxInspector().inspect(g, graph_definition=gd)
     nx_partitions = nx_profile.rel_type_profiles[
-        "HAS_OUTPUT"
+        "Operation:HAS_OUTPUT:Sample"
     ].source_partitioned_cardinality
     assert nx_partitions is not None
 
@@ -1355,6 +1434,7 @@ def test_neo4j_partitioned_cardinality_parity_with_networkx() -> None:
         mock_execute_query([{"cnt": 3}], ["cnt"]),  # APOC present
         mock_execute_query([{"label": "Operation"}, {"label": "Sample"}], ["label"]),
         mock_execute_query([{"relationshipType": "HAS_OUTPUT"}], ["relationshipType"]),
+        mock_execute_query([], []),  # ApocRelTypesQuery (HAS_OUTPUT has no properties)
         mock_execute_query([], []),  # constraints
         mock_execute_query(
             [
@@ -1378,10 +1458,12 @@ def test_neo4j_partitioned_cardinality_parity_with_networkx() -> None:
                 }
             ]
         ),  # Sample props
-        mock_execute_query([], []),  # HAS_OUTPUT props
         mock_execute_query(
             [{"source_labels": ["Operation"], "target_labels": ["Sample"]}]
-        ),
+        ),  # endpoint_labels for HAS_OUTPUT
+        mock_execute_query(
+            [], []
+        ),  # CypherRelPropertiesQuery for Operation:HAS_OUTPUT:Sample
         mock_execute_query(
             [{"min_degree": 1, "max_degree": 3, "avg_degree": 2.0, "sample_size": 1}]
         ),
@@ -1411,8 +1493,9 @@ def test_neo4j_partitioned_cardinality_parity_with_networkx() -> None:
     driver.execute_query.side_effect = side_effect
 
     neo4j_profile = Neo4jInspector().inspect(driver, graph_definition=gd)
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
     neo4j_partitions = neo4j_profile.rel_type_profiles[
-        "HAS_OUTPUT"
+        "Operation:HAS_OUTPUT:Sample"
     ].source_partitioned_cardinality
     assert neo4j_partitions is not None
 
@@ -1506,7 +1589,8 @@ def test_neo4j_partitioned_cardinality_both_sides_parity_with_networkx() -> None
     g.add_edge("op1", "a2", __label__="MAKES")
 
     nx_profile = NetworkxInspector().inspect(g, graph_definition=gd)
-    nx_rtp = nx_profile.rel_type_profiles["MAKES"]
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
+    nx_rtp = nx_profile.rel_type_profiles["Operation:MAKES:Sample"]
     assert nx_rtp.source_partitioned_cardinality is not None
     assert nx_rtp.target_partitioned_cardinality is not None
 
@@ -1517,6 +1601,7 @@ def test_neo4j_partitioned_cardinality_both_sides_parity_with_networkx() -> None
         mock_execute_query([{"cnt": 3}], ["cnt"]),  # APOC present
         mock_execute_query([{"label": "Operation"}, {"label": "Sample"}], ["label"]),
         mock_execute_query([{"relationshipType": "MAKES"}], ["relationshipType"]),
+        mock_execute_query([], []),  # ApocRelTypesQuery (MAKES has no properties)
         mock_execute_query([], []),  # constraints
         mock_execute_query(
             [
@@ -1540,10 +1625,12 @@ def test_neo4j_partitioned_cardinality_both_sides_parity_with_networkx() -> None
                 }
             ]
         ),  # Sample props
-        mock_execute_query([], []),  # MAKES props
         mock_execute_query(
             [{"source_labels": ["Operation"], "target_labels": ["Sample"]}]
-        ),
+        ),  # endpoint_labels for MAKES
+        mock_execute_query(
+            [], []
+        ),  # CypherRelPropertiesQuery for Operation:MAKES:Sample
         mock_execute_query(
             [{"min_degree": 2, "max_degree": 2, "avg_degree": 2.0, "sample_size": 1}]
         ),  # aggregate cardinality (MATCH (n:..) count(n), no "AS sk")
@@ -1582,7 +1669,8 @@ def test_neo4j_partitioned_cardinality_both_sides_parity_with_networkx() -> None
     driver.execute_query.side_effect = side_effect
 
     db_profile = Neo4jInspector().inspect(driver, graph_definition=gd)
-    db_rtp = db_profile.rel_type_profiles["MAKES"]
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
+    db_rtp = db_profile.rel_type_profiles["Operation:MAKES:Sample"]
 
     # Both sides must have issued their own (distinct) query.
     assert issued_partitioned == ["source", "target"], (
@@ -1620,6 +1708,7 @@ def test_neo4j_validate_database_forwards_graph_definition() -> None:
         mock_execute_query([{"cnt": 3}], ["cnt"]),  # APOC present
         mock_execute_query([{"label": "Operation"}, {"label": "Sample"}], ["label"]),
         mock_execute_query([{"relationshipType": "HAS_OUTPUT"}], ["relationshipType"]),
+        mock_execute_query([], []),  # ApocRelTypesQuery (HAS_OUTPUT has no properties)
         mock_execute_query([], []),  # constraints
         mock_execute_query(
             [
@@ -1643,10 +1732,12 @@ def test_neo4j_validate_database_forwards_graph_definition() -> None:
                 }
             ]
         ),  # Sample props
-        mock_execute_query([], []),  # HAS_OUTPUT props
         mock_execute_query(
             [{"source_labels": ["Operation"], "target_labels": ["Sample"]}]
-        ),
+        ),  # endpoint_labels for HAS_OUTPUT
+        mock_execute_query(
+            [], []
+        ),  # CypherRelPropertiesQuery for Operation:HAS_OUTPUT:Sample
         mock_execute_query(
             [{"min_degree": 1, "max_degree": 3, "avg_degree": 2.0, "sample_size": 1}]
         ),
@@ -1679,9 +1770,11 @@ def test_neo4j_validate_database_forwards_graph_definition() -> None:
     # We inspect the profile indirectly: if partitioned_cardinality is None the
     # call count would be one shorter (no partitioned query fired).
     neo4j_validate(driver, gd)
-    # The partitioned query (10th call) must have been issued.
-    assert call_count == 10, (
-        f"Expected 10 driver calls (partitioned query included), got {call_count}. "
+    # The partitioned query (11th call) must have been issued.
+    # E50.5: +1 for ApocRelTypesQuery + 1 for CypherRelPropertiesQuery per pair
+    # replaces the old single ApocRelPropertiesQuery per rel type.
+    assert call_count == 11, (
+        f"Expected 11 driver calls (partitioned query included), got {call_count}. "
         "validate_database likely did not forward graph_definition."
     )
 
@@ -1750,6 +1843,7 @@ def test_neo4j_unprocessable_first_side_falls_through_to_processable_second() ->
         mock_execute_query([{"cnt": 3}], ["cnt"]),  # APOC present
         mock_execute_query([{"label": "Artifact"}, {"label": "Producer"}], ["label"]),
         mock_execute_query([{"relationshipType": "PRODUCES"}], ["relationshipType"]),
+        mock_execute_query([], []),  # ApocRelTypesQuery (PRODUCES has no properties)
         mock_execute_query([], []),  # constraints
         # Artifact props
         mock_execute_query(
@@ -1775,10 +1869,12 @@ def test_neo4j_unprocessable_first_side_falls_through_to_processable_second() ->
                 }
             ]
         ),
-        mock_execute_query([], []),  # PRODUCES props
+        # endpoint_labels for PRODUCES (discovery — before per-pair scan)
         mock_execute_query(
             [{"source_labels": ["Producer"], "target_labels": ["Artifact"]}]
         ),
+        # CypherRelPropertiesQuery for Producer:PRODUCES:Artifact (no properties)
+        mock_execute_query([], []),
         mock_execute_query(
             [{"min_degree": 2, "max_degree": 2, "avg_degree": 2.0, "sample_size": 1}]
         ),
@@ -1804,11 +1900,13 @@ def test_neo4j_unprocessable_first_side_falls_through_to_processable_second() ->
     driver.execute_query.side_effect = side_effect
 
     profile = Neo4jInspector().inspect(driver, graph_definition=gd)
-    produces = profile.rel_type_profiles["PRODUCES"]
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
+    produces = profile.rel_type_profiles["Producer:PRODUCES:Artifact"]
 
-    # The target-side partitioned query must have been issued (10 calls total).
-    assert call_count == 10, (
-        f"Expected 10 driver calls (target-side partitioned query included), "
+    # The target-side partitioned query must have been issued (11 calls total).
+    # E50.5: +1 for ApocRelTypesQuery, +1 for CypherRelPropertiesQuery per pair.
+    assert call_count == 11, (
+        f"Expected 11 driver calls (target-side partitioned query included), "
         f"got {call_count}.  The unprocessable source side likely blocked iteration."
     )
     assert produces.target_partitioned_cardinality is not None, (
@@ -1835,7 +1933,9 @@ def test_value_scan_skipped_when_top_n_is_none() -> None:
     responses = [
         # node_labels (no strategy-detection call — explicit APOC)
         mock_execute_query([{"label": "Person"}], ["label"]),
-        # rel_types
+        # rel_types (none)
+        mock_execute_query([], []),
+        # ApocRelTypesQuery bulk (none — no rel types)
         mock_execute_query([], []),
         # constraints
         mock_execute_query([], []),
@@ -1875,11 +1975,11 @@ def test_value_scan_skipped_when_top_n_is_none() -> None:
     name = profile.node_type_profiles["Person"].property_profiles["name"]
     assert name.observed_type_counts == {}
     assert name.value_distribution is None
-    # 4 schema queries: labels + rel_types + constraints + props.  (Dedicated
-    # instance-count queries are intercepted out of band and not tallied here;
-    # this asserts the value scan was skipped, not the absolute driver-call total.)
-    assert call_count == 4, (
-        f"Expected 4 schema queries (no value scan), got {call_count}"
+    # 5 schema queries: labels + rel_types + ApocRelTypesQuery + constraints + props.
+    # (Dedicated instance-count queries are intercepted out of band and not tallied
+    # here; this asserts the value scan was skipped, not the absolute total.)
+    assert call_count == 5, (
+        f"Expected 5 schema queries (no value scan), got {call_count}"
     )
 
 
@@ -1894,7 +1994,9 @@ def test_node_type_counts_populated_with_apoc() -> None:
     responses = [
         # node_labels (no detection — explicit APOC)
         mock_execute_query([{"label": "Person"}], ["label"]),
-        # rel_types
+        # rel_types (none)
+        mock_execute_query([], []),
+        # ApocRelTypesQuery bulk (none — no rel types)
         mock_execute_query([], []),
         # constraints
         mock_execute_query([], []),
@@ -1996,7 +2098,9 @@ def test_value_scan_empty_type_rows_preserves_fallback_present_count() -> None:
     responses = [
         # node_labels (explicit APOC — no detection)
         mock_execute_query([{"label": "Person"}], ["label"]),
-        # rel_types
+        # rel_types (none)
+        mock_execute_query([], []),
+        # ApocRelTypesQuery bulk (none — no rel types)
         mock_execute_query([], []),
         # constraints
         mock_execute_query([], []),
@@ -2039,12 +2143,17 @@ def test_value_scan_empty_type_rows_preserves_fallback_present_count() -> None:
     assert born.observed_type_counts == {}
     assert born.value_distribution is None
     # The histogram query was never issued (short-circuit before it): only
-    # labels + rel_types + constraints + props + type-counts = 5 non-count calls.
-    assert call_count == 5, f"Expected 5 queries (no histogram), got {call_count}"
+    # labels + rel_types + ApocRelTypesQuery + constraints + props + type-counts = 6.
+    assert call_count == 6, f"Expected 6 queries (no histogram), got {call_count}"
 
 
 def test_rel_type_counts_populated_with_apoc() -> None:
-    """APOC + value_counts_top_n → rel property observed_type_counts populated."""
+    """APOC + value_counts_top_n → rel property observed_type_counts populated.
+
+    E50.5 (ADR-037): observed_types come from the bulk ApocRelTypesQuery; per-
+    shape property counts and value scans come from CypherRelPropertiesQuery and
+    the APOC value-scan queries, after endpoint discovery.
+    """
     driver = MagicMock()
     call_count = 0
     responses = [
@@ -2052,14 +2161,26 @@ def test_rel_type_counts_populated_with_apoc() -> None:
         mock_execute_query([], []),
         # rel_types
         mock_execute_query([{"relationshipType": "ACTED_IN"}], ["relationshipType"]),
+        # ApocRelTypesQuery bulk — observed_types for ACTED_IN.role
+        mock_execute_query(
+            [
+                {
+                    "relType": ":`ACTED_IN`",
+                    "propertyName": "role",
+                    "propertyTypes": ["String"],
+                },
+            ],
+        ),
         # constraints
         mock_execute_query([], []),
-        # rel_properties for ACTED_IN
+        # endpoint_labels for ACTED_IN (discovery — before per-pair scan)
+        mock_execute_query([{"source_labels": ["Person"], "target_labels": ["Movie"]}]),
+        # CypherRelPropertiesQuery for Person:ACTED_IN:Movie
         mock_execute_query(
             [
                 {
                     "propertyName": "role",
-                    "propertyTypes": ["String"],
+                    "propertyTypes": [],
                     "mandatory": True,
                     "propertyObservations": 3,
                     "totalObservations": 3,
@@ -2075,8 +2196,10 @@ def test_rel_type_counts_populated_with_apoc() -> None:
                 {"value": "Supporting", "value_count": 1},
             ]
         ),
-        # endpoint_labels for ACTED_IN
-        mock_execute_query([{"source_labels": [], "target_labels": []}]),
+        # cardinality for Person:ACTED_IN:Movie
+        mock_execute_query(
+            [{"min_degree": 1, "max_degree": 2, "avg_degree": 1.5, "sample_size": 3}]
+        ),
     ]
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
@@ -2099,7 +2222,8 @@ def test_rel_type_counts_populated_with_apoc() -> None:
     profile = Neo4jInspector(
         strategy=Neo4jInspectionStrategy.APOC, value_counts_top_n=10
     ).inspect(driver)
-    role = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
+    # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
+    role = profile.rel_type_profiles["Person:ACTED_IN:Movie"].property_profiles["role"]
     assert role.observed_type_counts == {"String": 3}
     assert role.value_distribution is not None
     assert role.value_distribution.count == 3
@@ -2112,8 +2236,9 @@ def test_reconciliation_invariant_holds() -> None:
     responses = [
         # node_labels (no detection — explicit APOC)
         mock_execute_query([{"label": "Item"}], ["label"]),
-        mock_execute_query([], []),
-        mock_execute_query([], []),
+        mock_execute_query([], []),  # rel_types (none)
+        mock_execute_query([], []),  # ApocRelTypesQuery (none)
+        mock_execute_query([], []),  # constraints
         # node_properties for Item.score: 8 present out of 10
         mock_execute_query(
             [
@@ -2183,8 +2308,9 @@ def test_observed_type_counts_subset_of_observed_types() -> None:
     responses = [
         # node_labels (no detection — explicit APOC)
         mock_execute_query([{"label": "Node"}], ["label"]),
-        mock_execute_query([], []),
-        mock_execute_query([], []),
+        mock_execute_query([], []),  # rel_types (none)
+        mock_execute_query([], []),  # ApocRelTypesQuery (none)
+        mock_execute_query([], []),  # constraints
         mock_execute_query(
             [
                 {
@@ -2524,8 +2650,9 @@ def test_histogram_truncates_correctly() -> None:
     responses = [
         # node_labels (no detection — explicit APOC)
         mock_execute_query([{"label": "Doc"}], ["label"]),
-        mock_execute_query([], []),
-        mock_execute_query([], []),
+        mock_execute_query([], []),  # rel_types (none)
+        mock_execute_query([], []),  # ApocRelTypesQuery (none)
+        mock_execute_query([], []),  # constraints
         mock_execute_query(
             [
                 {
@@ -2600,6 +2727,16 @@ def test_neo4j_validate_database(graph_definition: GraphDefinition) -> None:
             [{"relationshipType": "ACTED_IN"}],
             ["relationshipType"],
         ),
+        # ApocRelTypesQuery — bulk type map for ACTED_IN (E50.5/ADR-037)
+        mock_execute_query(
+            [
+                {
+                    "relType": ":`ACTED_IN`",
+                    "propertyName": "role",
+                    "propertyTypes": ["String"],
+                },
+            ],
+        ),
         # constraints (read before profiles so they can be cross-referenced)
         mock_execute_query([], []),
         # node_properties for Movie
@@ -2647,21 +2784,21 @@ def test_neo4j_validate_database(graph_definition: GraphDefinition) -> None:
                 },
             ],
         ),
-        # rel_properties for ACTED_IN
+        # endpoint_labels for ACTED_IN (queried first to identify sources)
+        mock_execute_query(
+            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
+        ),
+        # CypherRelPropertiesQuery for Person:ACTED_IN:Movie (E50.5/ADR-037)
         mock_execute_query(
             [
                 {
                     "propertyName": "role",
-                    "propertyTypes": ["String"],
+                    "propertyTypes": [],
                     "mandatory": True,
                     "propertyObservations": 200,
                     "totalObservations": 200,
                 },
             ],
-        ),
-        # endpoint_labels for ACTED_IN (queried first to identify sources)
-        mock_execute_query(
-            [{"source_labels": ["Person"], "target_labels": ["Movie"]}],
         ),
         # cardinality for ACTED_IN against Person (confirmed source label)
         mock_execute_query(

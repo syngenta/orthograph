@@ -39,7 +39,7 @@ node_types:
       name: {type: str, required: true}
       age: {type: int, required: true}
 relationship_types:
-  KNOWS:
+  - label: KNOWS
     source: Person
     target: Person
     directed: true

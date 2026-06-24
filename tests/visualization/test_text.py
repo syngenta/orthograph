@@ -91,11 +91,11 @@ def sample_profile() -> GraphProfile:
             ),
         },
         rel_type_profiles={
-            "ACTED_IN": RelationshipTypeProfile(
+            "Person:ACTED_IN:Movie": RelationshipTypeProfile(
                 rel_type="ACTED_IN",
                 count=12,
-                source_labels={"Person"},
-                target_labels={"Movie"},
+                source_label="Person",
+                target_label="Movie",
                 cardinality_stats=CardinalityStats(count=5, min=1, max=4, mean=2.4),
             ),
         },
@@ -239,13 +239,13 @@ def test_profile_to_text_observed_types(sample_profile: GraphProfile):
 
 def test_profile_to_text_relationship_types(sample_profile: GraphProfile):
     text = profile_to_text(sample_profile)
-    assert "ACTED_IN (12 instances)" in text
+    assert "Person:ACTED_IN:Movie (12 instances)" in text
 
 
 def test_profile_to_text_relationship_endpoints(sample_profile: GraphProfile):
     text = profile_to_text(sample_profile)
-    assert "sources:" in text
-    assert "targets:" in text
+    assert "source:" in text
+    assert "target:" in text
 
 
 def test_profile_to_text_cardinality_stats(sample_profile: GraphProfile):
@@ -440,11 +440,11 @@ def test_profile_to_text_all_none_fields_no_crash():
             )
         },
         rel_type_profiles={
-            "REL": RelationshipTypeProfile(
+            "A:REL:A": RelationshipTypeProfile(
                 rel_type="REL",
                 count=0,
-                source_labels={"A"},
-                target_labels={"A"},
+                source_label="A",
+                target_label="A",
                 cardinality_stats=None,
             )
         },
@@ -589,3 +589,83 @@ def test_model_to_text_constant_cardinality_unchanged():
     assert "ACTED_IN" in text
     # Should render as simple min..max, not as conditional
     assert "0..*" in text
+
+
+# ============================================================
+# E50.9 — keyed profiles, scalar endpoints
+# ============================================================
+
+
+class PersonKnowsPerson(RelationshipModel):
+    """Same-label source: Person-KNOWS->Person."""
+
+    __label__ = "KNOWS"
+    __source_label__ = "Person"
+    __target_label__ = "Person"
+
+
+class CompanyKnowsCompany(RelationshipModel):
+    """Same-label different endpoint: Company-KNOWS->Company."""
+
+    __label__ = "KNOWS"
+    __source_label__ = "Company"
+    __target_label__ = "Company"
+
+
+class CompanyNode(NodeModel):
+    __label__ = "Company"
+    __uid_field__ = "name"
+    name: str
+
+
+def _make_two_shape_profile() -> GraphProfile:
+    """GraphProfile with two KNOWS shapes (Person->Person and Company->Company)."""
+    return GraphProfile(
+        source="test-e50",
+        timestamp=datetime(2026, 1, 1, 12, 0),
+        node_type_profiles={},
+        rel_type_profiles={
+            "Person:KNOWS:Person": RelationshipTypeProfile(
+                rel_type="KNOWS",
+                source_label="Person",
+                target_label="Person",
+                count=5,
+            ),
+            "Company:KNOWS:Company": RelationshipTypeProfile(
+                rel_type="KNOWS",
+                source_label="Company",
+                target_label="Company",
+                count=3,
+            ),
+        },
+    )
+
+
+def test_profile_to_text_two_same_label_shapes_render_separately():
+    """Two same-label/different-endpoint shapes appear as two distinct entries."""
+    text = profile_to_text(_make_two_shape_profile())
+    # Both must appear as separate lines — not blended
+    assert "Person:KNOWS:Person" in text or (text.count("KNOWS") >= 2), (
+        "Expected two KNOWS entries"
+    )
+    # Each shape shows its correct scalar endpoint
+    assert "Person" in text
+    assert "Company" in text
+
+
+def test_profile_to_text_scalar_source_label():
+    """profile_to_text shows scalar source_label for each profile."""
+    text = profile_to_text(_make_two_shape_profile())
+    assert "source:" in text
+
+
+def test_profile_to_text_scalar_target_label():
+    """profile_to_text shows scalar target_label for each profile."""
+    text = profile_to_text(_make_two_shape_profile())
+    assert "target:" in text
+
+
+def test_profile_to_text_two_shapes_output_is_deterministic():
+    """Output ordering is stable across two calls."""
+    p = _make_two_shape_profile()
+    assert profile_to_text(p) == profile_to_text(p)

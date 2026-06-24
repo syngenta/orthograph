@@ -4,6 +4,10 @@
 **Category:** core
 **Epic:** E45 (GraphProfile statistical-model reshape) — runs before E41
 **Amends:** ADR-030 §1 (the observed per-pair field now sits on the shared distribution model)
+**Amended by:** ADR-037 §7/§8 (2026-06-24, E50) — relationship identity is now the
+triple `(source_label, label, target_label)`; the §8 endpoint rows reclassify (endpoint
+mismatch → `MISSING_*`/`UNEXPECTED_*`; `ENDPOINTS_CHANGED` narrows to the `__directed__`
+delta) and §7's partitioned cardinality now nests inside an endpoint-identified profile
 **Relates:** ADR-015 (declared/observed mirror), ADR-009 (inspector parity),
 ADR-033 (Neo4j three-way strategy — drives field availability), ADR-017 (package topology),
 ADR-027/ADR-031 (cardinality notation)
@@ -175,6 +179,14 @@ the *type* is the contract check; the *count* is not.
 
 This ADR is the authority for **what enters each comparison**. E45 implements the
 node/property/constraint/value rows; E41 implements the cardinality rows.
+
+> **Amended by ADR-037 (E50).** The **rel-type list** row is now keyed by the identity
+> triple `(source_label, label, target_label)` (a `RelTypeKey` string), not the bare
+> label. Consequently a declared-vs-observed **endpoint difference** is a different
+> address and surfaces through this row as `MISSING_*` / `UNEXPECTED_*` — the old
+> `INVALID_ENDPOINT` finding is removed, and `ENDPOINTS_CHANGED` narrows to the
+> `__directed__`-flag delta only. The §7 partitioned cardinality now nests *inside* an
+> already-endpoint-identified profile (no double counting). All other rows are unchanged.
 
 | Field | profile ↔ description | profile ↔ profile |
 |-------|----------------------|-------------------|

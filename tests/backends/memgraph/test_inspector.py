@@ -130,7 +130,7 @@ def test_memgraph_inspect_produces_profile() -> None:
 
     assert profile.source == "memgraph"
     assert profile.node_labels == {"Person", "Movie"}
-    assert profile.relationship_types == {"ACTED_IN"}
+    assert profile.relationship_types == {"Person:ACTED_IN:Movie"}
 
     # Check node profiles
     person = profile.node_type_profiles["Person"]
@@ -147,13 +147,13 @@ def test_memgraph_inspect_produces_profile() -> None:
     assert movie.property_profiles["title"].constraint_required is False
 
     # Check rel profile
-    acted_in = profile.rel_type_profiles["ACTED_IN"]
+    acted_in = profile.rel_type_profiles["Person:ACTED_IN:Movie"]
     assert "role" in acted_in.property_profiles
     assert acted_in.property_profiles["role"].constraint_required is False
 
-    # source/target labels populated
-    assert acted_in.source_labels == {"Person"}
-    assert acted_in.target_labels == {"Movie"}
+    # scalar endpoints populated
+    assert acted_in.source_label == "Person"
+    assert acted_in.target_label == "Movie"
     assert acted_in.cardinality_stats is not None
     assert acted_in.cardinality_stats.count == 10
 
@@ -204,14 +204,17 @@ def _value_scan_driver(
     histogram_rows: list[dict[str, Any]],
     rel_property_rows: list[dict[str, Any]] | None = None,
     entity_count: int = 1000,
+    rel_endpoint_pairs: list[tuple[str, str]] | None = None,
 ) -> MagicMock:
     """A driver that dispatches the value-scan queries on their Cypher text.
 
     The ordered schema/constraint/cardinality reads return canned rows; the
     per-property ``valueType`` (type counts) and ``toStringOrNull`` (histogram)
     scans are matched on the Cypher so the test does not depend on call order.
-    ``entity_count`` is the property-independent ``count()`` total (the honest
-    ``completeness`` / ``total_count`` denominator — E46.3).
+    ``entity_count`` is the property-independent ``count()`` total.
+    ``rel_endpoint_pairs`` provides ``(source_label, target_label)`` pairs for the
+    endpoint-labels discovery query; defaults to ``[("Person", "Movie")]`` when
+    ``rel_property_rows`` is non-empty.
     """
     driver = MagicMock()
     ordered = iter(
@@ -222,13 +225,21 @@ def _value_scan_driver(
         ]
     )
 
+    # Derive default endpoint pairs from rel_property_rows when not supplied.
+    if rel_endpoint_pairs is None and rel_property_rows:
+        rel_endpoint_pairs = [("Person", "Movie")]
+
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         cypher = args[0] if args else kwargs.get("query", "")
         if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
-            # Property-independent entity count (E46.3): the honest completeness
-            # denominator.  Defaults high so total_count >= present_count for
-            # tests that do not exercise completeness.
             return mock_execute_query([{"count": entity_count}], ["count"])
+        if "labels(src)" in cypher and "labels(tgt)" in cypher:
+            # Endpoint-pair discovery — return the configured pairs.
+            rows = [
+                {"source_labels": [src], "target_labels": [tgt]}
+                for src, tgt in (rel_endpoint_pairs or [])
+            ]
+            return mock_execute_query(rows, ["source_labels", "target_labels"])
         if "valueType(" in cypher:
             return mock_execute_query(type_count_rows)
         if "toStringOrNull(" in cypher:
@@ -236,8 +247,8 @@ def _value_scan_driver(
         result = next(ordered, None)
         if result is not None:
             return result
-        # endpoint-labels / cardinality / partitioned queries issued during rel
-        # enrichment — not under test here, answer with empty rows.
+        # cardinality / partitioned queries issued during rel enrichment —
+        # not under test here, answer with empty rows.
         return mock_execute_query([], [])
 
     driver.execute_query.side_effect = side_effect
@@ -378,7 +389,7 @@ def test_memgraph_value_scan_on_relationships() -> None:
     )
 
     profile = MemgraphInspector(value_counts_top_n=10).inspect(driver)
-    role = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
+    role = profile.rel_type_profiles["Person:ACTED_IN:Movie"].property_profiles["role"]
 
     assert role.observed_type_counts == {"String": 3}
 
@@ -744,7 +755,7 @@ def test_memgraph_partitioned_cardinality_assembles_expected_partitions() -> Non
     driver.execute_query.side_effect = ordered_side_effect_with_counts(responses)
 
     profile = MemgraphInspector().inspect(driver, graph_definition=gd)
-    has_output = profile.rel_type_profiles["HAS_OUTPUT"]
+    has_output = profile.rel_type_profiles["Operation:HAS_OUTPUT:Sample"]
 
     partitions = has_output.source_partitioned_cardinality
     assert partitions is not None
@@ -816,7 +827,9 @@ def test_memgraph_partitioned_cardinality_zero_degree_rows_suppressed() -> None:
     driver.execute_query.side_effect = ordered_side_effect_with_counts(responses)
 
     profile = MemgraphInspector().inspect(driver, graph_definition=gd)
-    partitions = profile.rel_type_profiles["HAS_OUTPUT"].source_partitioned_cardinality
+    partitions = profile.rel_type_profiles[
+        "Operation:HAS_OUTPUT:Sample"
+    ].source_partitioned_cardinality
 
     assert partitions is not None
     sub_sub = str(PartitionKey(source_value="subsampling", target_value="subsampling"))
@@ -872,7 +885,7 @@ def test_memgraph_partitioned_cardinality_constant_type_is_none() -> None:
     driver.execute_query.side_effect = ordered_side_effect_with_counts(responses)
 
     profile = MemgraphInspector().inspect(driver, graph_definition=gd)
-    acted_in = profile.rel_type_profiles["ACTED_IN"]
+    acted_in = profile.rel_type_profiles["Person:ACTED_IN:Movie"]
 
     assert acted_in.source_partitioned_cardinality is None
     assert acted_in.target_partitioned_cardinality is None
@@ -906,7 +919,7 @@ def test_memgraph_partitioned_cardinality_no_definition_is_none() -> None:
                 }
             ]
         ),
-        mock_execute_query([{"source_labels": ["Person"], "target_labels": []}]),
+        mock_execute_query([{"source_labels": ["Person"], "target_labels": ["Movie"]}]),
         mock_execute_query(
             [{"min_degree": 1, "max_degree": 1, "avg_degree": 1.0, "sample_size": 5}]
         ),
@@ -915,8 +928,18 @@ def test_memgraph_partitioned_cardinality_no_definition_is_none() -> None:
     driver.execute_query.side_effect = ordered_side_effect_with_counts(responses)
 
     profile = MemgraphInspector().inspect(driver)
-    assert profile.rel_type_profiles["ACTED_IN"].source_partitioned_cardinality is None
-    assert profile.rel_type_profiles["ACTED_IN"].target_partitioned_cardinality is None
+    assert (
+        profile.rel_type_profiles[
+            "Person:ACTED_IN:Movie"
+        ].source_partitioned_cardinality
+        is None
+    )
+    assert (
+        profile.rel_type_profiles[
+            "Person:ACTED_IN:Movie"
+        ].target_partitioned_cardinality
+        is None
+    )
 
 
 def test_memgraph_partitioned_cardinality_parity_with_networkx() -> None:
@@ -941,7 +964,7 @@ def test_memgraph_partitioned_cardinality_parity_with_networkx() -> None:
 
     nx_profile = NetworkxInspector().inspect(g, graph_definition=gd)
     nx_partitions = nx_profile.rel_type_profiles[
-        "HAS_OUTPUT"
+        "Operation:HAS_OUTPUT:Sample"
     ].source_partitioned_cardinality
     assert nx_partitions is not None
 
@@ -994,7 +1017,7 @@ def test_memgraph_partitioned_cardinality_parity_with_networkx() -> None:
 
     mg_profile = MemgraphInspector().inspect(driver, graph_definition=gd)
     mg_partitions = mg_profile.rel_type_profiles[
-        "HAS_OUTPUT"
+        "Operation:HAS_OUTPUT:Sample"
     ].source_partitioned_cardinality
     assert mg_partitions is not None
 
@@ -1190,7 +1213,7 @@ def test_memgraph_unprocessable_first_side_falls_through_to_processable_second()
     driver.execute_query.side_effect = ordered_side_effect_with_counts(responses)
 
     profile = MemgraphInspector().inspect(driver, graph_definition=gd)
-    produces = profile.rel_type_profiles["PRODUCES"]
+    produces = profile.rel_type_profiles["Producer:PRODUCES:Artifact"]
 
     # The processable target side must have produced its breakdown; the
     # unprocessable source side must not have blocked iteration.
@@ -1273,7 +1296,7 @@ def test_memgraph_partitioned_cardinality_both_sides_parity_with_networkx() -> N
     g.add_edge("op1", "a2", __label__="MAKES")
 
     nx_profile = NetworkxInspector().inspect(g, graph_definition=gd)
-    nx_rtp = nx_profile.rel_type_profiles["MAKES"]
+    nx_rtp = nx_profile.rel_type_profiles["Operation:MAKES:Sample"]
     assert nx_rtp.source_partitioned_cardinality is not None
     assert nx_rtp.target_partitioned_cardinality is not None
 
@@ -1340,7 +1363,7 @@ def test_memgraph_partitioned_cardinality_both_sides_parity_with_networkx() -> N
     driver.execute_query.side_effect = side_effect
 
     mg_profile = MemgraphInspector().inspect(driver, graph_definition=gd)
-    mg_rtp = mg_profile.rel_type_profiles["MAKES"]
+    mg_rtp = mg_profile.rel_type_profiles["Operation:MAKES:Sample"]
 
     assert issued_partitioned == ["source", "target"], (
         "Each conditional side must issue its own anchored query; "

@@ -38,8 +38,8 @@ class RuleContext:
         (observed side).
     address:
         The shared key for this evaluation — e.g. ``"Person"`` for a
-        node-label rule, ``"ACTED_IN"`` for a relationship-type rule,
-        or ``"Person.name"`` for a property rule.
+        node-label rule, ``"Person:ACTED_IN:Movie"`` (a ``str(RelTypeKey)``) for
+        a relationship-type rule, or ``"Person.name"`` for a property rule.
     left:
         The left-side object at this address (e.g. a ``NodeModel`` subclass,
         a ``TypeInfo``).  ``None`` when the address exists only on the
@@ -109,13 +109,17 @@ def _expected_storage_type(python_type: type) -> type | None:
 #
 # Address conventions used by the engine:
 #   node-label rules   : address = label str
-#   rel-type rules     : address = rel_type str
-#   property rules     : address = "<label>.<prop_name>" str
-#                        extra["label"]       = label str
+#   rel-type rules     : address = str(RelTypeKey) ("source:LABEL:target")
+#   property rules     : address = "<label>.<prop_name>" str (node) or
+#                        "<rel_key>.<prop_name>" str (relationship)
+#                        extra["label"]       = label str / rel_key str
 #                        extra["prop_name"]   = property name str
 #                        extra["entity_type"] = EntityType
-#   endpoint rules     : address = rel_type str
-#   cardinality rules  : address = rel_type str
+#   cardinality rules  : address = str(RelTypeKey)
+#
+# Endpoint mismatch is no longer a dedicated rule: endpoints are
+# part of relationship identity, so a different endpoint is a different address
+# and surfaces through the presence rules (MISSING_REL_TYPE / UNEXPECTED_REL_TYPE).
 #
 # Convention for compare_profile_to_definition:
 #   left  = declared (definition side)
@@ -482,7 +486,7 @@ class PropertyConstraintPresenceRule:
                     message=(
                         f"Property '{prop_name}' on {label} is declared required "
                         "but constraint information is unavailable for this "
-                        "backend/strategy (ADR-033)"
+                        "backend/strategy profile"
                     ),
                 )
             # constraint_required is True -> declared-required and DB-backed: silent
@@ -567,7 +571,7 @@ class PropertyEnumValueRule:
 
         # Values that ARE shown in the histogram were definitely observed, so an
         # undeclared one among them is a true contract breach regardless of
-        # truncation (ADR-034 §8 — the more severe direction).
+        # truncation (the more severe direction).
         for value in sorted(observed_values - declared_values):
             yield ValidationIssue(
                 code="UNDECLARED_PROPERTY_VALUE",
@@ -581,7 +585,7 @@ class PropertyEnumValueRule:
                 context={"value": value, "declared": sorted(declared_values)},
             )
 
-        # Truncation honesty (ADR-034 §2/§3): a histogram capped at ``limit``
+        # Truncation honesty: a histogram capped at ``limit``
         # (``sample_complete is False``) hides every value beyond the top-N in
         # ``other_count``.  Two verdicts then become unsafe and must not be made:
         #   * UNOBSERVED_PROPERTY_VALUE — a declared value absent from the *shown*
@@ -606,7 +610,7 @@ class PropertyEnumValueRule:
                     f"truncated ({distribution.other_count} observation(s) beyond "
                     f"the top-{distribution.limit} cap are hidden); undeclared "
                     "values in the remainder cannot be detected and unobserved "
-                    "declared values cannot be confirmed (ADR-034 §2)"
+                    "declared values cannot be confirmed"
                 ),
                 context={
                     "limit": distribution.limit,
@@ -627,86 +631,6 @@ class PropertyEnumValueRule:
                 ),
                 context={"value": value},
             )
-
-
-def _invalid_endpoint_issues(
-    label: str,
-    expected_src: str,
-    expected_tgt: str,
-    observed_sources: set[str],
-    observed_targets: set[str],
-    directed: bool,
-) -> Iterable[ValidationIssue]:
-    """Yield INVALID_ENDPOINT issues for out-of-range source/target labels.
-
-    When the relationship is undirected both orientations are valid, so both
-    endpoint sets are expanded accordingly before the membership check.
-    """
-    valid_sources: set[str] = {expected_src}
-    valid_targets: set[str] = {expected_tgt}
-    if not directed:
-        valid_sources.add(expected_tgt)
-        valid_targets.add(expected_src)
-
-    for src in observed_sources:
-        if src not in valid_sources:
-            yield ValidationIssue(
-                code="INVALID_ENDPOINT",
-                severity=Severity.ERROR,
-                entity_type=EntityType.RELATIONSHIP,
-                entity_id=label,
-                message=(
-                    f"Relationship '{label}' has source "
-                    f"label '{src}', expected '{expected_src}'"
-                ),
-                context={"role": "source", "actual": src, "expected": expected_src},
-            )
-    for tgt in observed_targets:
-        if tgt not in valid_targets:
-            yield ValidationIssue(
-                code="INVALID_ENDPOINT",
-                severity=Severity.ERROR,
-                entity_type=EntityType.RELATIONSHIP,
-                entity_id=label,
-                message=(
-                    f"Relationship '{label}' has target "
-                    f"label '{tgt}', expected '{expected_tgt}'"
-                ),
-                context={"role": "target", "actual": tgt, "expected": expected_tgt},
-            )
-
-
-@dataclass
-class InvalidEndpointRule:
-    """Emits ``INVALID_ENDPOINT`` (ERROR) for each source or target label
-    outside the declared set.
-
-    Respects undirected relationships (both label orientations are valid).
-    """
-
-    key: str = "rel.endpoint"
-
-    def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        from orthograph.graph_definition.models import RelationshipModel
-        from orthograph.graph_profile.models import RelationshipTypeProfile
-
-        rt_class = context.left
-        rel_profile = context.right
-        if not (
-            isinstance(rt_class, type)
-            and issubclass(rt_class, RelationshipModel)
-            and isinstance(rel_profile, RelationshipTypeProfile)
-        ):
-            return  # need both sides as proper types
-
-        yield from _invalid_endpoint_issues(
-            label=context.address,
-            expected_src=rt_class.__source_label__,
-            expected_tgt=rt_class.__target_label__,
-            observed_sources=rel_profile.source_labels,
-            observed_targets=rel_profile.target_labels,
-            directed=rt_class.__directed__,
-        )
 
 
 def _conditional_sides(
@@ -851,7 +775,7 @@ class CardinalityViolationRule:
                 entity_id=label,
                 message=(
                     f"Relationship '{label}' has no observed min degree; "
-                    "cardinality bounds cannot be confirmed (ADR-034 §2)"
+                    "cardinality bounds cannot be confirmed"
                 ),
             )
             return
@@ -999,7 +923,7 @@ class CardinalityViolationRule:
         """Emit drift + default-floor for one unmatched counted-side value group.
 
         A counted-side discriminator value matching no rule is governed solely by
-        ``card.default`` (ADR-029 §7).  The floor is checked once against the
+        ``card.default``. The floor is checked once against the
         group's *total* side degree — the sum across the partitions this value
         spans — mirroring the in-memory per-node floor, which checks the node's
         total side degree, not each partition independently (finding 1 / E41.5
@@ -1121,7 +1045,6 @@ def standard_rules() -> list[Rule]:
         PropertyTypeMismatchRule(),
         PropertyConstraintPresenceRule(),
         PropertyEnumValueRule(),
-        InvalidEndpointRule(),
         CardinalityViolationRule(),
     ]
 

@@ -72,15 +72,21 @@ def test_graph_data_model_node_types_accessible_by_label():
     assert graph_definition.get_node_type("NonExistent") is None
 
 
-def test_graph_data_model_relationship_types_accessible_by_label():
+def test_graph_data_model_relationship_types_accessible_by_triple():
     graph_definition = GraphDefinition(
         name="Test",
         node_types=[Person, Movie],
         relationship_types=[ActedIn, Directed],
     )
-    assert graph_definition.get_relationship_type("ACTED_IN") is ActedIn
-    assert graph_definition.get_relationship_type("DIRECTED") is Directed
-    assert graph_definition.get_relationship_type("FAKE") is None
+    assert graph_definition.get_relationship_type("Person", "ACTED_IN", "Movie") is (
+        ActedIn
+    )
+    assert graph_definition.get_relationship_type("Person", "DIRECTED", "Movie") is (
+        Directed
+    )
+    assert graph_definition.get_relationship_type("Person", "FAKE", "Movie") is None
+    # Right label, wrong endpoints → no match (endpoints are identity).
+    assert graph_definition.get_relationship_type("Movie", "ACTED_IN", "Person") is None
 
 
 def test_graph_data_model_node_labels():
@@ -127,18 +133,73 @@ def test_graph_data_model_duplicate_node_labels_rejected():
         )
 
 
-def test_graph_data_model_duplicate_relationship_labels_rejected():
+def test_graph_data_model_duplicate_relationship_triple_rejected():
+    """Two relationship types with the *same triple* are rejected (ADR-037 §7)."""
+
     class ActedInDup(RelationshipModel):
         __label__ = "ACTED_IN"
         __source_label__ = "Person"
         __target_label__ = "Movie"
 
-    with pytest.raises(GraphValidationError, match="Duplicate relationship label"):
+    with pytest.raises(GraphValidationError) as exc_info:
         GraphDefinition(
             name="Bad",
             node_types=[Person, Movie],
             relationship_types=[ActedIn, ActedInDup],
         )
+    codes = [i.code for i in exc_info.value.issues]
+    assert "DUPLICATE_RELATIONSHIP_TYPE" in codes
+
+
+def test_same_label_different_endpoints_allowed():
+    """Same label, different endpoints → distinct types, construction succeeds."""
+
+    class ActedInDirector(RelationshipModel):
+        __label__ = "ACTED_IN"
+        __source_label__ = "Person"
+        __target_label__ = "City"
+
+    graph_definition = GraphDefinition(
+        name="MultiEndpoint",
+        node_types=[Person, Movie, City],
+        relationship_types=[ActedIn, ActedInDirector],
+    )
+    # Both shapes are retrievable by their distinct triples.
+    assert graph_definition.get_relationship_type("Person", "ACTED_IN", "Movie") is (
+        ActedIn
+    )
+    assert graph_definition.get_relationship_type("Person", "ACTED_IN", "City") is (
+        ActedInDirector
+    )
+
+
+def test_get_relationship_types_by_label_returns_all_shapes():
+    class ActedInCity(RelationshipModel):
+        __label__ = "ACTED_IN"
+        __source_label__ = "Person"
+        __target_label__ = "City"
+
+    graph_definition = GraphDefinition(
+        name="MultiEndpoint",
+        node_types=[Person, Movie, City],
+        relationship_types=[ActedIn, ActedInCity, Directed],
+    )
+    acted_in_shapes = graph_definition.get_relationship_types_by_label("ACTED_IN")
+    assert set(acted_in_shapes) == {ActedIn, ActedInCity}
+    assert graph_definition.get_relationship_types_by_label("DIRECTED") == [Directed]
+    assert graph_definition.get_relationship_types_by_label("FAKE") == []
+
+
+def test_relationship_keys_are_triple_strings():
+    graph_definition = GraphDefinition(
+        name="Test",
+        node_types=[Person, Movie],
+        relationship_types=[ActedIn, Directed],
+    )
+    assert graph_definition.relationship_keys == {
+        "Person:ACTED_IN:Movie",
+        "Person:DIRECTED:Movie",
+    }
 
 
 def test_graph_data_model_undefined_source_node_type_rejected():

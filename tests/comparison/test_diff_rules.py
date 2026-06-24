@@ -6,11 +6,13 @@ Coverage:
 - ``only_in_left`` and ``only_in_right`` for node label, rel type, property.
 - ``PROPERTY_TYPE_CHANGED`` for both the ``TypeInfo`` (definition↔definition)
   and ``PropertyProfile`` (profile↔profile) shapes.
-- ``ENDPOINTS_CHANGED`` for both profile and definition shapes.
+- ``ENDPOINTS_CHANGED`` fires **only** for the definition ``__directed__``-flag
+  delta (it is silent for profiles; endpoint-label differences surface as
+  ``REL_TYPE_ONLY_IN_LEFT``/``_RIGHT``).
 - ``CARDINALITY_CHANGED`` for both profile and definition shapes.
 - No-op guards: wrong address type, both-sides-present, both-sides-absent,
   mixed-shape for PropertyTypeChangedRule.
-- ``diff_rules()`` factory returns the nine rules in spec order.
+- ``diff_rules()`` factory returns the ten rules in spec order.
 - Every emitted issue has ``Severity.INFO``.
 """
 
@@ -95,6 +97,19 @@ class _ActedInAlt(RelationshipModel):
     __label__ = "ACTED_IN"
     __source_label__ = "Director"
     __target_label__ = "Film"
+
+
+class _ActedInUndirected(RelationshipModel):
+    """ACTED_IN with the same endpoints as _ActedIn but undirected.
+
+    Same identity triple (Person:ACTED_IN:Movie); only ``__directed__`` differs,
+    so EndpointsChangedRule must surface it as a direction-flag delta.
+    """
+
+    __label__ = "ACTED_IN"
+    __source_label__ = "Person"
+    __target_label__ = "Movie"
+    __directed__ = False
 
 
 class _LivesIn(RelationshipModel):
@@ -343,7 +358,9 @@ def test_node_label_only_in_right_noop_for_property_address():
 
 def test_rel_type_only_in_left_fires_profile():
     rule = RelTypeOnlyInLeftRule()
-    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
     ctx = _pctx(
         left=rtp, right=None, address="ACTED_IN", extra={"address_type": "rel_type"}
     )
@@ -369,14 +386,18 @@ def test_rel_type_only_in_left_fires_definition():
 
 def test_rel_type_only_in_left_noop_when_right_present():
     rule = RelTypeOnlyInLeftRule()
-    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
     ctx = _pctx(left=rtp, right=rtp, address="ACTED_IN")
     assert list(rule(ctx)) == []
 
 
 def test_rel_type_only_in_left_noop_for_property_address():
     rule = RelTypeOnlyInLeftRule()
-    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
     ctx = _pctx(left=rtp, right=None, address="ACTED_IN.role", extra=_PROP_EXTRA_REL)
     assert list(rule(ctx)) == []
 
@@ -388,7 +409,9 @@ def test_rel_type_only_in_left_noop_for_property_address():
 
 def test_rel_type_only_in_right_fires_profile():
     rule = RelTypeOnlyInRightRule()
-    rtp = RelationshipTypeProfile(rel_type="DIRECTED", count=2)
+    rtp = RelationshipTypeProfile(
+        rel_type="DIRECTED", count=2, source_label="Person", target_label="Movie"
+    )
     ctx = _pctx(
         left=None, right=rtp, address="DIRECTED", extra={"address_type": "rel_type"}
     )
@@ -413,7 +436,9 @@ def test_rel_type_only_in_right_fires_definition():
 
 def test_rel_type_only_in_right_noop_when_left_present():
     rule = RelTypeOnlyInRightRule()
-    rtp = RelationshipTypeProfile(rel_type="DIRECTED", count=2)
+    rtp = RelationshipTypeProfile(
+        rel_type="DIRECTED", count=2, source_label="Person", target_label="Movie"
+    )
     ctx = _pctx(left=rtp, right=rtp, address="DIRECTED")
     assert list(rule(ctx)) == []
 
@@ -588,83 +613,69 @@ def test_property_type_changed_noop_no_prop_name():
 
 # ---------------------------------------------------------------------------
 # EndpointsChangedRule — profile ↔ profile
+#
+# Under ADR-037 a profile's source/target labels are part of relationship
+# identity (the address), so an endpoint difference is a *different* address and
+# surfaces via RelTypeOnlyInLeft/Right — never as ENDPOINTS_CHANGED.  The profile
+# carries no direction field, so EndpointsChangedRule is always silent for
+# profile ↔ profile.
 # ---------------------------------------------------------------------------
 
 
-def test_endpoints_changed_fires_source_profile():
+def test_endpoints_changed_silent_for_profiles():
+    """EndpointsChangedRule never fires for profile operands (endpoints are identity,
+    no direction field)."""
     rule = EndpointsChangedRule()
     rtp_left = RelationshipTypeProfile(
-        rel_type="ACTED_IN", count=5, source_labels={"Person"}, target_labels={"Movie"}
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
     )
     rtp_right = RelationshipTypeProfile(
-        rel_type="ACTED_IN",
-        count=3,
-        source_labels={"Director"},
-        target_labels={"Movie"},
+        rel_type="ACTED_IN", count=3, source_label="Person", target_label="Movie"
     )
     ctx = _pctx(
         left=rtp_left,
         right=rtp_right,
-        address="ACTED_IN",
+        address="Person:ACTED_IN:Movie",
         extra={"address_type": "rel_type"},
-    )
-    issues = list(rule(ctx))
-    assert any(
-        i.code == "ENDPOINTS_CHANGED" and i.context["role"] == "source" for i in issues
-    )
-    assert all(i.severity == Severity.INFO for i in issues)
-
-
-def test_endpoints_changed_fires_target_profile():
-    rule = EndpointsChangedRule()
-    rtp_left = RelationshipTypeProfile(
-        rel_type="ACTED_IN", count=5, source_labels={"Person"}, target_labels={"Movie"}
-    )
-    rtp_right = RelationshipTypeProfile(
-        rel_type="ACTED_IN", count=3, source_labels={"Person"}, target_labels={"Film"}
-    )
-    ctx = _pctx(
-        left=rtp_left,
-        right=rtp_right,
-        address="ACTED_IN",
-        extra={"address_type": "rel_type"},
-    )
-    issues = list(rule(ctx))
-    assert any(
-        i.code == "ENDPOINTS_CHANGED" and i.context["role"] == "target" for i in issues
-    )
-
-
-def test_endpoints_changed_noop_identical_profile():
-    rule = EndpointsChangedRule()
-    rtp = RelationshipTypeProfile(
-        rel_type="ACTED_IN", count=5, source_labels={"Person"}, target_labels={"Movie"}
-    )
-    ctx = _pctx(
-        left=rtp, right=rtp, address="ACTED_IN", extra={"address_type": "rel_type"}
     )
     assert list(rule(ctx)) == []
 
 
 # ---------------------------------------------------------------------------
 # EndpointsChangedRule — definition ↔ definition
+#
+# Endpoint labels are identity; only the ``__directed__`` flag remains an
+# attribute delta, so ENDPOINTS_CHANGED is trimmed to the direction signal.
 # ---------------------------------------------------------------------------
 
 
-def test_endpoints_changed_fires_source_definition():
+def test_endpoints_changed_fires_directed_flag_definition():
+    """Same triple, differing ``__directed__`` → ENDPOINTS_CHANGED (INFO)."""
+    rule = EndpointsChangedRule()
+    ctx = _ctx(
+        left=_ActedIn,
+        right=_ActedInUndirected,
+        address="Person:ACTED_IN:Movie",
+        extra={"address_type": "rel_type"},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "ENDPOINTS_CHANGED"
+    assert issues[0].context["role"] == "directed"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_endpoints_changed_silent_for_endpoint_label_difference_definition():
+    """A source/target label difference is an identity (address) difference and is
+    NOT reported by EndpointsChangedRule (presence rules handle it)."""
     rule = EndpointsChangedRule()
     ctx = _ctx(
         left=_ActedIn,
         right=_ActedInAlt,
-        address="ACTED_IN",
+        address="Person:ACTED_IN:Movie",
         extra={"address_type": "rel_type"},
     )
-    issues = list(rule(ctx))
-    codes = [i.code for i in issues]
-    assert "ENDPOINTS_CHANGED" in codes
-    roles = {i.context["role"] for i in issues}
-    assert "source" in roles
-    assert all(i.severity == Severity.INFO for i in issues)
+    assert list(rule(ctx)) == []
 
 
 def test_endpoints_changed_noop_identical_definition():
@@ -672,7 +683,7 @@ def test_endpoints_changed_noop_identical_definition():
     ctx = _ctx(
         left=_ActedIn,
         right=_ActedIn,
-        address="ACTED_IN",
+        address="Person:ACTED_IN:Movie",
         extra={"address_type": "rel_type"},
     )
     assert list(rule(ctx)) == []
@@ -680,17 +691,26 @@ def test_endpoints_changed_noop_identical_definition():
 
 def test_endpoints_changed_noop_when_left_absent():
     rule = EndpointsChangedRule()
-    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
     ctx = _pctx(
-        left=None, right=rtp, address="ACTED_IN", extra={"address_type": "rel_type"}
+        left=None,
+        right=rtp,
+        address="Person:ACTED_IN:Movie",
+        extra={"address_type": "rel_type"},
     )
     assert list(rule(ctx)) == []
 
 
 def test_endpoints_changed_noop_for_property_address():
     rule = EndpointsChangedRule()
-    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
-    ctx = _pctx(left=rtp, right=rtp, address="ACTED_IN.role", extra=_PROP_EXTRA_REL)
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
+    ctx = _pctx(
+        left=rtp, right=rtp, address="Person:ACTED_IN:Movie.role", extra=_PROP_EXTRA_REL
+    )
     assert list(rule(ctx)) == []
 
 
@@ -704,11 +724,15 @@ def test_cardinality_changed_fires_profile():
     rtp_left = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
+        source_label="Person",
+        target_label="Movie",
         cardinality_stats=CardinalityStats(count=5, min=1, max=3, mean=2.0),
     )
     rtp_right = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
+        source_label="Person",
+        target_label="Movie",
         cardinality_stats=CardinalityStats(count=5, min=2, max=5, mean=3.0),
     )
     ctx = _pctx(
@@ -726,7 +750,13 @@ def test_cardinality_changed_fires_profile():
 def test_cardinality_changed_noop_identical_stats():
     rule = CardinalityChangedRule()
     stats = CardinalityStats(count=5, min=1, max=3, mean=2.0)
-    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5, cardinality_stats=stats)
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN",
+        count=5,
+        source_label="Person",
+        target_label="Movie",
+        cardinality_stats=stats,
+    )
     ctx = _pctx(
         left=rtp, right=rtp, address="ACTED_IN", extra={"address_type": "rel_type"}
     )
@@ -735,7 +765,9 @@ def test_cardinality_changed_noop_identical_stats():
 
 def test_cardinality_changed_noop_when_stats_none():
     rule = CardinalityChangedRule()
-    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
     ctx = _pctx(
         left=rtp, right=rtp, address="ACTED_IN", extra={"address_type": "rel_type"}
     )
@@ -801,6 +833,8 @@ def test_cardinality_changed_noop_for_property_address():
     rtp = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
+        source_label="Person",
+        target_label="Movie",
         cardinality_stats=CardinalityStats(count=5, min=1, max=3, mean=2.0),
     )
     ctx = _pctx(left=rtp, right=rtp, address="ACTED_IN.role", extra=_PROP_EXTRA_REL)
@@ -872,10 +906,14 @@ def test_cardinality_changed_noop_asymmetric_stats_none_left():
     measured data on both sides to emit a meaningful diff.
     """
     rule = CardinalityChangedRule()
-    rtp_no_stats = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp_no_stats = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
     rtp_with_stats = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
+        source_label="Person",
+        target_label="Movie",
         cardinality_stats=CardinalityStats(count=5, min=1, max=3, mean=2.0),
     )
     ctx = _pctx(
@@ -893,9 +931,13 @@ def test_cardinality_changed_noop_asymmetric_stats_none_right():
     rtp_with_stats = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
+        source_label="Person",
+        target_label="Movie",
         cardinality_stats=CardinalityStats(count=5, min=1, max=3, mean=2.0),
     )
-    rtp_no_stats = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp_no_stats = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
     ctx = _pctx(
         left=rtp_with_stats,
         right=rtp_no_stats,
@@ -982,7 +1024,9 @@ def test_rel_type_rules_noop_for_node_label_address_type():
     when extra carries address_type='node_label'."""
     left_rule = RelTypeOnlyInLeftRule()
     right_rule = RelTypeOnlyInRightRule()
-    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
 
     ctx_left_only = _pctx(
         left=rtp,
@@ -1295,8 +1339,12 @@ def test_count_changed_fires_for_node_label_when_counts_differ():
 
 def test_count_changed_fires_for_rel_type_when_counts_differ():
     rule = CountChangedRule()
-    left = RelationshipTypeProfile(rel_type="ACTED_IN", count=10)
-    right = RelationshipTypeProfile(rel_type="ACTED_IN", count=3)
+    left = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=10, source_label="Person", target_label="Movie"
+    )
+    right = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=3, source_label="Person", target_label="Movie"
+    )
     ctx = _pctx(
         left=left, right=right, address="ACTED_IN", extra={"address_type": "rel_type"}
     )

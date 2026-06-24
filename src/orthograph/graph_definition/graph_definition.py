@@ -10,6 +10,7 @@ from orthograph.diagnostics.result import (
     ValidationResult,
 )
 from orthograph.graph_definition.cardinality_checks import standard_cardinality_checks
+from orthograph.graph_definition.identity import RelTypeKey
 from orthograph.graph_definition.models import (
     ConditionalCardinality,
     NodeModel,
@@ -46,7 +47,7 @@ class GraphDefinition:
         for nt in node_types:
             self._node_type_map[nt.__label__] = nt
         for rt in relationship_types:
-            self._rel_type_map[rt.__label__] = rt
+            self._rel_type_map[rt.rel_key()] = rt
 
         self.node_types = list(node_types)
         self.relationship_types = list(relationship_types)
@@ -74,8 +75,22 @@ class GraphDefinition:
     def get_node_type(self, label: str) -> type[NodeModel] | None:
         return self._node_type_map.get(label)
 
-    def get_relationship_type(self, label: str) -> type[RelationshipModel] | None:
-        return self._rel_type_map.get(label)
+    def get_relationship_type(
+        self, source_label: str, label: str, target_label: str
+    ) -> type[RelationshipModel] | None:
+        """Resolve a relationship type by its identity triple."""
+        key = str(
+            RelTypeKey(
+                source_label=source_label, label=label, target_label=target_label
+            )
+        )
+        return self._rel_type_map.get(key)
+
+    def get_relationship_types_by_label(
+        self, label: str
+    ) -> list[type[RelationshipModel]]:
+        """All relationship-type shapes that share the bare ``label``."""
+        return [rt for rt in self.relationship_types if rt.__label__ == label]
 
     @property
     def node_labels(self) -> set[str]:
@@ -83,6 +98,11 @@ class GraphDefinition:
 
     @property
     def relationship_labels(self) -> set[str]:
+        return {rt.__label__ for rt in self.relationship_types}
+
+    @property
+    def relationship_keys(self) -> set[str]:
+        """Identity keys (``source:LABEL:target``) of all relationship types."""
         return set(self._rel_type_map.keys())
 
     # --- Relationship queries ---
@@ -124,7 +144,7 @@ class GraphDefinition:
     def get_relationship_label_enum(self) -> Any:
         return Enum(
             "RelationshipLabel",
-            {label: label for label in self._rel_type_map},
+            {label: label for label in self.relationship_labels},
         )
 
     # --- Structural validation ---
@@ -134,13 +154,13 @@ class GraphDefinition:
 
     def _check_structure(self) -> ValidationResult:
         result = ValidationResult()
-        self._check_duplicate_labels(result)
+        self._check_duplicate_keys(result)
         self._check_undefined_node_refs(result)
         self._check_isolated_nodes(result)
         self._check_cardinality_rules(result)
         return result
 
-    def _check_duplicate_labels(self, result: ValidationResult) -> None:
+    def _check_duplicate_keys(self, result: ValidationResult) -> None:
         seen_nodes: set[str] = set()
         for nt in self.node_types:
             if nt.__label__ in seen_nodes:
@@ -155,19 +175,23 @@ class GraphDefinition:
                 )
             seen_nodes.add(nt.__label__)
 
+        # Identity is the (source, label, target) triple: two types with
+        # the same label but different endpoints are distinct and allowed; only an
+        # identical triple is a duplicate.
         seen_rels: set[str] = set()
         for rt in self.relationship_types:
-            if rt.__label__ in seen_rels:
+            key = rt.rel_key()
+            if key in seen_rels:
                 result.add(
                     ValidationIssue(
-                        code="DUPLICATE_RELATIONSHIP_LABEL",
+                        code="DUPLICATE_RELATIONSHIP_TYPE",
                         severity=Severity.ERROR,
                         entity_type=EntityType.RELATIONSHIP,
-                        entity_id=rt.__label__,
-                        message=(f"Duplicate relationship label: {rt.__label__}"),
+                        entity_id=key,
+                        message=(f"Duplicate relationship type: {key}"),
                     )
                 )
-            seen_rels.add(rt.__label__)
+            seen_rels.add(key)
 
     def _check_undefined_node_refs(self, result: ValidationResult) -> None:
         node_labels = self.node_labels

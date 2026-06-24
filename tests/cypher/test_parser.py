@@ -33,6 +33,19 @@ class Collaborates(RelationshipModel):
     __directed__ = False
 
 
+# Same label, different endpoints (E50.7 multi-shape fixtures)
+class KnowsPerson(RelationshipModel):
+    __label__ = "KNOWS"
+    __source_label__ = "Person"
+    __target_label__ = "Person"
+
+
+class KnowsCompany(RelationshipModel):
+    __label__ = "KNOWS"
+    __source_label__ = "Company"
+    __target_label__ = "Company"
+
+
 @pytest.fixture()
 def graph_definition() -> GraphDefinition:
     return GraphDefinition(
@@ -48,6 +61,16 @@ def social_model() -> GraphDefinition:
         name="Social",
         node_types=[Person],
         relationship_types=[FriendOf],
+    )
+
+
+@pytest.fixture()
+def multi_shape_model() -> GraphDefinition:
+    """Model with two same-label/different-endpoint KNOWS relationship types."""
+    return GraphDefinition(
+        name="MultiShape",
+        node_types=[Person, Company],
+        relationship_types=[KnowsPerson, KnowsCompany],
     )
 
 
@@ -481,3 +504,60 @@ def test_extract_return_columns_mixed_node_and_scalar():
     assert by_name["p"].label == "Person"
     assert by_name["t"].kind == ReturnKind.SCALAR
     assert by_name["t"].label is None
+
+
+# --- E50.7: endpoint-aware relationship resolution (multi-shape) ---
+
+
+def test_validate_multi_shape_correct_person_pattern(
+    multi_shape_model: GraphDefinition,
+):
+    """Person-KNOWS->Person pattern resolves the Person shape and is valid."""
+    from orthograph.cypher.parser import validate_cypher
+
+    result = validate_cypher(
+        "MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a, b",
+        multi_shape_model,
+    )
+    assert result.is_valid
+
+
+def test_validate_multi_shape_correct_company_pattern(
+    multi_shape_model: GraphDefinition,
+):
+    """Company-KNOWS->Company pattern resolves the Company shape and is valid."""
+    from orthograph.cypher.parser import validate_cypher
+
+    result = validate_cypher(
+        "MATCH (a:Company)-[:KNOWS]->(b:Company) RETURN a, b",
+        multi_shape_model,
+    )
+    assert result.is_valid
+
+
+def test_validate_multi_shape_mismatched_endpoints_rejected(
+    multi_shape_model: GraphDefinition,
+):
+    """Person-KNOWS->Company matches no declared triple → QUERY_INVALID_ENDPOINT."""
+    from orthograph.cypher.parser import validate_cypher
+
+    result = validate_cypher(
+        "MATCH (a:Person)-[:KNOWS]->(b:Company) RETURN a, b",
+        multi_shape_model,
+    )
+    assert not result.is_valid
+    assert any(e.code == "QUERY_INVALID_ENDPOINT" for e in result.errors)
+
+
+def test_validate_multi_shape_unknown_label_still_caught(
+    multi_shape_model: GraphDefinition,
+):
+    """Unknown rel type not in multi-shape model still raises QUERY_UNKNOWN_REL_TYPE."""
+    from orthograph.cypher.parser import validate_cypher
+
+    result = validate_cypher(
+        "MATCH (a:Person)-[:FRIEND_OF]->(b:Person) RETURN a",
+        multi_shape_model,
+    )
+    assert not result.is_valid
+    assert any(e.code == "QUERY_UNKNOWN_REL_TYPE" for e in result.errors)

@@ -211,7 +211,7 @@ def test_value_scan_reports_truthful_completeness(
 def test_relationship_type_detected(memgraph_driver: Any, memgraph_clean: None) -> None:
     _seed(memgraph_driver)
     profile = MemgraphInspector().inspect(memgraph_driver)
-    assert profile.relationship_types == {"ACTED_IN"}
+    assert profile.relationship_types == {"Person:ACTED_IN:Movie"}
 
 
 @pytest.mark.memgraph
@@ -220,7 +220,7 @@ def test_relationship_property_names(
 ) -> None:
     _seed(memgraph_driver)
     profile = MemgraphInspector().inspect(memgraph_driver)
-    props = set(profile.rel_type_profiles["ACTED_IN"].property_profiles)
+    props = set(profile.rel_type_profiles["Person:ACTED_IN:Movie"].property_profiles)
     assert props == {"role"}
 
 
@@ -233,9 +233,9 @@ def test_relationship_property_names(
 def test_endpoint_labels_populated(memgraph_driver: Any, memgraph_clean: None) -> None:
     _seed(memgraph_driver)
     profile = MemgraphInspector().inspect(memgraph_driver)
-    acted_in = profile.rel_type_profiles["ACTED_IN"]
-    assert acted_in.source_labels == {"Person"}
-    assert acted_in.target_labels == {"Movie"}
+    acted_in = profile.rel_type_profiles["Person:ACTED_IN:Movie"]
+    assert acted_in.source_label == "Person"
+    assert acted_in.target_label == "Movie"
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +249,7 @@ def test_cardinality_stats_populated(
 ) -> None:
     _seed(memgraph_driver)
     profile = MemgraphInspector().inspect(memgraph_driver)
-    cs = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
+    cs = profile.rel_type_profiles["Person:ACTED_IN:Movie"].cardinality_stats
     assert cs is not None
     assert cs.min == 1
     assert cs.max == 2
@@ -264,7 +264,7 @@ def test_cardinality_not_computed_against_target_label(
     """Regression: cardinality must not be computed against Movie (target)."""
     _seed(memgraph_driver)
     profile = MemgraphInspector().inspect(memgraph_driver)
-    cs = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
+    cs = profile.rel_type_profiles["Person:ACTED_IN:Movie"].cardinality_stats
     assert cs is not None
     assert cs.min is not None and cs.min > 0, (
         "min == 0: cardinality was computed against the target label"
@@ -507,7 +507,9 @@ def test_both_sides_source_breakdown_populated(
     profile = MemgraphInspector().inspect(
         memgraph_driver, graph_definition=BOTH_SIDES_MODEL
     )
-    src = profile.rel_type_profiles["MAKES"].source_partitioned_cardinality
+    src = profile.rel_type_profiles[
+        "Operation:MAKES:Sample"
+    ].source_partitioned_cardinality
     assert src is not None, "source_partitioned_cardinality must be populated"
     assert _PAIR in src, f"expected partition {_PAIR!r} in {set(src)}"
     assert src[_PAIR].min == 2
@@ -528,7 +530,9 @@ def test_both_sides_target_breakdown_populated(
     profile = MemgraphInspector().inspect(
         memgraph_driver, graph_definition=BOTH_SIDES_MODEL
     )
-    tgt = profile.rel_type_profiles["MAKES"].target_partitioned_cardinality
+    tgt = profile.rel_type_profiles[
+        "Operation:MAKES:Sample"
+    ].target_partitioned_cardinality
     assert tgt is not None, "target_partitioned_cardinality must be populated"
     assert _PAIR in tgt, f"expected partition {_PAIR!r} in {set(tgt)}"
     assert tgt[_PAIR].min == 1
@@ -549,7 +553,7 @@ def test_both_sides_source_and_target_are_distinct(
     profile = MemgraphInspector().inspect(
         memgraph_driver, graph_definition=BOTH_SIDES_MODEL
     )
-    rtp = profile.rel_type_profiles["MAKES"]
+    rtp = profile.rel_type_profiles["Operation:MAKES:Sample"]
     assert rtp.source_partitioned_cardinality is not None
     assert rtp.target_partitioned_cardinality is not None
     assert rtp.source_partitioned_cardinality[_PAIR].min != (

@@ -142,6 +142,13 @@ A **rule** is the uniform triple:
 
 > `(declared constraint, observed measurement, satisfaction test)` addressed by
 > a key in the shared address space.
+>
+> **Amended by ADR-037 (2026-06-24, E50).** For **relationship types**, the
+> shared address-space key is no longer the bare label but the identity triple
+> `(source_label, label, target_label)`, encoded as a `RelTypeKey` string. Both
+> sides re-key on it; an endpoint difference becomes a different address
+> (`MISSING_*` / `UNEXPECTED_*`) rather than an in-type endpoint-mismatch
+> finding. The mirror principle is unchanged — only the relationship address key.
 
 Comparison becomes: *for each rule, locate the declared constraint and the
 observed measurement at its address, apply the satisfaction test, emit a

@@ -632,7 +632,9 @@ def test_inspect_cardinality_query_emits_identifier_injection_issue(
 
     catalogue = QueryCatalogue()
     catalogue.register_read(
-        InspectCardinalityQuery(identifiers={"label": "Movie", "rel_type": "LIKES"})
+        InspectCardinalityQuery(
+            identifiers={"label": "Movie", "rel_type": "LIKES", "target_label": "Movie"}
+        )
     )
 
     result = validate_query_catalogue(catalogue, graph_definition)
@@ -664,6 +666,7 @@ def test_inspect_partitioned_cardinality_query_emits_identifier_injection_issue(
             identifiers={
                 "label": "Movie",
                 "rel_type": "LIKES",
+                "endpoint_label": "Movie",
                 "source_discriminator": "kind",
                 "target_discriminator": "kind",
             }
@@ -674,6 +677,7 @@ def test_inspect_partitioned_cardinality_query_emits_identifier_injection_issue(
             identifiers={
                 "label": "Movie",
                 "rel_type": "LIKES",
+                "endpoint_label": "Movie",
                 "source_discriminator": "kind",
                 "target_discriminator": "kind",
             }

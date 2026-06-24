@@ -146,8 +146,8 @@ def profile_to_text(profile: GraphProfile) -> str:
 
     for rel_type, rtp in profile.rel_type_profiles.items():
         lines.append(f"  {rel_type} ({rtp.count} instances)")
-        lines.append(f"    sources: {sorted(rtp.source_labels)}")
-        lines.append(f"    targets: {sorted(rtp.target_labels)}")
+        lines.append(f"    source: {rtp.source_label}")
+        lines.append(f"    target: {rtp.target_label}")
         if rtp.cardinality_stats:
             cs = rtp.cardinality_stats
             mean_str = f"{cs.mean:.1f}" if cs.mean is not None else "n/a"

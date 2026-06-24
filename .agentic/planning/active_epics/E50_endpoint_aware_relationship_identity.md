@@ -374,6 +374,63 @@ that changed, escalate rather than force-fit the assertion.
 
 ---
 
+### E50.11 — Docstring & comment hygiene after the endpoint-identity rewrite
+
+> **Model: Haiku.** Pure documentation/comment cleanup — **no code logic, no test logic, no
+> assertion changes**. Verification is "suite still green + grep finds nothing stale".
+
+**Why:** E50.2–E50.6 changed the relationship address space from bare labels to
+`RelTypeKey` triples and deleted `InvalidEndpointRule`, but several **module docstrings,
+class docstrings, and `#` comments** still describe the old world (rule counts, the old
+`ENDPOINTS_CHANGED` source/target-label behaviour, `INVALID_ENDPOINT`, "keyed by label").
+These are stale prose only; the code and tests are already correct.
+
+**Operation — fix the wording in these exact spots (do NOT touch any executable line):**
+
+1. `tests/comparison/test_rules.py`
+   - Module docstring (top of file, ~line 10–15): the line `* standard_rules() returns all
+     ten rule instances in order.` → say **eleven** (the standard set is now 11 rules after
+     `InvalidEndpointRule` was deleted; confirm with
+     `len(standard_rules()) == 11`). If the docstring still mentions `InvalidEndpointRule`
+     or `INVALID_ENDPOINT`, remove that mention.
+
+2. `tests/comparison/test_diff_rules.py`
+   - Module docstring (top of file, ~line 5–14): the bullet
+     `` - ``ENDPOINTS_CHANGED`` for both profile and definition shapes.`` is now wrong —
+     reword to: `ENDPOINTS_CHANGED` fires **only** for the definition `__directed__`-flag
+     delta (it is silent for profiles; endpoint-label differences surface as
+     `REL_TYPE_ONLY_IN_LEFT`/`_RIGHT`). Also fix `` ``diff_rules()`` factory returns the
+     nine rules in spec order.`` if the stated count no longer matches
+     `len(diff_rules())` — verify the number and write the correct word.
+
+3. `src/orthograph/comparison/rules.py`
+   - Re-read every class docstring and `#` comment for the words "label", "INVALID_ENDPOINT",
+     or "endpoint" and confirm they describe the *new* keyed-by-`RelTypeKey` address space.
+     The `CardinalityViolationRule` messages/docstrings that say `Relationship '<label>'`
+     now interpolate a `RelTypeKey` string (`source:LABEL:target`) — this is intentional
+     (the address *is* the identity); only correct prose that is now factually false, do
+     **not** change any emitted-message f-string.
+
+4. `src/orthograph/comparison/diff_rules.py`
+   - Same pass: confirm the module docstring's "Address conventions" block and any class
+     docstrings match the keyed address space and the trimmed `EndpointsChangedRule`.
+
+**Tests / verify:**
+```
+pwsh> python -m pytest tests/comparison -q          # unchanged: still green
+pwsh> rg -n "INVALID_ENDPOINT|all ten rule|source/target label sets" src/orthograph/comparison tests/comparison
+pwsh> python -m pre_commit run --files <files you changed>
+```
+The `rg` line must return **no** hits in docstrings/comments after the edit (the only
+legitimate remaining `INVALID_ENDPOINT` hits are the *Cypher-tool* `QUERY_INVALID_ENDPOINT`
+code in `src/orthograph/cypher/` — those are out of scope for this task; do not touch them).
+
+**Care / risks:** comments/docstrings only. If you find a *code* line that still reads
+`source_labels`/`target_labels` or keys a dict by a bare label, that is a real bug from an
+earlier task — **stop and escalate**, do not silently fix it under this doc-only task.
+
+---
+
 ## Success Criteria
 
 - [ ] **ADR-037** written and Accepted; ADR-014/015/034 amendments cross-linked.

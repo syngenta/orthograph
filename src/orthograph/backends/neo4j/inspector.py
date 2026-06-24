@@ -8,8 +8,8 @@ from orthograph.backends.neo4j.queries import (
     ApocNodePropertiesQuery,
     ApocNodeTypeCountsQuery,
     ApocNodeValueHistogramQuery,
-    ApocRelPropertiesQuery,
     ApocRelTypeCountsQuery,
+    ApocRelTypesQuery,
     ApocRelValueHistogramQuery,
     CypherNodePropertiesQuery,
     CypherNodeValueHistogramQuery,
@@ -24,7 +24,6 @@ from orthograph.backends.neo4j.queries import (
     NodePresentCountQuery,
     NodePropertyRow,
     RelCountQuery,
-    RelPresentCountQuery,
     TopNParams,
     TypeCountRow,
     ValueHistogramRow,
@@ -43,6 +42,7 @@ from orthograph.graph_profile.models import (
     NodeTypeProfile,
     PropertyProfile,
     RelationshipTypeProfile,
+    RelTypeKey,
 )
 from orthograph.graph_profile.queries.shared import (
     InspectCardinalityQuery,
@@ -155,18 +155,26 @@ class Neo4jInspector(CypherInspector):
             )
         }
 
-        # SCHEMA fetches the db.schema.* type maps once (bulk), then merges them
-        # into the per-label/rel-type pure-Cypher scan results.
+        # The relationship property *type* map is bulk-fetched once, keyed by the
+        # bare rel type: SCHEMA via db.schema.relTypeProperties,
+        # APOC via apoc.meta.relTypeProperties.  Per-shape property *counts* come
+        # from the endpoint-filtered pattern scan, not this map.
         node_type_map: SchemaTypeMap = {}
         rel_type_map: SchemaTypeMap = {}
         if strategy is Neo4jInspectionStrategy.SCHEMA:
             node_type_map = self._fetch_node_type_map(connection, execute_kwargs)
-            rel_type_map = self._fetch_rel_type_map(connection, execute_kwargs)
+            rel_type_map = self._fetch_rel_type_map(
+                connection, DbSchemaRelTypesQuery, execute_kwargs
+            )
+        elif strategy is Neo4jInspectionStrategy.APOC:
+            rel_type_map = self._fetch_rel_type_map(
+                connection, ApocRelTypesQuery, execute_kwargs
+            )
 
         # Type counts need the APOC runtime-type function (apoc.meta.cypher.type).
         # APOC strategy guarantees it; SCHEMA must gate at runtime — it is the
         # auto-detected fallback precisely when apoc.meta is absent, so we probe
-        # once here.  When absent, type counts degrade to {} (ADR-035 §5), never
+        # once here.  When absent, type counts degrade to {} (honesty principle), never
         # an apoc.meta.cypher.type call against a missing function.
         apoc_available = self._is_apoc_available(strategy, connection, execute_kwargs)
 
@@ -188,17 +196,32 @@ class Neo4jInspector(CypherInspector):
 
         rel_profiles: dict[str, RelationshipTypeProfile] = {}
         for rt in sorted(rel_types):
-            rel_profiles[rt] = self._build_rel_profile(
-                connection,
-                rt,
-                labels,
-                strategy,
-                rel_type_map,
-                constraints,
-                apoc_available,
-                execute_kwargs,
-                graph_definition=graph_definition,
+            # Discover the distinct endpoint shapes of this bare rel type, then
+            # build one profile per (source, rel, target) shape.
+            pairs = self._discover_endpoint_pairs(
+                connection, rt, InspectEndpointLabelsQuery, **execute_kwargs
             )
+            for source_label, target_label in pairs:
+                profile = self._build_rel_profile(
+                    connection,
+                    rt,
+                    source_label,
+                    target_label,
+                    strategy,
+                    rel_type_map,
+                    constraints,
+                    apoc_available,
+                    execute_kwargs,
+                    graph_definition=graph_definition,
+                )
+                key = str(
+                    RelTypeKey(
+                        source_label=source_label,
+                        label=rt,
+                        target_label=target_label,
+                    )
+                )
+                rel_profiles[key] = profile
 
         return GraphProfile(
             source="neo4j",
@@ -254,7 +277,7 @@ class Neo4jInspector(CypherInspector):
         Only relevant when a value scan will run (``value_counts_top_n`` set).
         The APOC strategy guarantees ``apoc.meta`` is present.  SCHEMA is the
         auto-detected fallback when ``apoc.meta`` is absent, so it must probe at
-        runtime (ADR-035 §5) — an explicit ``strategy=SCHEMA`` on a server that
+        runtime (honesty principle) — an explicit ``strategy=SCHEMA`` on a server that
         *does* have APOC may still use the type function.  CYPHER never has it.
         """
         if not self._value_counts_top_n:
@@ -283,11 +306,16 @@ class Neo4jInspector(CypherInspector):
         return type_map
 
     def _fetch_rel_type_map(
-        self, connection: Any, execute_kwargs: dict[str, Any]
+        self, connection: Any, query_cls: Any, execute_kwargs: dict[str, Any]
     ) -> SchemaTypeMap:
-        """Index db.schema rel-property types by (rel_type, property_name)."""
+        """Index bulk rel-property types by (rel_type, property_name).
+
+        ``query_cls`` is ``DbSchemaRelTypesQuery`` (SCHEMA strategy) or
+        ``ApocRelTypesQuery`` (APOC strategy); both yield the same
+        ``DbSchemaRelTypeRow`` shape keyed by the bare rel type.
+        """
         type_map: SchemaTypeMap = {}
-        for row in self._run_query(connection, DbSchemaRelTypesQuery, **execute_kwargs):
+        for row in self._run_query(connection, query_cls, **execute_kwargs):
             if row.property_name is None:
                 continue
             type_map.setdefault(row.rel_type, {})[row.property_name] = (
@@ -375,7 +403,8 @@ class Neo4jInspector(CypherInspector):
         self,
         connection: Any,
         rel_type: str,
-        labels: set[str],
+        source_label: str,
+        target_label: str,
         strategy: Neo4jInspectionStrategy,
         rel_type_map: SchemaTypeMap,
         constraints: list[ConstraintInfo],
@@ -384,55 +413,58 @@ class Neo4jInspector(CypherInspector):
         *,
         graph_definition: GraphDefinition | None = None,
     ) -> RelationshipTypeProfile:
-        query_cls = (
-            ApocRelPropertiesQuery
-            if strategy is Neo4jInspectionStrategy.APOC
-            else CypherRelPropertiesQuery
-        )
+        """Build one profile for the ``(source_label, rel_type, target_label)`` shape.
+
+        Per-shape: the property *counts* and value scans are
+        endpoint-filtered pattern scans; ``observed_types`` come from the bulk
+        bare-type ``rel_type_map`` (a property key's stored type does not vary by
+        endpoint pair).
+        """
+        shape_ids = {
+            "source_label": source_label,
+            "rel_type": rel_type,
+            "target_label": target_label,
+        }
+        # Per-shape property scan via endpoint-filtered pattern Cypher (all
+        # strategies — APOC meta cannot be endpoint-filtered).
         rows: list[NodePropertyRow] = self._run_query(
-            connection, query_cls, identifiers={"rel_type": rel_type}, **execute_kwargs
+            connection,
+            CypherRelPropertiesQuery,
+            identifiers=shape_ids,
+            **execute_kwargs,
         )
-        # Instance count from a dedicated count() — independent of properties and
-        # the authoritative total_count denominator on the APOC strategy (ADR-036).
-        total_count = self._fetch_rel_count(connection, rel_type, execute_kwargs)
-        is_apoc = strategy is Neo4jInspectionStrategy.APOC
+        # Per-shape instance count from a dedicated endpoint-filtered count().
+        total_count = self._fetch_rel_count(
+            connection, rel_type, source_label, target_label, execute_kwargs
+        )
+        # observed_types: bulk, keyed by bare rel type (same for every shape).
         schema_types = rel_type_map.get(rel_type, {})
         props: dict[str, PropertyProfile] = {}
         for row in rows:
             if row.property_name is None:
                 continue
-            observed_types = (
-                schema_types.get(row.property_name, [])
-                if strategy is Neo4jInspectionStrategy.SCHEMA
-                else row.property_types
-            )
+            observed_types = schema_types.get(row.property_name, [])
             type_counts, value_dist, present_count = self._fetch_rel_value_scan(
                 connection,
                 rel_type,
+                source_label,
+                target_label,
                 row.property_name,
                 row.property_observations,
                 apoc_available,
                 execute_kwargs,
             )
-            #  correct the APOC relationship-property undercount on the
-            # no-scan path ( with a real count() … IS NOT
-            # NULL, and use the property-independent instance count for total.
-            prop_present_count, prop_total_count = self._resolve_rel_counts(
-                connection,
-                rel_type,
-                row.property_name,
-                is_apoc,
-                scan_ran=bool(self._value_counts_top_n) and apoc_available,
-                scan_present_count=present_count,
-                fallback_present_count=row.property_observations,
-                apoc_total_observations=row.total_observations,
-                instance_count=total_count,
-                execute_kwargs=execute_kwargs,
+            # The endpoint-filtered pattern scan already yields a truthful per-shape
+            # present_count; total is the per-shape instance count (the ADR-036
+            # correction, now intrinsic to the per-pair pattern scan).
+            scan_ran = bool(self._value_counts_top_n) and apoc_available
+            prop_present_count = (
+                present_count if scan_ran else row.property_observations
             )
             props[row.property_name] = PropertyProfile(
                 name=row.property_name,
                 present_count=prop_present_count,
-                total_count=prop_total_count,
+                total_count=total_count,
                 observed_types=observed_types,
                 constraint_required=is_presence_constraint_for(
                     constraints, "RELATIONSHIP", rel_type, row.property_name
@@ -441,25 +473,31 @@ class Neo4jInspector(CypherInspector):
                 value_distribution=value_dist,
             )
 
-        base = RelationshipTypeProfile(
-            rel_type=rel_type, count=total_count, property_profiles=props
-        )
-        enriched = self._enrich_with_endpoints_and_cardinality(
-            connection,
-            base,
-            InspectEndpointLabelsQuery,
-            InspectCardinalityQuery,
-            fallback_labels=labels,
-            **execute_kwargs,
+        enriched = RelationshipTypeProfile(
+            rel_type=rel_type,
+            count=total_count,
+            source_label=source_label,
+            target_label=target_label,
+            property_profiles=props,
+            cardinality_stats=self._cardinality_for_shape(
+                connection,
+                rel_type,
+                source_label,
+                target_label,
+                InspectCardinalityQuery,
+                **execute_kwargs,
+            ),
         )
 
         # Partitioned cardinality — only for conditional relationship types when
-        # a definition is provided.  Non-conditional and definition-less cases
-        # leave both per-side fields None (comparison reports
-        # CARDINALITY_UNVERIFIABLE).  A type conditional on both endpoints is
-        # profiled on both sides.
+        # a definition is provided.  Resolve the declared shape by its identity
+        # triple.  Non-conditional and definition-less cases leave both
+        # per-side fields None (comparison reports CARDINALITY_UNVERIFIABLE).  A
+        # type conditional on both endpoints is profiled on both sides.
         if graph_definition is not None:
-            rel_model = graph_definition.get_relationship_type(rel_type)
+            rel_model = graph_definition.get_relationship_type(
+                source_label, rel_type, target_label
+            )
             if rel_model is not None:
                 for card_attr, side, side_query in (
                     (
@@ -516,23 +554,32 @@ class Neo4jInspector(CypherInspector):
         return rows[0].count if rows else 0
 
     def _fetch_rel_count(
-        self, connection: Any, rel_type: str, execute_kwargs: dict[str, Any]
+        self,
+        connection: Any,
+        rel_type: str,
+        source_label: str,
+        target_label: str,
+        execute_kwargs: dict[str, Any],
     ) -> int:
-        """Return the edge count for ``rel_type`` via a dedicated ``count()``.
+        """Per-shape edge count via an endpoint-filtered ``count()``.
 
-        Independent of properties: a relationship type with no properties still
-        has a truthful instance count.
+        Counts only edges of ``rel_type`` between ``source_label`` and
+        ``target_label``, so the count belongs to one relationship shape.
         """
         rows = self._run_query(
             connection,
             RelCountQuery,
-            identifiers={"rel_type": rel_type},
+            identifiers={
+                "source_label": source_label,
+                "rel_type": rel_type,
+                "target_label": target_label,
+            },
             **execute_kwargs,
         )
         return rows[0].count if rows else 0
 
     # ------------------------------------------------------------------
-    # Internal — APOC no-scan count correction (ADR-036)
+    # Internal — APOC no-scan count correction
     # ------------------------------------------------------------------
 
     def _resolve_node_counts(
@@ -553,7 +600,7 @@ class Neo4jInspector(CypherInspector):
         On the CYPHER / SCHEMA strategies the pure-Cypher property scan already
         yields truthful counts, so they are returned unchanged.
 
-        On the APOC strategy (ADR-036) APOC's sampled ``propertyObservations`` /
+        On the APOC strategy APOC's sampled ``propertyObservations`` /
         ``totalObservations`` can be unreliable.  When the value scan already ran
         (``value_counts_top_n`` set) it supplied an authoritative
         ``present_count`` which is used as-is; otherwise a dedicated
@@ -568,35 +615,6 @@ class Neo4jInspector(CypherInspector):
             if scan_ran
             else self._fetch_node_present_count(
                 connection, label, property_name, execute_kwargs
-            )
-        )
-        return present_count, instance_count
-
-    def _resolve_rel_counts(
-        self,
-        connection: Any,
-        rel_type: str,
-        property_name: str,
-        is_apoc: bool,
-        scan_ran: bool,
-        scan_present_count: int,
-        fallback_present_count: int,
-        apoc_total_observations: int,
-        instance_count: int,
-        execute_kwargs: dict[str, Any],
-    ) -> tuple[int, int]:
-        """Resolve ``(present_count, total_count)`` for one relationship property.
-
-        Mirrors :meth:`_resolve_node_counts`; on the APOC strategy this corrects
-        the ``apoc.meta.relTypeProperties`` undercount (the 100-vs-172 finding).
-        """
-        if not is_apoc:
-            return fallback_present_count, apoc_total_observations
-        present_count = (
-            scan_present_count
-            if scan_ran
-            else self._fetch_rel_present_count(
-                connection, rel_type, property_name, execute_kwargs
             )
         )
         return present_count, instance_count
@@ -617,24 +635,8 @@ class Neo4jInspector(CypherInspector):
         )
         return rows[0].present_count if rows else 0
 
-    def _fetch_rel_present_count(
-        self,
-        connection: Any,
-        rel_type: str,
-        property_name: str,
-        execute_kwargs: dict[str, Any],
-    ) -> int:
-        """True non-null count for one relationship property via ``count()``."""
-        rows = self._run_query(
-            connection,
-            RelPresentCountQuery,
-            identifiers={"rel_type": rel_type, "property_name": property_name},
-            **execute_kwargs,
-        )
-        return rows[0].present_count if rows else 0
-
     # ------------------------------------------------------------------
-    # Internal — value scan helpers (E46.2, ADR-035)
+    # Internal — value scan helpers (E46.2)
     # ------------------------------------------------------------------
 
     def _fetch_node_value_scan(
@@ -708,7 +710,7 @@ class Neo4jInspector(CypherInspector):
         # Do NOT zero out present_count — that would silently understate a
         # property that has values.  Return the fallback with {} / None so the
         # property keeps its true presence while honestly reporting no counts
-        # (ADR-035 §5: never invent, never silently regress presence).
+        # (honesty principle: never invent, never silently regress presence).
         if not type_counts and fallback_present_count > 0:
             return {}, None, fallback_present_count
 
@@ -726,24 +728,30 @@ class Neo4jInspector(CypherInspector):
         self,
         connection: Any,
         rel_type: str,
+        source_label: str,
+        target_label: str,
         property_name: str,
         fallback_present_count: int,
         apoc_available: bool,
         execute_kwargs: dict[str, Any],
     ) -> tuple[dict[str, int], BoundedDistribution | None, int]:
-        """Run the optional value scan for one relationship property.
+        """Run the optional per-shape value scan for one relationship property.
 
         Returns ``(observed_type_counts, value_distribution, present_count)``.
-        Mirrors :meth:`_fetch_node_value_scan` — in particular the authoritative
-        ``present_count`` from the real scan, which corrects APOC's
-        ``apoc.meta.relTypeProperties`` undercount for relationship properties,
-        and the E46.6 pure-Cypher scalar-histogram fallback when APOC is absent.
+        Endpoint-filtered: the type-count / histogram scans target
+        only edges of the ``(source_label, rel_type, target_label)`` shape, so the
+        returned ``present_count`` is the authoritative per-shape non-null count.
         """
         top_n = self._value_counts_top_n
         if not top_n:
             return {}, None, fallback_present_count
 
-        identifiers = {"rel_type": rel_type, "property_name": property_name}
+        identifiers = {
+            "source_label": source_label,
+            "rel_type": rel_type,
+            "target_label": target_label,
+            "property_name": property_name,
+        }
 
         if not apoc_available:
             # fallback: scalar-only histogram (toStringOrNull), no type
@@ -769,7 +777,7 @@ class Neo4jInspector(CypherInspector):
 
         # Honest degradation: scan classified nothing but APOC reported presence.
         # Keep the fallback presence; report no counts rather than zeroing
-        # present_count (mirrors _fetch_node_value_scan; ADR-035 §5).
+        # present_count (mirrors _fetch_node_value_scan; honesty principle).
         if not type_counts and fallback_present_count > 0:
             return {}, None, fallback_present_count
 
@@ -836,7 +844,7 @@ def _build_value_distribution(
     The DB query already applies ``LIMIT $top_n``; the inspector receives at most
     ``top_n`` rows.  If the sum of their counts equals ``present_count`` the
     histogram is complete (``sample_complete=True``); otherwise the remainder
-    folds into ``other_count`` (ADR-035 §4).
+    folds into ``other_count`` (honesty principle).
 
     Completeness is inferred purely from count arithmetic: ``top_total >= present_count``.
     This is correct because every DB row has ``value_count >= 1`` (the GROUP BY

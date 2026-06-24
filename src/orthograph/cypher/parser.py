@@ -396,7 +396,7 @@ def _check_rel_types(
     result: ValidationResult,
 ) -> None:
     for rel_type in info.relationship_types:
-        if graph_definition.get_relationship_type(rel_type) is None:
+        if not graph_definition.get_relationship_types_by_label(rel_type):
             result.add(
                 ValidationIssue(
                     code="QUERY_UNKNOWN_REL_TYPE",
@@ -420,7 +420,8 @@ def _check_properties(
             continue
 
         node_type = graph_definition.get_node_type(label)
-        rel_type = graph_definition.get_relationship_type(label)
+        rel_shapes = graph_definition.get_relationship_types_by_label(label)
+        rel_type = rel_shapes[0] if rel_shapes else None
         entity_cls = node_type or rel_type
         if entity_cls is None:
             continue
@@ -452,21 +453,20 @@ def _pattern_endpoint_issue(
     if not pat.relationship_type or not pat.source_label or not pat.target_label:
         return None
 
-    rel_type = graph_definition.get_relationship_type(pat.relationship_type)
-    if rel_type is None:
-        return None
-
-    expected_src = rel_type.__source_label__
-    expected_tgt = rel_type.__target_label__
-    forward_ok = pat.source_label == expected_src and pat.target_label == expected_tgt
-    reverse_ok = (
-        not rel_type.__directed__
-        and pat.source_label == expected_tgt
-        and pat.target_label == expected_src
+    rel_type = graph_definition.get_relationship_type(
+        pat.source_label, pat.relationship_type, pat.target_label
     )
-    if forward_ok or reverse_ok:
-        return None
+    if rel_type is not None:
+        return None  # forward match
 
+    # Check undirected reverse: try (target, label, source)
+    rel_type_rev = graph_definition.get_relationship_type(
+        pat.target_label, pat.relationship_type, pat.source_label
+    )
+    if rel_type_rev is not None and not rel_type_rev.__directed__:
+        return None  # reverse match on undirected type
+
+    # No declared triple matches this pattern
     return ValidationIssue(
         code="QUERY_INVALID_ENDPOINT",
         severity=Severity.ERROR,
@@ -474,12 +474,10 @@ def _pattern_endpoint_issue(
         entity_id=pat.relationship_type,
         message=(
             f"Query pattern (:{pat.source_label})-[:{pat.relationship_type}]->"
-            f"(:{pat.target_label}) does not match model "
-            f"(:{expected_src})-[:{pat.relationship_type}]->(:{expected_tgt})"
+            f"(:{pat.target_label}) does not match any declared "
+            f"{pat.relationship_type!r} relationship type"
         ),
         context={
-            "expected_source": expected_src,
-            "expected_target": expected_tgt,
             "actual_source": pat.source_label,
             "actual_target": pat.target_label,
         },

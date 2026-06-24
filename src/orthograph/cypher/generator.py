@@ -164,9 +164,29 @@ class CypherGenerator:
         src_uid = data["__source_uid__"]
         tgt_uid = data["__target_uid__"]
 
-        rel_type = self.graph_definition.get_relationship_type(label)
-        if rel_type is None:
-            raise CypherUnknownLabelError(f"Unknown relationship label: {label}")
+        src_label_hint: str | None = data.get("__source_label__")
+        tgt_label_hint: str | None = data.get("__target_label__")
+
+        if src_label_hint is not None and tgt_label_hint is not None:
+            rel_type = self.graph_definition.get_relationship_type(
+                src_label_hint, label, tgt_label_hint
+            )
+            if rel_type is None:
+                raise CypherUnknownLabelError(
+                    f"Unknown relationship label: {label} "
+                    f"(no shape {src_label_hint}-{label}->{tgt_label_hint})"
+                )
+        else:
+            shapes = self.graph_definition.get_relationship_types_by_label(label)
+            if not shapes:
+                raise CypherUnknownLabelError(f"Unknown relationship label: {label}")
+            if len(shapes) > 1:
+                raise CypherUnknownLabelError(
+                    f"Relationship label '{label}' is ambiguous: "
+                    f"{len(shapes)} shapes declared. "
+                    "Supply __source_label__ and __target_label__ in data to resolve."
+                )
+            rel_type = shapes[0]
 
         safe_src_label, safe_src_uid_field, safe_tgt_label, safe_tgt_uid_field = (
             _resolve_rel_endpoints(rel_type, label, self.graph_definition)

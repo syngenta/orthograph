@@ -47,11 +47,11 @@ def _complete_profile(graph_definition: GraphDefinition) -> GraphProfile:
             )
             for name, info in specs.items()
         }
-        rel_profiles[rt.__label__] = RelationshipTypeProfile(
+        rel_profiles[rt.rel_key()] = RelationshipTypeProfile(
             rel_type=rt.__label__,
             count=200,
-            source_labels={rt.__source_label__},
-            target_labels={rt.__target_label__},
+            source_label=rt.__source_label__,
+            target_label=rt.__target_label__,
             property_profiles=props,
         )
 
@@ -142,19 +142,19 @@ def test_compare_missing_rel_type(
 ):
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
-    del profiles["ACTED_IN"]
+    del profiles["Person:ACTED_IN:Movie"]
     profile = profile.model_copy(update={"rel_type_profiles": profiles})
     result = compare_profile_to_definition(profile, filmography_model)
     assert not result.is_valid
     missing = [e for e in result.errors if e.code == "MISSING_REL_TYPE"]
     assert len(missing) == 1
-    assert missing[0].entity_id == "ACTED_IN"
+    assert missing[0].entity_id == "Person:ACTED_IN:Movie"
     spurious = [
         i
         for i in result.issues
-        if i.entity_id == "ACTED_IN" and i.code != "MISSING_REL_TYPE"
+        if i.entity_id == "Person:ACTED_IN:Movie" and i.code != "MISSING_REL_TYPE"
     ]
-    assert spurious == [], f"Spurious issues at 'ACTED_IN': {spurious}"
+    assert spurious == [], f"Spurious issues at 'Person:ACTED_IN:Movie': {spurious}"
 
 
 def test_compare_unexpected_rel_type(
@@ -162,19 +162,24 @@ def test_compare_unexpected_rel_type(
 ):
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
-    profiles["FRIEND_OF"] = RelationshipTypeProfile(rel_type="FRIEND_OF", count=10)
+    profiles["Person:FRIEND_OF:Person"] = RelationshipTypeProfile(
+        rel_type="FRIEND_OF",
+        count=10,
+        source_label="Person",
+        target_label="Person",
+    )
     profile = profile.model_copy(update={"rel_type_profiles": profiles})
     result = compare_profile_to_definition(profile, filmography_model)
     assert result.is_valid
     warnings = [w for w in result.warnings if w.code == "UNEXPECTED_REL_TYPE"]
     assert len(warnings) == 1
-    assert warnings[0].entity_id == "FRIEND_OF"
+    assert warnings[0].entity_id == "Person:FRIEND_OF:Person"
     spurious = [
         i
         for i in result.issues
-        if i.entity_id == "FRIEND_OF" and i.code != "UNEXPECTED_REL_TYPE"
+        if i.entity_id == "Person:FRIEND_OF:Person" and i.code != "UNEXPECTED_REL_TYPE"
     ]
-    assert spurious == [], f"Spurious issues at 'FRIEND_OF': {spurious}"
+    assert spurious == [], f"Spurious issues at 'Person:FRIEND_OF:Person': {spurious}"
 
 
 # --- Property checks ---
@@ -265,20 +270,25 @@ def test_compare_unexpected_property(
 # --- Endpoint checks ---
 
 
-def test_compare_invalid_endpoint(
+def test_compare_endpoint_mismatch_reclassifies(
     filmography_model: GraphDefinition,
 ):
+    """Under ADR-037 a wrong endpoint is a different identity (address), so it
+    reclassifies to MISSING_REL_TYPE + UNEXPECTED_REL_TYPE — never INVALID_ENDPOINT."""
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
-    acted_in = profiles["ACTED_IN"]
-    profiles["ACTED_IN"] = acted_in.model_copy(
-        update={"source_labels": {"City"}}  # wrong source
+    acted_in = profiles.pop("Person:ACTED_IN:Movie")
+    # Re-home the observed ACTED_IN onto a wrong source (City) → new identity.
+    profiles["City:ACTED_IN:Movie"] = acted_in.model_copy(
+        update={"source_label": "City"}
     )
     profile = profile.model_copy(update={"rel_type_profiles": profiles})
     result = compare_profile_to_definition(profile, filmography_model)
     assert not result.is_valid
-    endpoint_errors = [e for e in result.errors if e.code == "INVALID_ENDPOINT"]
-    assert len(endpoint_errors) == 1
+    codes = {e.code for e in result.issues}
+    assert "INVALID_ENDPOINT" not in codes
+    assert "MISSING_REL_TYPE" in codes  # declared Person:ACTED_IN:Movie not observed
+    assert "UNEXPECTED_REL_TYPE" in {w.code for w in result.warnings}
 
 
 # --- Cardinality checks ---
@@ -289,8 +299,8 @@ def test_compare_cardinality_violation(
 ):
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
-    lives_in = profiles["LIVES_IN"]
-    profiles["LIVES_IN"] = lives_in.model_copy(
+    lives_in = profiles["Person:LIVES_IN:City"]
+    profiles["Person:LIVES_IN:City"] = lives_in.model_copy(
         update={
             "cardinality_stats": CardinalityStats(
                 count=100,
@@ -378,11 +388,11 @@ def test_compare_undirected_cross_type_reverse_valid():
 
     # Build profile with reversed endpoints
     rel_profiles = {
-        "R_COLLABORATES": RelationshipTypeProfile(
+        "RCompany:R_COLLABORATES:RPerson": RelationshipTypeProfile(
             rel_type="R_COLLABORATES",
             count=200,
-            source_labels={"RCompany"},  # reversed
-            target_labels={"RPerson"},  # reversed
+            source_label="RCompany",  # reversed
+            target_label="RPerson",  # reversed
         ),
     }
     node_profiles = {
@@ -422,7 +432,8 @@ def test_compare_undirected_cross_type_reverse_valid():
 
 
 def test_compare_directed_cross_type_reverse_rejected():
-    """Directed: reversed source/target is rejected."""
+    """Directed: reversed source/target is rejected (as a presence mismatch under
+    ADR-037 triple identity)."""
     from orthograph.graph_definition.models import NodeModel, RelationshipModel
 
     class DPerson(NodeModel):
@@ -448,11 +459,11 @@ def test_compare_directed_cross_type_reverse_rejected():
     )
 
     rel_profiles = {
-        "D_ACTED_IN": RelationshipTypeProfile(
+        "DMovie:D_ACTED_IN:DPerson": RelationshipTypeProfile(
             rel_type="D_ACTED_IN",
             count=200,
-            source_labels={"DMovie"},  # wrong
-            target_labels={"DPerson"},  # wrong
+            source_label="DMovie",  # wrong
+            target_label="DPerson",  # wrong
         ),
     }
     node_profiles = {
@@ -487,8 +498,13 @@ def test_compare_directed_cross_type_reverse_rejected():
         rel_type_profiles=rel_profiles,
     )
     result = compare_profile_to_definition(profile, graph_definition)
-    endpoint_errors = [e for e in result.errors if e.code == "INVALID_ENDPOINT"]
-    assert len(endpoint_errors) >= 1  # both source and target are wrong: 2 errors
+    # Under ADR-037 reversed endpoints are a different identity, so the
+    # declared shape is MISSING and the observed (reversed) shape is UNEXPECTED.
+    # INVALID_ENDPOINT no longer exists.
+    codes = {i.code for i in result.issues}
+    assert "INVALID_ENDPOINT" not in codes
+    assert "MISSING_REL_TYPE" in codes
+    assert "UNEXPECTED_REL_TYPE" in codes
 
 
 # ---------------------------------------------------------------------------
@@ -535,22 +551,23 @@ def test_missing_rel_type_does_not_emit_missing_node_label(
     zero MISSING_NODE_LABEL for the same entity id."""
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
-    del profiles["ACTED_IN"]
+    del profiles["Person:ACTED_IN:Movie"]
     profile = profile.model_copy(update={"rel_type_profiles": profiles})
     result = compare_profile_to_definition(profile, filmography_model)
 
     spurious = [
         i
         for i in result.issues
-        if i.code == "MISSING_NODE_LABEL" and i.entity_id == "ACTED_IN"
+        if i.code == "MISSING_NODE_LABEL" and i.entity_id == "Person:ACTED_IN:Movie"
     ]
     assert spurious == [], (
-        f"MISSING_NODE_LABEL emitted at rel-type address 'ACTED_IN': {spurious}"
+        "MISSING_NODE_LABEL emitted at rel-type address "
+        f"'Person:ACTED_IN:Movie': {spurious}"
     )
 
     rel_errors = [i for i in result.errors if i.code == "MISSING_REL_TYPE"]
     assert len(rel_errors) == 1
-    assert rel_errors[0].entity_id == "ACTED_IN"
+    assert rel_errors[0].entity_id == "Person:ACTED_IN:Movie"
 
 
 def test_unexpected_node_label_does_not_emit_unexpected_rel_type(
@@ -584,21 +601,25 @@ def test_unexpected_rel_type_does_not_emit_unexpected_node_label(
     UNEXPECTED_NODE_LABEL at the same address."""
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
-    profiles["FRIEND_OF"] = RelationshipTypeProfile(rel_type="FRIEND_OF", count=10)
+    profiles["Person:FRIEND_OF:Person"] = RelationshipTypeProfile(
+        rel_type="FRIEND_OF", count=10, source_label="Person", target_label="Person"
+    )
     profile = profile.model_copy(update={"rel_type_profiles": profiles})
     result = compare_profile_to_definition(profile, filmography_model)
 
     spurious = [
         i
         for i in result.issues
-        if i.code == "UNEXPECTED_NODE_LABEL" and i.entity_id == "FRIEND_OF"
+        if i.code == "UNEXPECTED_NODE_LABEL"
+        and i.entity_id == "Person:FRIEND_OF:Person"
     ]
     assert spurious == [], (
-        f"UNEXPECTED_NODE_LABEL emitted at rel address 'FRIEND_OF': {spurious}"
+        "UNEXPECTED_NODE_LABEL emitted at rel address "
+        f"'Person:FRIEND_OF:Person': {spurious}"
     )
 
     rel_warnings = [i for i in result.warnings if i.code == "UNEXPECTED_REL_TYPE"]
-    assert any(w.entity_id == "FRIEND_OF" for w in rel_warnings)
+    assert any(w.entity_id == "Person:FRIEND_OF:Person" for w in rel_warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -650,9 +671,11 @@ def test_unexpected_rel_type_properties_do_not_emit_unexpected_property(
     UNEXPECTED_PROPERTY issues."""
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
-    profiles["FRIEND_OF"] = RelationshipTypeProfile(
+    profiles["Person:FRIEND_OF:Person"] = RelationshipTypeProfile(
         rel_type="FRIEND_OF",
         count=5,
+        source_label="Person",
+        target_label="Person",
         property_profiles={
             "since": PropertyProfile(
                 name="since",
@@ -668,8 +691,10 @@ def test_unexpected_rel_type_properties_do_not_emit_unexpected_property(
     spurious = [
         i
         for i in result.issues
-        if i.code == "UNEXPECTED_PROPERTY" and i.entity_id.startswith("FRIEND_OF.")
+        if i.code == "UNEXPECTED_PROPERTY"
+        and i.entity_id.startswith("Person:FRIEND_OF:Person.")
     ]
     assert spurious == [], (
-        f"UNEXPECTED_PROPERTY emitted for unexpected rel 'FRIEND_OF': {spurious}"
+        "UNEXPECTED_PROPERTY emitted for unexpected rel "
+        f"'Person:FRIEND_OF:Person': {spurious}"
     )

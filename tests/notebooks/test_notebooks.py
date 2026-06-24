@@ -45,6 +45,7 @@ ALL_NOTEBOOKS = [
     NOTEBOOKS_DIR / "04.01_networkx_backend.ipynb",
     NOTEBOOKS_DIR / "04.02_neo4j_backend.ipynb",
     NOTEBOOKS_DIR / "04.03_gqlalchemy_backend.ipynb",
+    NOTEBOOKS_DIR / "04.04_multi_shape_relationships.ipynb",
     # Module 05 -- Comparison & Drift Detection
     NOTEBOOKS_DIR / "05.01_introducing_the_graph_profile.ipynb",
     NOTEBOOKS_DIR / "05.02_profile_vs_definition.ipynb",

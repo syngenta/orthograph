@@ -37,7 +37,7 @@ node_types:
       year: {type: int, required: true}
 
 relationship_types:
-  ACTED_IN:
+  - label: ACTED_IN
     source: Person
     target: Movie
     directed: true
@@ -46,7 +46,7 @@ relationship_types:
     properties:
       role: {type: str, required: true}
 
-  DIRECTED:
+  - label: DIRECTED
     source: Person
     target: Movie
     directed: true
@@ -107,7 +107,7 @@ def test_yaml_load_relationship_types(simple_yaml_content: str):
 
 def test_yaml_relationship_endpoints(simple_yaml_content: str):
     graph_definition = load_yaml_string(simple_yaml_content)
-    acted_in = graph_definition.get_relationship_type("ACTED_IN")
+    acted_in = graph_definition.get_relationship_types_by_label("ACTED_IN")[0]
     assert acted_in is not None
     assert acted_in.__source_label__ == "Person"
     assert acted_in.__target_label__ == "Movie"
@@ -115,7 +115,7 @@ def test_yaml_relationship_endpoints(simple_yaml_content: str):
 
 def test_yaml_relationship_cardinality(simple_yaml_content: str):
     graph_definition = load_yaml_string(simple_yaml_content)
-    acted_in = graph_definition.get_relationship_type("ACTED_IN")
+    acted_in = graph_definition.get_relationship_types_by_label("ACTED_IN")[0]
     assert acted_in is not None
     assert acted_in.__source_cardinality__ == CardinalitySpec(min=0, max=None)
     assert acted_in.__target_cardinality__ == CardinalitySpec(min=0, max=None)
@@ -123,7 +123,7 @@ def test_yaml_relationship_cardinality(simple_yaml_content: str):
 
 def test_yaml_relationship_default_cardinality(simple_yaml_content: str):
     graph_definition = load_yaml_string(simple_yaml_content)
-    directed = graph_definition.get_relationship_type("DIRECTED")
+    directed = graph_definition.get_relationship_types_by_label("DIRECTED")[0]
     assert directed is not None
     # Default cardinality when not specified
     assert directed.__source_cardinality__ == CardinalitySpec(min=0, max=None)
@@ -155,8 +155,10 @@ node_types:
 def test_yaml_relationship_missing_source_raises_value_error():
     content = """\
 name: "Test"
+node_types:
+  Person: {}
 relationship_types:
-  KNOWS:
+  - label: KNOWS
     target: Person
 """
     with pytest.raises(ValueError, match="KNOWS.*missing required field 'source'"):
@@ -166,8 +168,10 @@ relationship_types:
 def test_yaml_relationship_missing_target_raises_value_error():
     content = """\
 name: "Test"
+node_types:
+  Person: {}
 relationship_types:
-  KNOWS:
+  - label: KNOWS
     source: Person
 """
     with pytest.raises(ValueError, match="KNOWS.*missing required field 'target'"):
@@ -189,7 +193,7 @@ node_types:
     optional: true
     properties:
       val: {type: str, required: true}
-relationship_types: {}
+relationship_types: []
 """
     graph_definition = load_yaml_string(content)
     req = graph_definition.get_node_type("Req")
@@ -288,7 +292,7 @@ def test_yaml_save_conditional_cardinality_uses_default_bound(tmp_path: Path):
     save_yaml_file(graph_definition, path)
 
     loaded = load_yaml_file(path)
-    rel = loaded.get_relationship_type("C_DIRECTED")
+    rel = loaded.get_relationship_types_by_label("C_DIRECTED")[0]
     assert rel is not None
     # full conditional round-trip — the loaded cardinality equals the original.
     assert rel.__source_cardinality__ == conditional
@@ -314,7 +318,7 @@ node_types:
       kind: {type: str, required: true}
 
 relationship_types:
-  HAS_OUTPUT:
+  - label: HAS_OUTPUT
     source: Operation
     target: Sample
     directed: true
@@ -339,7 +343,7 @@ def test_yaml_parse_conditional_cardinality():
     """Scope: conditional source_cardinality YAML parses to ConditionalCardinality
     with correct rules and default."""
     gd = load_yaml_string(_CONDITIONAL_YAML)
-    rel = gd.get_relationship_type("HAS_OUTPUT")
+    rel = gd.get_relationship_types_by_label("HAS_OUTPUT")[0]
     assert rel is not None
     card = rel.__source_cardinality__
     assert isinstance(card, ConditionalCardinality)
@@ -412,7 +416,7 @@ def test_yaml_conditional_cardinality_round_trip():
         sort_keys=False,
     )
     loaded = load_yaml_string(raw)
-    rel = loaded.get_relationship_type("HAS_OUTPUT")
+    rel = loaded.get_relationship_types_by_label("HAS_OUTPUT")[0]
     assert rel is not None
     loaded_card = rel.__source_cardinality__
     assert isinstance(loaded_card, ConditionalCardinality)
@@ -433,7 +437,7 @@ node_types:
     properties:
       id: {type: str, required: true}
 relationship_types:
-  CONNECTS:
+  - label: CONNECTS
     source: A
     target: B
     directed: true
@@ -441,7 +445,7 @@ relationship_types:
     target_cardinality: "0..1"
 """
     gd = load_yaml_string(content)
-    rel = gd.get_relationship_type("CONNECTS")
+    rel = gd.get_relationship_types_by_label("CONNECTS")[0]
     assert rel is not None
     assert rel.__source_cardinality__ == CardinalitySpec(min=1, max=None)
     assert rel.__target_cardinality__ == CardinalitySpec(min=0, max=1)
@@ -461,7 +465,7 @@ node_types:
     properties:
       id: {type: str, required: true}
 relationship_types:
-  CONNECTS:
+  - label: CONNECTS
     source: A
     target: B
     directed: true
@@ -469,7 +473,7 @@ relationship_types:
     target_cardinality: {min: 0, max: null}
 """
     gd = load_yaml_string(content)
-    rel = gd.get_relationship_type("CONNECTS")
+    rel = gd.get_relationship_types_by_label("CONNECTS")[0]
     assert rel is not None
     assert rel.__source_cardinality__ == CardinalitySpec(min=1, max=3)
     assert rel.__target_cardinality__ == CardinalitySpec(min=0, max=None)
@@ -481,7 +485,7 @@ relationship_types:
 
     raw = _yaml.dump(_serialize_model(gd), default_flow_style=False, sort_keys=False)
     loaded = load_yaml_string(raw)
-    rel2 = loaded.get_relationship_type("CONNECTS")
+    rel2 = loaded.get_relationship_types_by_label("CONNECTS")[0]
     assert rel2 is not None
     assert rel2.__source_cardinality__ == CardinalitySpec(min=1, max=3)
     assert rel2.__target_cardinality__ == CardinalitySpec(min=0, max=None)
@@ -492,7 +496,7 @@ def test_yaml_legacy_conditional_cardinality_still_parses():
     in rules still parses (back-compat)."""
     # _CONDITIONAL_YAML uses old-style min/max rule keys — must still work.
     gd = load_yaml_string(_CONDITIONAL_YAML)
-    rel = gd.get_relationship_type("HAS_OUTPUT")
+    rel = gd.get_relationship_types_by_label("HAS_OUTPUT")[0]
     assert rel is not None
     card = rel.__source_cardinality__
     assert isinstance(card, ConditionalCardinality)
@@ -545,7 +549,11 @@ def test_yaml_conditional_round_trip_emits_notation():
     )
 
     serialized = _serialize_model(gd)
-    src_card = serialized["relationship_types"]["EDGE"]["source_cardinality"]
+    # relationship_types is now a list (E50.8)
+    rel_list = serialized["relationship_types"]
+    assert isinstance(rel_list, list)
+    edge_entry = next(e for e in rel_list if e["label"] == "EDGE")
+    src_card = edge_entry["source_cardinality"]
     assert isinstance(src_card, dict)
     cond_data = src_card["conditional"]
     # default must be a notation string
@@ -556,6 +564,173 @@ def test_yaml_conditional_round_trip_emits_notation():
     # Full round-trip must equal the original
     raw = _yaml.dump(serialized, default_flow_style=False, sort_keys=False)
     loaded = load_yaml_string(raw)
-    rel = loaded.get_relationship_type("EDGE")
+    rel = loaded.get_relationship_types_by_label("EDGE")[0]
     assert rel is not None
     assert rel.__source_cardinality__ == cond
+
+
+# --- E50.8: relationship_types as list ---
+
+
+def test_yaml_dual_same_label_round_trips():
+    """E50.8: two same-label/different-endpoint types survive load→save→load."""
+
+    class Person(NodeModel):
+        __label__ = "Person"
+
+    class Company(NodeModel):
+        __label__ = "Company"
+
+    class KnowsPP(RelationshipModel):
+        __label__ = "KNOWS"
+        __source_label__ = "Person"
+        __target_label__ = "Person"
+
+    class KnowsCC(RelationshipModel):
+        __label__ = "KNOWS"
+        __source_label__ = "Company"
+        __target_label__ = "Company"
+
+    import yaml as _yaml
+
+    from orthograph.io.yaml import _serialize_model  # noqa: PLC0415
+
+    gd = GraphDefinition(
+        name="DualKnows",
+        node_types=[Person, Company],
+        relationship_types=[KnowsPP, KnowsCC],
+    )
+
+    serialized = _serialize_model(gd)
+    raw = _yaml.dump(serialized, default_flow_style=False, sort_keys=False)
+    loaded = load_yaml_string(raw)
+
+    shapes = loaded.get_relationship_types_by_label("KNOWS")
+    assert len(shapes) == 2
+    endpoints = {(s.__source_label__, s.__target_label__) for s in shapes}
+    assert endpoints == {("Person", "Person"), ("Company", "Company")}
+
+
+def test_yaml_dual_same_label_list_form_loads():
+    """E50.8: list-form YAML with two same-label types loads correctly."""
+    content = """\
+name: "DualKnows"
+node_types:
+  Person: {}
+  Company: {}
+relationship_types:
+  - label: KNOWS
+    source: Person
+    target: Person
+    directed: true
+  - label: KNOWS
+    source: Company
+    target: Company
+    directed: true
+"""
+    gd = load_yaml_string(content)
+    shapes = gd.get_relationship_types_by_label("KNOWS")
+    assert len(shapes) == 2
+    endpoints = {(s.__source_label__, s.__target_label__) for s in shapes}
+    assert endpoints == {("Person", "Person"), ("Company", "Company")}
+
+
+def test_yaml_list_entry_missing_label_raises():
+    """E50.8: a list entry without 'label' raises a clear error."""
+    content = """\
+name: "Bad"
+node_types:
+  A: {}
+  B: {}
+relationship_types:
+  - source: A
+    target: B
+"""
+    with pytest.raises(ValueError, match="missing required field 'label'"):
+        load_yaml_string(content)
+
+
+def test_yaml_list_form_missing_source_raises():
+    """E50.8: a list entry missing 'source' raises a clear error."""
+    content = """\
+name: "Bad"
+node_types:
+  A: {}
+  B: {}
+relationship_types:
+  - label: KNOWS
+    target: B
+"""
+    with pytest.raises(ValueError, match="KNOWS.*missing required field 'source'"):
+        load_yaml_string(content)
+
+
+def test_yaml_list_form_missing_target_raises():
+    """E50.8: a list entry missing 'target' raises a clear error."""
+    content = """\
+name: "Bad"
+node_types:
+  A: {}
+  B: {}
+relationship_types:
+  - label: KNOWS
+    source: A
+"""
+    with pytest.raises(ValueError, match="KNOWS.*missing required field 'target'"):
+        load_yaml_string(content)
+
+
+def test_yaml_serialize_emits_sorted_list():
+    """E50.8: _serialize_model emits relationship_types as a sorted list."""
+
+    class A(NodeModel):
+        __label__ = "A"
+
+    class B(NodeModel):
+        __label__ = "B"
+
+    class Rel1(RelationshipModel):
+        __label__ = "Z_REL"
+        __source_label__ = "A"
+        __target_label__ = "B"
+
+    class Rel2(RelationshipModel):
+        __label__ = "A_REL"
+        __source_label__ = "A"
+        __target_label__ = "B"
+
+    from orthograph.io.yaml import _serialize_model  # noqa: PLC0415
+
+    gd = GraphDefinition(
+        name="SortCheck",
+        node_types=[A, B],
+        relationship_types=[Rel1, Rel2],
+    )
+
+    serialized = _serialize_model(gd)
+    rel_list = serialized["relationship_types"]
+    assert isinstance(rel_list, list)
+    labels = [e["label"] for e in rel_list]
+    assert labels == sorted(labels), (
+        "relationship_types list must be sorted by RelTypeKey"
+    )
+
+
+def test_yaml_single_rel_list_form_regression():
+    """E50.8: single-relationship definitions still round-trip in list form."""
+    content = """\
+name: "Single"
+node_types:
+  A: {}
+  B: {}
+relationship_types:
+  - label: EDGE
+    source: A
+    target: B
+    directed: true
+"""
+    gd = load_yaml_string(content)
+    assert gd.relationship_labels == {"EDGE"}
+    rel = gd.get_relationship_types_by_label("EDGE")[0]
+    assert rel.__source_label__ == "A"
+    assert rel.__target_label__ == "B"

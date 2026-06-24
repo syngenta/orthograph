@@ -76,27 +76,30 @@ class CypherInspector(GraphInspector):
         rows = self._run(connection, cypher, **execute_kwargs)
         return [instance.materialize(row) for row in rows]
 
-    def _enrich_with_endpoints_and_cardinality(
+    def _discover_endpoint_pairs(
         self,
         connection: Any,
-        profile: RelationshipTypeProfile,
+        rel_type: str,
         endpoint_query: Any,
-        cardinality_query: Any,
-        fallback_labels: set[str] | None = None,
         **execute_kwargs: Any,
-    ) -> RelationshipTypeProfile:
-        """Return a copy of ``profile`` with endpoint labels + cardinality filled.
+    ) -> list[tuple[str, str]]:
+        """Discover the distinct ``(source_label, target_label)`` pairs for a rel type.
 
-        Endpoint labels are collected first; cardinality is then probed against
-        the confirmed source labels (falling back to ``fallback_labels`` only if
-        no source labels were found), using the first label that has at least one
-        relationship.  This avoids the misleading min=0/max=0 produced by
-        target-only labels.
+        Drives the per-shape fan-out: the endpoint-discovery query
+        returns each instance's source/target label *lists*; the cross product of
+        every row's lists yields the scalar endpoint pairs that identify the
+        distinct relationship shapes.  Returned sorted for deterministic output.
+
+        **Assumption (currently unreachable):** Assumes endpoint nodes carry a single
+        label each. If a node carries multiple labels, the cross-product yields a
+        shape for each label combination, and downstream per-shape cardinality/count
+        scans will count the same physical edge in multiple profiles — total counts
+        will not sum to the true edge count. The declared side has no mechanism to
+        declare multi-labeled nodes (``NodeModel.__label__`` is a single scalar in
+        ``graph_definition/models.py``); backend result adapters collapse multi-label
+        nodes to a primary label.
         """
-        rel_type = profile.rel_type
-
-        source_labels: set[str] = set()
-        target_labels: set[str] = set()
+        pairs: set[tuple[str, str]] = set()
         endpoint_rows = self._run_query(
             connection,
             endpoint_query,
@@ -104,32 +107,39 @@ class CypherInspector(GraphInspector):
             **execute_kwargs,
         )
         for erow in endpoint_rows:
-            source_labels.update(erow.source_labels)
-            target_labels.update(erow.target_labels)
+            for src in erow.source_labels:
+                for tgt in erow.target_labels:
+                    pairs.add((src, tgt))
+        return sorted(pairs)
 
-        card_stats: CardinalityStats | None = None
-        candidates = (
-            sorted(source_labels) if source_labels else sorted(fallback_labels or set())
-        )
-        for label in candidates:
-            card_rows: list[CardinalityStats] = self._run_query(
-                connection,
-                cardinality_query,
-                identifiers={"label": label, "rel_type": rel_type},
-                **execute_kwargs,
-            )
-            if card_rows and card_rows[0].count > 0:
-                card_stats = card_rows[0]
-                break
+    def _cardinality_for_shape(
+        self,
+        connection: Any,
+        rel_type: str,
+        source_label: str,
+        target_label: str,
+        cardinality_query: Any,
+        **execute_kwargs: Any,
+    ) -> CardinalityStats | None:
+        """Run the endpoint-filtered cardinality scan for one relationship shape.
 
-        return RelationshipTypeProfile(
-            rel_type=profile.rel_type,
-            count=profile.count,
-            property_profiles=profile.property_profiles,
-            cardinality_stats=card_stats,
-            source_labels=source_labels,
-            target_labels=target_labels,
+        Anchored on ``source_label`` and filtered to a ``target_label`` endpoint,
+        so the degree distribution belongs to exactly one ``(source, rel, target)``
+        shape.  Returns ``None`` when the shape has no edges.
+        """
+        card_rows: list[CardinalityStats] = self._run_query(
+            connection,
+            cardinality_query,
+            identifiers={
+                "label": source_label,
+                "rel_type": rel_type,
+                "target_label": target_label,
+            },
+            **execute_kwargs,
         )
+        if card_rows and card_rows[0].count > 0:
+            return card_rows[0]
+        return None
 
     def _enrich_with_partitioned_cardinality(
         self,
@@ -143,56 +153,55 @@ class CypherInspector(GraphInspector):
     ) -> RelationshipTypeProfile:
         """Return a copy of ``profile`` with one side's partitioned breakdown set.
 
-        The query is anchored on the side's own label and counts that side's
-        degree — ``side == "source"`` iterates ``profile.source_labels`` with the
-        source-anchored (outgoing-degree) query; ``side == "target"`` iterates
-        ``profile.target_labels`` with the target-anchored (incoming-degree) query.
-        The caller supplies the matching ``partitioned_query`` class.  The result
-        is assembled into ``dict[str, BoundedDistribution]`` keyed by
-        ``str(PartitionKey)`` and attached to ``{side}_partitioned_cardinality``.
-        Calling it once per conditional side lets a both-endpoint-conditional type
-        carry both breakdowns without collision.
+        Endpoint-aware: the scan is anchored on the side's own scalar
+        endpoint label (``profile.source_label`` for the source side,
+        ``profile.target_label`` for the target side) and filtered to the *other*
+        endpoint via ``endpoint_label``, so the breakdown belongs to exactly one
+        relationship shape.  ``side == "source"`` counts each source node's
+        outgoing degree; ``side == "target"`` counts each target node's incoming
+        degree.  The result is assembled into ``dict[str, BoundedDistribution]``
+        keyed by ``str(PartitionKey)`` and attached to
+        ``{side}_partitioned_cardinality``.
 
         Zero-degree rows (emitted by ``OPTIONAL MATCH`` for anchor nodes that have
         no matching edge) are suppressed so the result matches the NetworkX
-        reference, which only emits partitions for observed edges.
-
-        When no labels are known for the side or the query returns only zero-degree
-        rows, the targeted field is left ``None`` (honest).
+        reference, which only emits partitions for observed edges.  When the query
+        returns only zero-degree rows the targeted field is left ``None`` (honest).
         """
         rel_type = profile.rel_type
-        candidates = sorted(
-            profile.source_labels if side == "source" else profile.target_labels
-        )
+        if side == "source":
+            anchor_label = profile.source_label
+            endpoint_label = profile.target_label
+        else:
+            anchor_label = profile.target_label
+            endpoint_label = profile.source_label
 
         partitioned: dict[str, BoundedDistribution] = {}
-        for label in candidates:
-            rows: list[PartitionedCardinalityRow] = self._run_query(
-                connection,
-                partitioned_query,
-                identifiers={
-                    "label": label,
-                    "rel_type": rel_type,
-                    "source_discriminator": source_discriminator,
-                    "target_discriminator": target_discriminator,
-                },
-                **execute_kwargs,
-            )
-            for row in rows:
-                # Suppress zero-degree rows from OPTIONAL MATCH (parity with
-                # NetworkX, which only emits observed edges).
-                # A zero-degree partition has all anchor nodes at 0 degree:
-                # min == 0 and max == 0.  Absent partitions are handled at
-                # comparison time by treating a missing key as degree 0.
-                if row.stats.min == 0 and row.stats.max == 0:
-                    continue
-                key = str(
-                    PartitionKey(
-                        source_value=row.source_value,
-                        target_value=row.target_value,
-                    )
+        rows: list[PartitionedCardinalityRow] = self._run_query(
+            connection,
+            partitioned_query,
+            identifiers={
+                "label": anchor_label,
+                "rel_type": rel_type,
+                "endpoint_label": endpoint_label,
+                "source_discriminator": source_discriminator,
+                "target_discriminator": target_discriminator,
+            },
+            **execute_kwargs,
+        )
+        for row in rows:
+            # Suppress zero-degree rows from OPTIONAL MATCH (parity with
+            # NetworkX, which only emits observed edges).  Absent partitions are
+            # handled at comparison time by treating a missing key as degree 0.
+            if row.stats.min == 0 and row.stats.max == 0:
+                continue
+            key = str(
+                PartitionKey(
+                    source_value=row.source_value,
+                    target_value=row.target_value,
                 )
-                partitioned[key] = row.stats
+            )
+            partitioned[key] = row.stats
 
         breakdown = partitioned if partitioned else None
         return profile.model_copy(

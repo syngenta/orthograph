@@ -5,7 +5,8 @@
 **Epic:** E50 (Endpoint-aware relationship identity)
 **Supersedes:** the *identity implication* of ADR-014 (endpoints are no longer merely
 attributes of a label-identified type — they are part of the type's identity)
-**Amends:** ADR-015 §(shared address space), ADR-034 §7/§8 (endpoint rows reclassify)
+**Amends:** ADR-015 §(shared address space), ADR-034 §7/§8 (endpoint rows reclassify),
+ADR-036 §(relationship path — superseded by the per-shape pattern scan, §6a; node path unchanged)
 **Relates:** ADR-030/ADR-032 (conditional cardinality partitioning — partition keys now
 nest *inside* an endpoint-identified type), ADR-017 (package topology),
 ADR-009 (inspector parity)
@@ -64,6 +65,13 @@ the desired aggregation — instances of one shape).
 `__directed__` is **not** part of identity. Direction is a property of the type, compared
 as an attribute (see §5), not a discriminator. (A future ADR may revisit this if an
 undirected/directed pair of the same triple is ever required to coexist; today they cannot.)
+
+Direction is also currently **unobservable** — `RelationshipTypeProfile` carries no
+`directed` field and no backend emits an undirected relationship *type*. Putting direction
+in identity would require keying the shared address space on a value the observed side
+cannot supply (breaking ADR-015's mirror) plus net-new inspector direction-detection.
+Adding it later is a bounded change (one new `RelTypeKey` field + inspector detection); the
+inspector work is net-new in either case, so deferring costs nothing.
 
 ### 2. Identity is encoded as a deterministic composite string: `RelTypeKey`
 
@@ -151,6 +159,24 @@ All three inspectors group edges by `(source_label, label, target_label)`:
   the cost is accepted as the price of honest per-shape statistics (ADR-009 parity:
   each backend honest per its strategy).
 
+#### 6a. The relationship property scan becomes pattern-Cypher (supersedes ADR-036's rel path)
+
+To produce **per-shape** relationship property profiles (un-blended `present_count` /
+`value_distribution` / type counts) the relationship property/count/value scans are driven
+by an endpoint-filtered pattern `MATCH (n:source)-[r:REL]->(m:target)` for **every**
+strategy. This **supersedes the relationship-property portion of ADR-036**: `apoc.meta.relTypeProperties`
+aggregates by *bare* relationship type and cannot be constrained to an endpoint pair, so it
+can no longer source per-shape relationship `present_count` / `total_count`. The dedicated
+`count()`-based correction that ADR-036 introduced is *retained in spirit* — the per-pair
+pattern scan already yields a truthful non-null count per shape, which is the corrected
+value ADR-036 was reaching for. ADR-036's **node** path is unchanged.
+
+`observed_types` for a relationship property continue to come from the bulk type maps
+(`db.schema.relTypeProperties` / `apoc.meta`) keyed by the **bare** rel type and are
+attached to each shape: a property key's stored *type* does not vary by endpoint pair, so
+this is honest (ADR-009 parity = honest per strategy, not byte-identical), while the counts
+that *do* vary by shape are scanned per pair.
+
 ### 7. The declared side allows same-label/different-endpoint, rejects identical triple
 
 `GraphDefinition._rel_type_map` is keyed by `RelTypeKey`. The construction-time guard
@@ -225,7 +251,13 @@ form.
   retained as the *encoder/decoder*, not as the key type.
 - **Make `__directed__` part of identity.** Rejected: no current requirement for a
   directed and an undirected relationship of the *same* triple to coexist; direction is
-  compared as an attribute delta (`ENDPOINTS_CHANGED`).
+  compared as an attribute delta (`ENDPOINTS_CHANGED`). It is also currently
+  **unobservable** — `RelationshipTypeProfile` carries no `directed` field and no backend
+  emits an undirected relationship *type*, so identity-on-direction would key the shared
+  address space on a value the observed side cannot supply (breaking ADR-015's mirror) and
+  force net-new inspector direction-detection. Adding it later is a bounded change (one new
+  `RelTypeKey` field + inspector detection); the inspector work is net-new in either case,
+  so deferring costs nothing.
 - **Keep `INVALID_ENDPOINT` as a same-label bridge finding.** Rejected: under triple
   identity the two shapes are different types; a bridge rule would re-introduce label-level
   reasoning on top of triple identity and emit a finding that contradicts the address model.
@@ -238,7 +270,10 @@ form.
 - ADR-015: declared/observed mirror (shared address space now keyed by `RelTypeKey`)
 - ADR-034 §7/§8: GraphProfile statistical model & comparison matrix (endpoint rows reclassified)
 - ADR-030/ADR-032: conditional cardinality partitioning (partition keys nest under identity)
-- `RelTypeKey` / `RelationshipTypeProfile` / `GraphProfile`: `src/orthograph/graph_profile/models.py`
+- `RelTypeKey`: `src/orthograph/graph_definition/identity.py` (foundation of the
+  declared/observed mirror — both sides depend on it *downward* per the ADR-017 DAG;
+  re-exported from `graph_profile/models.py` for the observed side)
+- `RelationshipTypeProfile` / `GraphProfile`: `src/orthograph/graph_profile/models.py`
 - declaration: `src/orthograph/graph_definition/graph_definition.py`
 - comparison: `src/orthograph/comparison/{engine,views,rules,diff_rules}.py`
 - inspection: `src/orthograph/backends/{networkx,neo4j,memgraph}/inspector.py`, `src/orthograph/graph_profile/inspection.py`

@@ -33,7 +33,9 @@ def _no_params() -> NoParams:
 
 
 def test_cardinality_build_splices_label_and_rel_type() -> None:
-    q = InspectCardinalityQuery(identifiers={"label": "Person", "rel_type": "ACTED_IN"})
+    q = InspectCardinalityQuery(
+        identifiers={"label": "Person", "rel_type": "ACTED_IN", "target_label": "Movie"}
+    )
     cypher, params = q.build(_no_params())
     assert "`Person`" in cypher
     assert "`ACTED_IN`" in cypher
@@ -42,7 +44,9 @@ def test_cardinality_build_splices_label_and_rel_type() -> None:
 
 
 def test_cardinality_materialize() -> None:
-    q = InspectCardinalityQuery(identifiers={"label": "Person", "rel_type": "ACTED_IN"})
+    q = InspectCardinalityQuery(
+        identifiers={"label": "Person", "rel_type": "ACTED_IN", "target_label": "Movie"}
+    )
     row = q.materialize(
         {"min_degree": 0, "max_degree": 5, "avg_degree": 2.5, "sample_size": 100}
     )
@@ -55,7 +59,11 @@ def test_cardinality_materialize() -> None:
 
 def test_cardinality_injected_label_raises() -> None:
     q = InspectCardinalityQuery(
-        identifiers={"label": "Person) DETACH DELETE (n //", "rel_type": "X"}
+        identifiers={
+            "label": "Person) DETACH DELETE (n //",
+            "rel_type": "X",
+            "target_label": "Movie",
+        }
     )
     with pytest.raises(CypherIdentifierError, match="label"):
         q.build(_no_params())
@@ -63,7 +71,11 @@ def test_cardinality_injected_label_raises() -> None:
 
 def test_cardinality_injected_rel_type_raises() -> None:
     q = InspectCardinalityQuery(
-        identifiers={"label": "Person", "rel_type": "X} DELETE ALL //"}
+        identifiers={
+            "label": "Person",
+            "rel_type": "X} DELETE ALL //",
+            "target_label": "Movie",
+        }
     )
     with pytest.raises(CypherIdentifierError, match="relationship type"):
         q.build(_no_params())
@@ -107,6 +119,7 @@ def _partitioned_query() -> InspectSourcePartitionedCardinalityQuery:
         identifiers={
             "label": "Operation",
             "rel_type": "PRODUCES",
+            "endpoint_label": "Sample",
             "source_discriminator": "kind",
             "target_discriminator": "kind",
         }
@@ -118,6 +131,7 @@ def _target_partitioned_query() -> InspectTargetPartitionedCardinalityQuery:
         identifiers={
             "label": "Sample",
             "rel_type": "PRODUCES",
+            "endpoint_label": "Operation",
             "source_discriminator": "kind",
             "target_discriminator": "kind",
         }
@@ -256,6 +270,7 @@ def test_partitioned_injected_source_discriminator_raises() -> None:
         identifiers={
             "label": "Operation",
             "rel_type": "PRODUCES",
+            "endpoint_label": "Sample",
             "source_discriminator": "kind` ) DETACH DELETE (n) //",
             "target_discriminator": "kind",
         }
@@ -269,6 +284,7 @@ def test_partitioned_injected_target_discriminator_raises() -> None:
         identifiers={
             "label": "Operation",
             "rel_type": "PRODUCES",
+            "endpoint_label": "Sample",
             "source_discriminator": "kind",
             "target_discriminator": "kind` ) DELETE m //",
         }
@@ -282,6 +298,7 @@ def test_partitioned_injected_label_raises() -> None:
         identifiers={
             "label": "Operation) DETACH DELETE (n //",
             "rel_type": "PRODUCES",
+            "endpoint_label": "Sample",
             "source_discriminator": "kind",
             "target_discriminator": "kind",
         }
@@ -295,6 +312,7 @@ def test_partitioned_injected_rel_type_raises() -> None:
         identifiers={
             "label": "Operation",
             "rel_type": "PRODUCES} DELETE ALL //",
+            "endpoint_label": "Sample",
             "source_discriminator": "kind",
             "target_discriminator": "kind",
         }
@@ -309,6 +327,7 @@ def test_target_partitioned_injected_discriminator_raises() -> None:
         identifiers={
             "label": "Sample",
             "rel_type": "PRODUCES",
+            "endpoint_label": "Operation",
             "source_discriminator": "kind",
             "target_discriminator": "kind` ) DELETE m //",
         }

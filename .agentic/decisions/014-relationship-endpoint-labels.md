@@ -3,6 +3,13 @@
 **Status:** Accepted
 **Date:** 2026-06-11
 
+> **Forward note (ADR-037, 2026-06-24).** This ADR made endpoint labels plain
+> string **attributes** of a label-identified relationship type. **ADR-037**
+> supersedes that *identity implication*: a relationship type is now identified
+> by the triple `(source_label, label, target_label)`, so endpoints are part of
+> identity, not merely attributes. Endpoints-as-data here still holds; what
+> changes is what *identifies* a type. See E50.
+
 ---
 
 ## Context

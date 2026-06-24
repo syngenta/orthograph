@@ -59,11 +59,11 @@ _GRAPH_PROFILE = GraphProfile(
         "Movie": NodeTypeProfile(label="Movie", count=2),
     },
     rel_type_profiles={
-        "ACTED_IN": RelationshipTypeProfile(
+        "Person:ACTED_IN:Movie": RelationshipTypeProfile(
             rel_type="ACTED_IN",
             count=5,
-            source_labels={"Person"},
-            target_labels={"Movie"},
+            source_label="Person",
+            target_label="Movie",
             property_profiles={"role": _ROLE_PROFILE},
         ),
     },
@@ -99,9 +99,9 @@ def test_definition_view_node_labels():
 
 
 def test_definition_view_relationship_types():
-    """relationship_types() returns the set of declared relationship labels."""
+    """relationship_types() returns the set of declared relationship identity keys."""
     view = DefinitionView(_GRAPH_DEF)
-    assert view.relationship_types() == {"ACTED_IN"}
+    assert view.relationship_types() == {"Person:ACTED_IN:Movie"}
 
 
 def test_definition_view_node_at_returns_model_class():
@@ -118,15 +118,15 @@ def test_definition_view_node_at_absent_returns_none():
 
 
 def test_definition_view_relationship_at_returns_model_class():
-    """relationship_at() returns the RelationshipModel subclass for a known type."""
+    """relationship_at() returns the RelationshipModel subclass for a known key."""
     view = DefinitionView(_GRAPH_DEF)
-    assert view.relationship_at("ACTED_IN") is _ActedIn
+    assert view.relationship_at("Person:ACTED_IN:Movie") is _ActedIn
 
 
 def test_definition_view_relationship_at_absent_returns_none():
-    """relationship_at() returns None for a type not in the definition."""
+    """relationship_at() returns None for a key not in the definition."""
     view = DefinitionView(_GRAPH_DEF)
-    assert view.relationship_at("DIRECTED") is None
+    assert view.relationship_at("Person:DIRECTED:Movie") is None
 
 
 def test_definition_view_node_properties_returns_type_info_dict():
@@ -151,16 +151,16 @@ def test_definition_view_node_properties_absent_label_returns_empty():
 def test_definition_view_relationship_properties_returns_type_info_dict():
     """relationship_properties() returns a dict of TypeInfo keyed by property name."""
     view = DefinitionView(_GRAPH_DEF)
-    props = view.relationship_properties("ACTED_IN")
+    props = view.relationship_properties("Person:ACTED_IN:Movie")
     assert set(props.keys()) == {"role"}
     assert isinstance(props["role"], TypeInfo)
     assert props["role"].python_type is str
 
 
 def test_definition_view_relationship_properties_absent_type_returns_empty():
-    """relationship_properties() returns {} for a type not in the definition."""
+    """relationship_properties() returns {} for a key not in the definition."""
     view = DefinitionView(_GRAPH_DEF)
-    assert view.relationship_properties("DIRECTED") == {}
+    assert view.relationship_properties("Person:DIRECTED:Movie") == {}
 
 
 def test_profile_view_node_labels():
@@ -170,9 +170,9 @@ def test_profile_view_node_labels():
 
 
 def test_profile_view_relationship_types():
-    """relationship_types() returns the set of observed relationship types."""
+    """relationship_types() returns the set of observed relationship identity keys."""
     view = ProfileView(_GRAPH_PROFILE)
-    assert view.relationship_types() == {"ACTED_IN"}
+    assert view.relationship_types() == {"Person:ACTED_IN:Movie"}
 
 
 def test_profile_view_node_at_returns_node_type_profile():
@@ -188,17 +188,18 @@ def test_profile_view_node_at_absent_returns_none():
 
 
 def test_profile_view_relationship_at_returns_rel_type_profile():
-    """relationship_at() returns the RelationshipTypeProfile for a known type."""
+    """relationship_at() returns the RelationshipTypeProfile for a known key."""
     view = ProfileView(_GRAPH_PROFILE)
     assert (
-        view.relationship_at("ACTED_IN") is _GRAPH_PROFILE.rel_type_profiles["ACTED_IN"]
+        view.relationship_at("Person:ACTED_IN:Movie")
+        is _GRAPH_PROFILE.rel_type_profiles["Person:ACTED_IN:Movie"]
     )
 
 
 def test_profile_view_relationship_at_absent_returns_none():
-    """relationship_at() returns None for a type not in the profile."""
+    """relationship_at() returns None for a key not in the profile."""
     view = ProfileView(_GRAPH_PROFILE)
-    assert view.relationship_at("DIRECTED") is None
+    assert view.relationship_at("Person:DIRECTED:Movie") is None
 
 
 def test_profile_view_node_properties_returns_property_profile_dict():
@@ -223,17 +224,17 @@ def test_profile_view_node_properties_label_with_no_props_returns_empty():
 
 
 def test_profile_view_relationship_properties_returns_property_profile_dict():
-    """relationship_properties() returns the property_profiles dict for a known type."""
+    """relationship_properties() returns the property_profiles dict for a known key."""
     view = ProfileView(_GRAPH_PROFILE)
-    props = view.relationship_properties("ACTED_IN")
+    props = view.relationship_properties("Person:ACTED_IN:Movie")
     assert set(props.keys()) == {"role"}
     assert props["role"] is _ROLE_PROFILE
 
 
 def test_profile_view_relationship_properties_absent_type_returns_empty():
-    """relationship_properties() returns {} for a type not in the profile."""
+    """relationship_properties() returns {} for a key not in the profile."""
     view = ProfileView(_GRAPH_PROFILE)
-    assert view.relationship_properties("DIRECTED") == {}
+    assert view.relationship_properties("Person:DIRECTED:Movie") == {}
 
 
 def test_views_module_imports_no_backend():
@@ -267,9 +268,13 @@ def test_definition_view_filmography_node_labels(filmography_model: GraphDefinit
 def test_definition_view_filmography_relationship_types(
     filmography_model: GraphDefinition,
 ):
-    """relationship_types() returns all three rel types from the filmography model."""
+    """relationship_types() returns all three rel identity keys from the model."""
     view = DefinitionView(filmography_model)
-    assert view.relationship_types() == {"ACTED_IN", "LIVES_IN", "DIRECTED"}
+    assert view.relationship_types() == {
+        "Person:ACTED_IN:Movie",
+        "Person:LIVES_IN:City",
+        "Person:DIRECTED:Movie",
+    }
 
 
 def test_definition_view_filmography_node_properties_person(

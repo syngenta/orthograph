@@ -12,14 +12,14 @@ Counts and completeness — truthful, via dedicated property-independent
     non-null count and ``completeness`` is truthful.  Without a scan there is no
     *observed* completeness datum: the schema ``mandatory`` boolean is **not**
     used as a present==total proxy (presence requirements are carried by
-    ``constraint_required``, sourced from real DB constraints — ADR-034 §4), so
+    ``constraint_required``, sourced from real DB constraints), so
     ``present_count == total_count`` (completeness 1.0, no incompleteness claim).
     ``total_count`` is **never** derived from ``present_count`` — doing so would
     fabricate ``completeness == 1.0`` even when a scan observed fewer values, and
-    suppress ``PROPERTY_INCOMPLETE`` (ADR-035 "never invent counts").
+    suppress ``PROPERTY_INCOMPLETE`` ("never invent counts").
 
-``cardinality_stats`` and ``source_labels``/``target_labels`` ARE populated
-(using the vendor-neutral shared Cypher).
+``cardinality_stats`` and ``source_label``/``target_label`` (per-shape scalar
+endpoints) ARE populated (using the vendor-neutral shared Cypher).
 """
 
 from typing import Any
@@ -55,6 +55,7 @@ from orthograph.graph_profile.models import (
     NodeTypeProfile,
     PropertyProfile,
     RelationshipTypeProfile,
+    RelTypeKey,
 )
 
 
@@ -66,7 +67,7 @@ class MemgraphInspector(CypherInspector):
     Parameters
     ----------
     value_counts_top_n:
-        When set, run an opt-in per-property value scan (ADR-035 §1) that
+        When set, run an opt-in per-property value scan that
         populates ``observed_type_counts`` (via ``valueType``, exact) and a
         scalar ``value_distribution`` histogram (via ``toStringOrNull``, bounded
         to ``top_n``).  ``None`` / ``0`` runs no value-touching scan: both fields
@@ -145,7 +146,7 @@ class MemgraphInspector(CypherInspector):
                 # `mandatory` boolean, never observation counts.  `mandatory` is
                 # deliberately NOT used as a present==total proxy (presence
                 # requirements are carried by `constraint_required`, sourced from
-                # real DB constraints — ADR-034 §4).  Without a value scan there
+                # real DB constraints.  Without a value scan there
                 # is no observed completeness signal, so present_count == total
                 # (completeness 1.0 — no *observed* incompleteness claimed).  The
                 # value scan, when enabled, supersedes this with the exact
@@ -182,6 +183,10 @@ class MemgraphInspector(CypherInspector):
     ) -> dict[str, RelationshipTypeProfile]:
         rows = self._run_query(connection, MemgraphRelPropertiesQuery)
 
+        # Bulk property *types* keyed by the bare rel type: a
+        # property key's stored type does not vary by endpoint pair, so the bulk
+        # schema scan is the observed_types source for every shape.  Per-shape
+        # counts come from the endpoint-filtered pattern scans below.
         type_rows: dict[str, list[Any]] = {}
         for row in rows:
             raw_type = row.rel_type
@@ -189,85 +194,122 @@ class MemgraphInspector(CypherInspector):
             type_rows.setdefault(rel_type, []).append(row)
 
         profiles: dict[str, RelationshipTypeProfile] = {}
-        for rel_type, prop_rows in sorted(type_rows.items()):
-            # Truthful edge total via a property-independent count() (parity with
-            # node labels and Neo4j); the only honest completeness denominator.
-            rel_total = self._fetch_rel_count(connection, rel_type)
-            props: dict[str, PropertyProfile] = {}
-            for r in prop_rows:
-                name = r.property_name
-                if not name:
-                    continue
-                # No-scan fallback scaled to the true edge total (see node side):
-                # `mandatory` is not used as a presence proxy; without a scan
-                # there is no observed completeness signal (present == total).
-                type_counts, value_dist, present_count = self._fetch_rel_value_scan(
+        for rel_type in sorted(type_rows):
+            prop_rows = type_rows[rel_type]
+            # Discover the distinct endpoint shapes of this bare rel type.
+            pairs = self._discover_endpoint_pairs(
+                connection, rel_type, MemgraphEndpointLabelsQuery
+            )
+            for source_label, target_label in pairs:
+                profile = self._build_rel_profile_for_shape(
                     connection,
                     rel_type,
-                    name,
-                    fallback_present_count=rel_total,
+                    source_label,
+                    target_label,
+                    prop_rows,
+                    constraints,
+                    graph_definition=graph_definition,
                 )
-                props[name] = PropertyProfile(
-                    name=name,
-                    present_count=present_count,
-                    total_count=max(rel_total, present_count),
-                    observed_types=r.property_types,
-                    constraint_required=is_presence_constraint_for(
-                        constraints, "RELATIONSHIP", rel_type, name
-                    ),
-                    observed_type_counts=type_counts,
-                    value_distribution=value_dist,
+                key = str(
+                    RelTypeKey(
+                        source_label=source_label,
+                        label=rel_type,
+                        target_label=target_label,
+                    )
                 )
-
-            profiles[rel_type] = RelationshipTypeProfile(
-                rel_type=rel_type,
-                count=rel_total,
-                property_profiles=props,
-            )
-
-        for rel_type in list(profiles.keys()):
-            profiles[rel_type] = self._enrich_with_endpoints_and_cardinality(
-                connection,
-                profiles[rel_type],
-                MemgraphEndpointLabelsQuery,
-                MemgraphCardinalityQuery,
-            )
-
-            # Partitioned cardinality — only for conditional relationship types
-            # when a definition is provided.  A type conditional on both
-            # endpoints is profiled on both sides.
-            if graph_definition is not None:
-                rel_model = graph_definition.get_relationship_type(rel_type)
-                if rel_model is not None:
-                    for card_attr, side, side_query in (
-                        (
-                            "__source_cardinality__",
-                            "source",
-                            MemgraphSourcePartitionedCardinalityQuery,
-                        ),
-                        (
-                            "__target_cardinality__",
-                            "target",
-                            MemgraphTargetPartitionedCardinalityQuery,
-                        ),
-                    ):
-                        card = getattr(rel_model, card_attr, None)
-                        if isinstance(card, ConditionalCardinality):
-                            discriminators = _extract_discriminators(card)
-                            if discriminators is not None:
-                                src_disc, tgt_disc = discriminators
-                                profiles[rel_type] = (
-                                    self._enrich_with_partitioned_cardinality(
-                                        connection,
-                                        profiles[rel_type],
-                                        side_query,
-                                        src_disc,
-                                        tgt_disc,
-                                        side,
-                                    )
-                                )
+                profiles[key] = profile
 
         return profiles
+
+    def _build_rel_profile_for_shape(
+        self,
+        connection: Any,
+        rel_type: str,
+        source_label: str,
+        target_label: str,
+        prop_rows: list[Any],
+        constraints: list[ConstraintInfo],
+        *,
+        graph_definition: GraphDefinition | None = None,
+    ) -> RelationshipTypeProfile:
+        """Build one profile for the ``(source, rel, target)`` shape."""
+        # Per-shape edge total via an endpoint-filtered count().
+        rel_total = self._fetch_rel_count(
+            connection, rel_type, source_label, target_label
+        )
+        props: dict[str, PropertyProfile] = {}
+        for r in prop_rows:
+            name = r.property_name
+            if not name:
+                continue
+            type_counts, value_dist, present_count = self._fetch_rel_value_scan(
+                connection,
+                rel_type,
+                source_label,
+                target_label,
+                name,
+                fallback_present_count=rel_total,
+            )
+            props[name] = PropertyProfile(
+                name=name,
+                present_count=present_count,
+                total_count=max(rel_total, present_count),
+                observed_types=r.property_types,
+                constraint_required=is_presence_constraint_for(
+                    constraints, "RELATIONSHIP", rel_type, name
+                ),
+                observed_type_counts=type_counts,
+                value_distribution=value_dist,
+            )
+
+        profile = RelationshipTypeProfile(
+            rel_type=rel_type,
+            count=rel_total,
+            source_label=source_label,
+            target_label=target_label,
+            property_profiles=props,
+            cardinality_stats=self._cardinality_for_shape(
+                connection,
+                rel_type,
+                source_label,
+                target_label,
+                MemgraphCardinalityQuery,
+            ),
+        )
+
+        # Partitioned cardinality — only for conditional relationship types when
+        # a definition is provided.  Resolve the declared shape by identity triple.
+        if graph_definition is not None:
+            rel_model = graph_definition.get_relationship_type(
+                source_label, rel_type, target_label
+            )
+            if rel_model is not None:
+                for card_attr, side, side_query in (
+                    (
+                        "__source_cardinality__",
+                        "source",
+                        MemgraphSourcePartitionedCardinalityQuery,
+                    ),
+                    (
+                        "__target_cardinality__",
+                        "target",
+                        MemgraphTargetPartitionedCardinalityQuery,
+                    ),
+                ):
+                    card = getattr(rel_model, card_attr, None)
+                    if isinstance(card, ConditionalCardinality):
+                        discriminators = _extract_discriminators(card)
+                        if discriminators is not None:
+                            src_disc, tgt_disc = discriminators
+                            profile = self._enrich_with_partitioned_cardinality(
+                                connection,
+                                profile,
+                                side_query,
+                                src_disc,
+                                tgt_disc,
+                                side,
+                            )
+        return profile
 
     def _get_constraints(self, connection: Any) -> list[ConstraintInfo]:
         rows = self._run_query(connection, MemgraphConstraintsQuery)
@@ -299,10 +341,22 @@ class MemgraphInspector(CypherInspector):
         )
         return rows[0].count if rows else 0
 
-    def _fetch_rel_count(self, connection: Any, rel_type: str) -> int:
-        """Return the edge count for ``rel_type`` via a property-independent count()."""
+    def _fetch_rel_count(
+        self,
+        connection: Any,
+        rel_type: str,
+        source_label: str,
+        target_label: str,
+    ) -> int:
+        """Per-shape edge count via an endpoint-filtered count()."""
         rows = self._run_query(
-            connection, MemgraphRelCountQuery, identifiers={"rel_type": rel_type}
+            connection,
+            MemgraphRelCountQuery,
+            identifiers={
+                "source_label": source_label,
+                "rel_type": rel_type,
+                "target_label": target_label,
+            },
         )
         return rows[0].count if rows else 0
 
@@ -341,17 +395,25 @@ class MemgraphInspector(CypherInspector):
         self,
         connection: Any,
         rel_type: str,
+        source_label: str,
+        target_label: str,
         property_name: str,
         fallback_present_count: int,
     ) -> tuple[dict[str, int], BoundedDistribution | None, int]:
-        """Run the optional value scan for one relationship property.
+        """Run the optional per-shape value scan for one relationship property.
 
-        Mirrors :meth:`_fetch_node_value_scan` for relationship properties.
+        Endpoint-filtered: the type-count / histogram scans target
+        only edges of the ``(source_label, rel_type, target_label)`` shape.
         """
         if not self._value_counts_top_n:
             return {}, None, fallback_present_count
 
-        identifiers = {"rel_type": rel_type, "property_name": property_name}
+        identifiers = {
+            "source_label": source_label,
+            "rel_type": rel_type,
+            "target_label": target_label,
+            "property_name": property_name,
+        }
         type_rows = self._run_query(
             connection, MemgraphRelTypeCountsQuery, identifiers=identifiers
         )
@@ -374,7 +436,7 @@ class MemgraphInspector(CypherInspector):
         """Combine type counts + the scalar histogram into the scan result.
 
         The type-count total is the authoritative ``present_count`` (every
-        non-null value has exactly one runtime type — ADR-035 §2).  The scalar
+        non-null value has exactly one runtime type.  The scalar
         histogram (``toStringOrNull``, list values dropped) may total below it;
         the remainder reconciles into ``other_count``.
         """
@@ -383,7 +445,7 @@ class MemgraphInspector(CypherInspector):
 
         # Honest degradation: the type scan classified nothing but the heuristic
         # reported presence.  Keep the fallback presence; report no counts rather
-        # than zeroing present_count (ADR-035 §5: never silently regress presence).
+        # than zeroing present_count (never silently regress presence).
         if not type_counts and fallback_present_count > 0:
             return {}, None, fallback_present_count
 
@@ -423,10 +485,10 @@ def _build_value_distribution(
     The DB query already applies ``LIMIT $top_n``.  Because the histogram covers
     **scalar values only** (``toStringOrNull`` drops lists/maps), its total can
     be below the authoritative ``present_count``; the shortfall — whether from
-    truncation or from dropped non-scalar values — folds into ``other_count``
-    (ADR-035 §4).  Returns ``None`` when there are no rows.
+    truncation or from dropped non-scalar values — folds into ``other_count``.
+    Returns ``None`` when there are no rows.
 
-    Known cross-backend parity deviation (ADR-009 — semantics, not identical
+    Known cross-backend parity deviation (not identical
     output).  Memgraph's histogram key is ``toStringOrNull`` (scalars only),
     whereas Neo4j's APOC histogram key is ``apoc.convert.toJson`` (list/map
     values are kept *in* the histogram).  Consequence: a property mixing scalars

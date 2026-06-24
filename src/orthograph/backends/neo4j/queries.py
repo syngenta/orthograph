@@ -109,7 +109,7 @@ class DbSchemaRelTypeRow(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Value-scan currency and parameters (E46.1, ADR-035)
+# Value-scan currency and parameters (E46.1)
 # ---------------------------------------------------------------------------
 
 
@@ -128,12 +128,12 @@ class TypeCountRow(BaseModel):
 
     Produced by grouping a property's non-null values by their runtime storage
     type (``apoc.meta.cypher.type``) and counting each group.  Exact and bounded:
-    one row per distinct *type*, never per distinct value (ADR-035 §2/§4).
+    one row per distinct *type*, never per distinct value.
 
     ``type_name`` is normalised to the ``observed_types`` vocabulary (the
     ``coerce_types`` names: ``'Long'``, ``'String'``, …) — *not* the raw
     ``apoc.meta.cypher.type`` names (``'INTEGER'``, ``'STRING'``, …) — so the
-    ADR-035 §3 invariant ``set(observed_type_counts) ⊆ set(observed_types)``
+    invariant ``set(observed_type_counts) ⊆ set(observed_types)``
     holds and ``db_type_to_python`` (which keys on the ``coerce_types``
     vocabulary) needs no change.
     """
@@ -150,7 +150,7 @@ class ValueHistogramRow(BaseModel):
     ``true``) and lists as JSON arrays (``["Neo"]``).  The materialiser
     **unwraps a JSON-encoded string** back to its bare form (``"Neo"`` → ``Neo``)
     so string histogram keys read naturally and match the NetworkX reference's
-    ``str(value)`` for scalar strings (ADR-035 §3).  Non-string JSON (numbers,
+    ``str(value)`` for scalar strings.  Non-string JSON (numbers,
     booleans, arrays) is kept verbatim — stable and unambiguous.
 
     The query orders by frequency and applies ``LIMIT $top_n``; the remainder
@@ -197,7 +197,7 @@ def _unwrap_json_value(raw_value: Any) -> str:
 # ``'INTEGER'``, ``'LIST OF FLOAT'``) onto the ``observed_types`` vocabulary
 # produced by ``apoc.meta.nodeTypeProperties`` / ``db.schema.*`` (the
 # ``coerce_types`` names, e.g. ``'Long'``, ``'DoubleArray'``).  The two APOC
-# surfaces disagree on spelling; ADR-035 §3 requires the counts to reuse the
+# surfaces disagree on spelling; the type counts must reuse the
 # ``observed_types`` vocabulary, so the type-count materialiser normalises here.
 # An unrecognised runtime type passes through verbatim (honest, never invented) —
 # e.g. a mixed-element list yields ``'LIST OF ANY'``, which is kept as-is.
@@ -230,7 +230,7 @@ def _normalise_apoc_type_name(raw_type: str) -> str:
     """Map an ``apoc.meta.cypher.type`` name to the ``observed_types`` vocabulary.
 
     Unrecognised names pass through unchanged so a backend never invents or
-    silently drops a type it cannot map (ADR-035 §5 honesty).
+    silently drops a type it cannot map (honesty principle).
     """
     return _APOC_TYPE_NAME_MAP.get(raw_type, raw_type)
 
@@ -342,41 +342,38 @@ with _warnings.catch_warnings():
                 total_observations=raw.get("totalObservations", 0),
             )
 
-    class ApocRelPropertiesQuery(CypherReadQuery[NoParams, NodePropertyRow]):
-        """Relationship property metadata via ``apoc.meta.relTypeProperties``.
+    class ApocRelTypesQuery(CypherReadQuery[NoParams, DbSchemaRelTypeRow]):
+        """Bulk relationship-property **types** via ``apoc.meta.relTypeProperties``.
 
-        Uses imperative ``build()`` because ``CALL apoc.meta.* ... WHERE`` is
-        not standard Cypher.
+        Under ADR-037 §6a the per-shape relationship property *counts* come from
+        the endpoint-filtered pattern scan (:class:`CypherRelPropertiesQuery`);
+        APOC meta cannot be endpoint-filtered, so it is used here only as a bulk
+        ``observed_types`` source keyed by the **bare** rel type (a property key's
+        stored type does not vary by endpoint pair).  Mirrors
+        :class:`DbSchemaRelTypesQuery`.
+
+        Uses imperative ``build()`` because ``CALL apoc.meta.*`` is not standard
+        Cypher.
         """
 
         Params = NoParams
-        Output = NodePropertyRow
-        name = "neo4j.inspect.apoc.rel_properties"
-        Identifiers = RelTypeIdentifiers
+        Output = DbSchemaRelTypeRow
+        name = "neo4j.inspect.apoc.rel_types"
+        Identifiers = NoIdentifiers
+        _CYPHER = (
+            "CALL apoc.meta.relTypeProperties({sample: -1})"
+            " YIELD relType, propertyName, propertyTypes"
+            " RETURN relType, propertyName, propertyTypes"
+        )
 
         def build(self, params: NoParams) -> CypherQueryData:
-            rel_type = render_with_identifiers(
-                "<<rel_type>>",
-                self._identifiers,  # validates identifier
-            )
-            cypher = (
-                "CALL apoc.meta.relTypeProperties({sample: -1})"
-                " YIELD relType, propertyName, propertyTypes,"
-                " mandatory, propertyObservations, totalObservations"
-                f" WHERE relType = ':`{rel_type}`'"
-                " RETURN propertyName, propertyTypes, mandatory,"
-                " propertyObservations, totalObservations"
-            )
-            return CypherQueryData(cypher, {})
+            return CypherQueryData(self._CYPHER, {})
 
-        def materialize(self, raw: Any) -> NodePropertyRow:
-            types = raw.get("propertyTypes", [])
-            return NodePropertyRow(
-                property_name=raw["propertyName"],
-                property_types=coerce_types(types),
-                mandatory=raw.get("mandatory", False),
-                property_observations=raw.get("propertyObservations", 0),
-                total_observations=raw.get("totalObservations", 0),
+        def materialize(self, raw: Any) -> DbSchemaRelTypeRow:
+            return DbSchemaRelTypeRow(
+                rel_type=raw["relType"].strip(":` "),
+                property_name=raw.get("propertyName"),
+                observed_types=coerce_types(raw.get("propertyTypes")),
             )
 
 
@@ -388,7 +385,7 @@ with _warnings.catch_warnings():
 class _NodePropertyScanIdentifiers(BaseModel):
     """Identifier group scoping a per-property query to one node label.
 
-    Shared by the property-independent present-count query (ADR-036) and the
+    Shared by the property-independent present-count query and the
     value-scan queries : both target one property of one node label.
     """
 
@@ -397,13 +394,16 @@ class _NodePropertyScanIdentifiers(BaseModel):
 
 
 class _RelPropertyScanIdentifiers(BaseModel):
-    """Identifier group scoping a per-property query to one relationship type.
+    """Identifier group scoping a per-property query to one relationship *shape*.
 
-    Shared by the present-count query (ADR-036) and the value-scan queries
-    .
+    Shared by the present-count query and the value-scan queries.  Endpoint-aware:
+    the scan is filtered to edges of ``rel_type`` whose endpoints carry
+    ``source_label`` / ``target_label``, so per-shape statistics are un-blended.
     """
 
+    source_label: str  # kind = "label"
     rel_type: str  # kind = "relationship type"
+    target_label: str  # kind = "label"
     property_name: str  # property key (kind = "label" grammar)
 
 
@@ -419,7 +419,7 @@ class PresentCountRow(BaseModel):
     The authoritative ``present_count`` (numerator of ``completeness``): the
     true number of entities of a type whose given property is non-null, measured
     by a dedicated ``count() … WHERE … IS NOT NULL`` rather than APOC's sampled
-    ``propertyObservations`` (which can undercount — ADR-036).
+    ``propertyObservations`` (which can undercount).
     """
 
     present_count: int
@@ -444,25 +444,33 @@ class NodeCountQuery(CypherReadQuery[NoParams, CountRow]):
 
 
 class RelCountQuery(CypherReadQuery[NoParams, CountRow]):
-    """Authoritative instance count for a relationship type (property-independent)."""
+    """Authoritative instance count for one relationship *shape*.
+
+    Endpoint-filtered: counts only edges of ``<<rel_type>>`` whose source carries
+    ``<<source_label>>`` and target carries ``<<target_label>>``, so the count
+    belongs to exactly one ``(source, rel, target)`` shape.
+    """
 
     Params = NoParams
     Output = CountRow
     name = "neo4j.inspect.rel_count"
     Identifiers = RelTypeIdentifiers
-    cypher_template = "MATCH ()-[r:`<<rel_type>>`]->() RETURN count(r) AS count"
+    cypher_template = (
+        "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
+        " RETURN count(r) AS count"
+    )
 
     def materialize(self, raw: Any) -> CountRow:
         return CountRow(count=raw["count"])
 
 
 class NodePresentCountQuery(CypherReadQuery[NoParams, PresentCountRow]):
-    """Authoritative non-null count for one node property (ADR-036).
+    """Authoritative non-null count for one node property.
 
     Supersedes APOC's sampled ``propertyObservations`` on the APOC no-scan path.
     Bounded: a single server-side ``count()`` over a null predicate — one scalar
     row, no value materialised to the client.  ``property_name`` is an identifier
-    (label-grammar), never an interpolated value (ADR-008).
+    (label-grammar), never an interpolated value.
     """
 
     Params = NoParams
@@ -480,7 +488,7 @@ class NodePresentCountQuery(CypherReadQuery[NoParams, PresentCountRow]):
 
 
 class RelPresentCountQuery(CypherReadQuery[NoParams, PresentCountRow]):
-    """Authoritative non-null count for one relationship property (ADR-036).
+    """Authoritative non-null count for one relationship property.
 
     Supersedes APOC's sampled ``propertyObservations`` for relationship
     properties (the 100-vs-172 undercount).  Mirrors
@@ -492,7 +500,7 @@ class RelPresentCountQuery(CypherReadQuery[NoParams, PresentCountRow]):
     name = "neo4j.inspect.rel_present_count"
     Identifiers = _RelPropertyScanIdentifiers
     cypher_template = (
-        "MATCH ()-[r:`<<rel_type>>`]->()"
+        "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " WHERE r.`<<property_name>>` IS NOT NULL"
         " RETURN count(r) AS present_count"
     )
@@ -533,16 +541,22 @@ class CypherNodePropertiesQuery(CypherReadQuery[NoParams, NodePropertyRow]):
 
 
 class CypherRelPropertiesQuery(CypherReadQuery[NoParams, NodePropertyRow]):
-    """Relationship property metadata via MATCH/UNWIND scan (no APOC)."""
+    """Per-shape relationship property metadata via MATCH/UNWIND scan (no APOC).
+
+    Endpoint-filtered: scans only edges of ``<<rel_type>>`` between
+    ``<<source_label>>`` and ``<<target_label>>``, so ``present`` / ``total`` are
+    per-shape.  ``propertyTypes`` is always ``[]`` (types come from the bulk
+    ``db.schema`` map, keyed by bare rel type).
+    """
 
     Params = NoParams
     Output = NodePropertyRow
     name = "neo4j.inspect.cypher.rel_properties"
     Identifiers = RelTypeIdentifiers
     cypher_template = (
-        "MATCH ()-[r:`<<rel_type>>`]->()"
+        "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " WITH count(r) AS total"
-        " MATCH ()-[r:`<<rel_type>>`]->()"
+        " MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " UNWIND keys(r) AS key"
         " WITH key, count(*) AS present, total"
         " RETURN key AS propertyName, [] AS propertyTypes,"
@@ -618,11 +632,11 @@ with _warnings.catch_warnings():
 
 
 # ---------------------------------------------------------------------------
-# Value-scan queries (E46.1, ADR-035): one bounded scan per property exposes a
+# Value-scan queries (E46.1): one bounded scan per property exposes a
 # {value: count} histogram (truncating) AND an exact {type-name: count} mapping.
 # Both group server-side so the client never receives a per-value row set for
 # the type aggregation.  Identifiers (label / rel_type / property_name) are
-# spliced via <<placeholder>> (ADR-008); values are never interpolated.
+# spliced via <<placeholder>>; values are never interpolated.
 # ---------------------------------------------------------------------------
 
 
@@ -631,7 +645,7 @@ class ApocNodeTypeCountsQuery(CypherReadQuery[NoParams, TypeCountRow]):
 
     Groups the property's non-null values by ``apoc.meta.cypher.type(v)`` and
     counts each group, so the result has one row per distinct *type* — bounded
-    and exact even on a UID / free-text column (ADR-035 §2/§4).
+    and exact even on a UID / free-text column.
     """
 
     Params = NoParams
@@ -661,7 +675,7 @@ class ApocRelTypeCountsQuery(CypherReadQuery[NoParams, TypeCountRow]):
     name = "neo4j.inspect.apoc.rel_type_counts"
     Identifiers = _RelPropertyScanIdentifiers
     cypher_template = (
-        "MATCH ()-[r:`<<rel_type>>`]->()"
+        "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " WHERE r.`<<property_name>>` IS NOT NULL"
         " WITH apoc.meta.cypher.type(r.`<<property_name>>`) AS type_name,"
         " count(*) AS type_count"
@@ -736,7 +750,7 @@ class ApocRelValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow])
     name = "neo4j.inspect.apoc.rel_value_histogram"
     Identifiers = _RelPropertyScanIdentifiers
     cypher_template = (
-        "MATCH ()-[r:`<<rel_type>>`]->()"
+        "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " WHERE r.`<<property_name>>` IS NOT NULL"
         " WITH apoc.convert.toJson(r.`<<property_name>>`) AS value,"
         " count(*) AS value_count"
@@ -753,7 +767,7 @@ class ApocRelValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow])
 
 
 # ---------------------------------------------------------------------------
-# Pure-Cypher scalar value-histogram fallback (E46.6, amended ADR-035 §5).
+# Pure-Cypher scalar value-histogram fallback (E46.6).
 # When APOC is absent the full value scan is skipped (no runtime-type function
 # for type counts, no apoc.convert.toJson for a list-safe histogram key).  This
 # fallback restores a *histogram* for scalar-typed properties using the built-in
@@ -763,7 +777,7 @@ class ApocRelValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow])
 # Type counts stay {} on this path (no portable runtime-type function).  The
 # histogram total reconciles only over the *scalar* population it scanned; the
 # dropped non-scalars fold into other_count (the inspector reconciles against the
-# pure-Cypher present_count — partial-population semantics, ADR-035 §4).
+# pure-Cypher present_count — partial-population semantics).
 # ---------------------------------------------------------------------------
 
 
@@ -811,7 +825,7 @@ class CypherRelValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow
     name = "neo4j.inspect.cypher.rel_value_histogram"
     Identifiers = _RelPropertyScanIdentifiers
     cypher_template = (
-        "MATCH ()-[r:`<<rel_type>>`]->()"
+        "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " WITH toStringOrNull(r.`<<property_name>>`) AS value"
         " WHERE value IS NOT NULL"
         " WITH value, count(*) AS value_count"
@@ -830,6 +844,7 @@ class CypherRelValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow
 _PARTITIONED_PLACEHOLDER_IDENTIFIERS = {
     "label": "_",
     "rel_type": "_",
+    "endpoint_label": "_",
     "source_discriminator": "_",
     "target_discriminator": "_",
 }
@@ -856,11 +871,17 @@ def _register_partitioned_cardinality(catalogue: QueryCatalogue) -> None:
 
 
 _VALUE_SCAN_PLACEHOLDER_NODE = {"label": "_", "property_name": "_"}
-_VALUE_SCAN_PLACEHOLDER_REL = {"rel_type": "_", "property_name": "_"}
+_VALUE_SCAN_PLACEHOLDER_REL = {
+    "source_label": "_",
+    "rel_type": "_",
+    "target_label": "_",
+    "property_name": "_",
+}
+_REL_SHAPE_PLACEHOLDER = {"source_label": "_", "rel_type": "_", "target_label": "_"}
 
 
 def _register_present_counts(catalogue: QueryCatalogue) -> None:
-    """Register the property-independent present-count queries (ADR-036).
+    """Register the property-independent present-count queries.
 
     Registered in **all three** catalogues for parity and introspection (like
     ``NodeCountQuery`` / ``RelCountQuery``).  The inspector only *uses* them on
@@ -884,7 +905,7 @@ def _register_value_scan(catalogue: QueryCatalogue) -> None:
     key), so the value scan is registered only in strategies where APOC is
     available (APOC always; SCHEMA when APOC is present — the inspector gates at
     runtime).  Pure-CYPHER omits the whole value scan ⇒ ``observed_type_counts``
-    stays ``{}`` and ``value_distribution`` stays ``None`` (ADR-035 §5).
+    stays ``{}`` and ``value_distribution`` stays ``None``.
     """
     catalogue.register_read(
         ApocNodeTypeCountsQuery(identifiers=_VALUE_SCAN_PLACEHOLDER_NODE)
@@ -906,7 +927,7 @@ def _register_cypher_value_histogram(catalogue: QueryCatalogue) -> None:
     Used on strategies that may lack APOC (pure-CYPHER always; SCHEMA when the
     runtime APOC probe is negative).  Only the *histogram* is provided here —
     type counts need a runtime-type function APOC supplies, so ``{}`` stays
-    honest on these strategies (ADR-035 §5, amended).  ``toStringOrNull`` keeps
+    honest on these strategies.  ``toStringOrNull`` keeps
     the histogram list-safe: list/map values become ``null`` and are dropped
     rather than crashing ``toString``.
     """
@@ -924,11 +945,18 @@ def build_apoc_catalogue() -> QueryCatalogue:
     query_catalogue.register_read(InspectNodeLabelsQuery())
     query_catalogue.register_read(InspectRelTypesQuery())
     query_catalogue.register_read(NodeCountQuery(identifiers={"label": "_"}))
-    query_catalogue.register_read(RelCountQuery(identifiers={"rel_type": "_"}))
+    query_catalogue.register_read(RelCountQuery(identifiers=_REL_SHAPE_PLACEHOLDER))
     query_catalogue.register_read(ApocNodePropertiesQuery(identifiers={"label": "_"}))
-    query_catalogue.register_read(ApocRelPropertiesQuery(identifiers={"rel_type": "_"}))
+    # Per-shape relationship counts come from the endpoint-filtered pattern scan
+    # APOC meta is the bulk bare-type *types* source only.
+    query_catalogue.register_read(ApocRelTypesQuery())
     query_catalogue.register_read(
-        InspectCardinalityQuery(identifiers={"label": "_", "rel_type": "_"})
+        CypherRelPropertiesQuery(identifiers=_REL_SHAPE_PLACEHOLDER)
+    )
+    query_catalogue.register_read(
+        InspectCardinalityQuery(
+            identifiers={"label": "_", "rel_type": "_", "target_label": "_"}
+        )
     )
     query_catalogue.register_read(InspectNeo4jConstraintsQuery())
     query_catalogue.register_read(
@@ -946,13 +974,15 @@ def build_cypher_catalogue() -> QueryCatalogue:
     query_catalogue.register_read(InspectNodeLabelsQuery())
     query_catalogue.register_read(InspectRelTypesQuery())
     query_catalogue.register_read(NodeCountQuery(identifiers={"label": "_"}))
-    query_catalogue.register_read(RelCountQuery(identifiers={"rel_type": "_"}))
+    query_catalogue.register_read(RelCountQuery(identifiers=_REL_SHAPE_PLACEHOLDER))
     query_catalogue.register_read(CypherNodePropertiesQuery(identifiers={"label": "_"}))
     query_catalogue.register_read(
-        CypherRelPropertiesQuery(identifiers={"rel_type": "_"})
+        CypherRelPropertiesQuery(identifiers=_REL_SHAPE_PLACEHOLDER)
     )
     query_catalogue.register_read(
-        InspectCardinalityQuery(identifiers={"label": "_", "rel_type": "_"})
+        InspectCardinalityQuery(
+            identifiers={"label": "_", "rel_type": "_", "target_label": "_"}
+        )
     )
     query_catalogue.register_read(InspectNeo4jConstraintsQuery())
     query_catalogue.register_read(
@@ -975,15 +1005,17 @@ def build_schema_catalogue() -> QueryCatalogue:
     query_catalogue.register_read(InspectNodeLabelsQuery())
     query_catalogue.register_read(InspectRelTypesQuery())
     query_catalogue.register_read(NodeCountQuery(identifiers={"label": "_"}))
-    query_catalogue.register_read(RelCountQuery(identifiers={"rel_type": "_"}))
+    query_catalogue.register_read(RelCountQuery(identifiers=_REL_SHAPE_PLACEHOLDER))
     query_catalogue.register_read(CypherNodePropertiesQuery(identifiers={"label": "_"}))
     query_catalogue.register_read(
-        CypherRelPropertiesQuery(identifiers={"rel_type": "_"})
+        CypherRelPropertiesQuery(identifiers=_REL_SHAPE_PLACEHOLDER)
     )
     query_catalogue.register_read(DbSchemaNodeTypesQuery())
     query_catalogue.register_read(DbSchemaRelTypesQuery())
     query_catalogue.register_read(
-        InspectCardinalityQuery(identifiers={"label": "_", "rel_type": "_"})
+        InspectCardinalityQuery(
+            identifiers={"label": "_", "rel_type": "_", "target_label": "_"}
+        )
     )
     query_catalogue.register_read(InspectNeo4jConstraintsQuery())
     query_catalogue.register_read(

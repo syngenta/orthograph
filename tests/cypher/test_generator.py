@@ -1210,3 +1210,91 @@ def test_merge_relationship_raises_when_target_has_no_uid_field():
                 "__target_uid__": "y",
             }
         )
+
+
+# --- E50.7: multi-shape relationship resolution in the generator ---
+
+
+class _OrgNode(NodeModel):
+    __label__ = "Org"
+    __uid_field__ = "name"
+
+    name: str
+
+
+class _KnowsPerson(RelationshipModel):
+    __label__ = "KNOWS"
+    __source_label__ = "Person"
+    __target_label__ = "Person"
+
+    since: int = 0
+
+
+class _KnowsOrg(RelationshipModel):
+    __label__ = "KNOWS"
+    __source_label__ = "Person"
+    __target_label__ = "Org"
+
+    since: int = 0
+
+
+@pytest.fixture()
+def multi_shape_gen_model() -> GraphDefinition:
+    return GraphDefinition(
+        name="MultiShape",
+        node_types=[Person, _OrgNode],
+        relationship_types=[_KnowsPerson, _KnowsOrg],
+    )
+
+
+def test_create_relationship_multi_shape_with_labels(
+    multi_shape_gen_model: GraphDefinition,
+):
+    """When __source_label__ and __target_label__ are in data, the correct shape
+    is resolved and the query references the right endpoint labels."""
+    gen = CypherGenerator(multi_shape_gen_model)
+    query, params = gen.create_relationship(
+        {
+            "__label__": "KNOWS",
+            "__source_label__": "Person",
+            "__target_label__": "Org",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Acme",
+        }
+    )
+    assert ":Org" in query
+    assert ":Person" in query
+    assert "KNOWS" in query
+
+
+def test_create_relationship_multi_shape_person_person(
+    multi_shape_gen_model: GraphDefinition,
+):
+    """Person-KNOWS->Person shape is resolved when labels are specified."""
+    gen = CypherGenerator(multi_shape_gen_model)
+    query, params = gen.create_relationship(
+        {
+            "__label__": "KNOWS",
+            "__source_label__": "Person",
+            "__target_label__": "Person",
+            "__source_uid__": "Alice",
+            "__target_uid__": "Bob",
+        }
+    )
+    assert query.count(":Person") == 2
+    assert "KNOWS" in query
+
+
+def test_create_relationship_multi_shape_ambiguous_raises(
+    multi_shape_gen_model: GraphDefinition,
+):
+    # Multiple shapes for same label without endpoint hints → ambiguous error.
+    gen = CypherGenerator(multi_shape_gen_model)
+    with pytest.raises(CypherUnknownLabelError, match="ambiguous"):
+        gen.create_relationship(
+            {
+                "__label__": "KNOWS",
+                "__source_uid__": "Alice",
+                "__target_uid__": "Bob",
+            }
+        )

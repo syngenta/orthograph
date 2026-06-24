@@ -36,7 +36,7 @@ from orthograph.backends.neo4j.inspector import (
     Neo4jInspector,
     validate_database,
 )
-from orthograph.backends.neo4j.queries import build_apoc_catalogue
+from orthograph.backends.neo4j.queries import RelCountQuery, build_apoc_catalogue
 from orthograph.cypher.bindings import NoParams
 from orthograph.cypher.exceptions import CypherIdentifierError
 from orthograph.graph_definition.graph_definition import GraphDefinition
@@ -125,7 +125,7 @@ def test_explicit_cypher_strategy_skips_detection(
         neo4j_driver
     )
     assert profile.node_type_profiles["Person"].count == 2
-    assert profile.relationship_types == {"ACTED_IN"}
+    assert profile.relationship_types == {"Person:ACTED_IN:Movie"}
 
 
 @pytest.mark.neo4j
@@ -230,7 +230,7 @@ def test_relationship_type_detected(neo4j_driver: Any, neo4j_clean: None) -> Non
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
         neo4j_driver
     )
-    assert profile.relationship_types == {"ACTED_IN"}
+    assert profile.relationship_types == {"Person:ACTED_IN:Movie"}
 
 
 @pytest.mark.neo4j
@@ -242,7 +242,7 @@ def test_relationship_count(neo4j_driver: Any, neo4j_clean: None) -> None:
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
         neo4j_driver
     )
-    assert profile.rel_type_profiles["ACTED_IN"].count == 3
+    assert profile.rel_type_profiles["Person:ACTED_IN:Movie"].count == 3
 
 
 @pytest.mark.neo4j
@@ -254,20 +254,20 @@ def test_relationship_property_names(neo4j_driver: Any, neo4j_clean: None) -> No
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
         neo4j_driver
     )
-    props = set(profile.rel_type_profiles["ACTED_IN"].property_profiles)
+    props = set(profile.rel_type_profiles["Person:ACTED_IN:Movie"].property_profiles)
     assert props == {"role"}
 
 
 @pytest.mark.neo4j
 def test_endpoint_labels_populated(neo4j_driver: Any, neo4j_clean: None) -> None:
-    """source_labels and target_labels are populated by the endpoint-labels query."""
+    """scalar source_label and target_label are populated by the endpoint query."""
     _seed(neo4j_driver)
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
         neo4j_driver
     )
-    acted_in = profile.rel_type_profiles["ACTED_IN"]
-    assert acted_in.source_labels == {"Person"}
-    assert acted_in.target_labels == {"Movie"}
+    acted_in = profile.rel_type_profiles["Person:ACTED_IN:Movie"]
+    assert acted_in.source_label == "Person"
+    assert acted_in.target_label == "Movie"
 
 
 @pytest.mark.neo4j
@@ -281,7 +281,7 @@ def test_cardinality_stats_populated(neo4j_driver: Any, neo4j_clean: None) -> No
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
         neo4j_driver
     )
-    cs = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
+    cs = profile.rel_type_profiles["Person:ACTED_IN:Movie"].cardinality_stats
     assert cs is not None
     assert cs.min == 1
     assert cs.max == 2
@@ -305,7 +305,7 @@ def test_cardinality_not_computed_against_target_label(
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
         neo4j_driver
     )
-    cs = profile.rel_type_profiles["ACTED_IN"].cardinality_stats
+    cs = profile.rel_type_profiles["Person:ACTED_IN:Movie"].cardinality_stats
     assert cs is not None
     assert cs.min is not None and cs.min > 0, (
         "min == 0: cardinality was computed against the target label "
@@ -364,7 +364,9 @@ def test_schema_strategy_populates_types_with_true_counts(
     assert born_pp.total_count == 2
 
     # Relationship property types populated too.
-    role_pp = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
+    role_pp = profile.rel_type_profiles["Person:ACTED_IN:Movie"].property_profiles[
+        "role"
+    ]
     assert role_pp.observed_types != []
     assert role_pp.present_count == 3
     assert role_pp.total_count == 3
@@ -405,11 +407,13 @@ def test_validate_database_fails_for_missing_label(
 def test_validate_database_fails_for_wrong_endpoint(
     neo4j_driver: Any, neo4j_clean: None
 ) -> None:
-    """validate_database() reports INVALID_ENDPOINT when the model declares a
-    relationship endpoint that does not match what the database contains.
+    """validate_database() reclassifies an endpoint mismatch to presence findings.
 
-    The DB has ACTED_IN going Person→Movie.  The model declares Person→Studio,
-    which is wrong.
+    The DB has ACTED_IN going Person→Movie.  The model declares Person→Studio.
+    Under ADR-037 endpoints are part of relationship identity, so the declared
+    ``Person:ACTED_IN:Studio`` and observed ``Person:ACTED_IN:Movie`` are
+    distinct addresses: the declared shape is MISSING and the observed shape is
+    UNEXPECTED.  ``INVALID_ENDPOINT`` no longer exists.
     """
     _seed(neo4j_driver)
 
@@ -430,8 +434,10 @@ def test_validate_database_fails_for_wrong_endpoint(
     )
     result = validate_database(neo4j_driver, wrong_model)
     assert not result.is_valid
-    codes = {e.code for e in result.errors}
-    assert "INVALID_ENDPOINT" in codes
+    codes = {i.code for i in result.issues}
+    assert "INVALID_ENDPOINT" not in codes
+    assert "MISSING_REL_TYPE" in codes
+    assert "UNEXPECTED_REL_TYPE" in codes
 
 
 @pytest.mark.neo4j
@@ -445,7 +451,11 @@ def test_injection_raises_before_reaching_driver(
     no query was executed.
     """
     q = InspectCardinalityQuery(
-        identifiers={"label": "Person) DETACH DELETE (n //", "rel_type": "X"}
+        identifiers={
+            "label": "Person) DETACH DELETE (n //",
+            "rel_type": "X",
+            "target_label": "Movie",
+        }
     )
     with pytest.raises(CypherIdentifierError, match="label"):
         q.build(NoParams())
@@ -500,7 +510,10 @@ def test_apoc_catalogue_offline_describe(neo4j_driver: Any, neo4j_clean: None) -
     query_catalogue = build_apoc_catalogue()
     names = set(query_catalogue.names())
     assert "neo4j.inspect.apoc.node_properties" in names
-    assert "neo4j.inspect.apoc.rel_properties" in names
+    # ADR-037 §6a: bulk rel-type-map source (replaces per-rel-type apoc.rel_properties).
+    assert "neo4j.inspect.apoc.rel_types" in names
+    # Per-shape rel-property counts via endpoint-filtered pattern scan (all strategies).
+    assert "neo4j.inspect.cypher.rel_properties" in names
     # Authoritative instance-count queries (property-independent).
     assert "neo4j.inspect.node_count" in names
     assert "neo4j.inspect.rel_count" in names
@@ -512,7 +525,7 @@ def test_apoc_catalogue_offline_describe(neo4j_driver: Any, neo4j_clean: None) -
     # ADR-036: property-independent present-count queries.
     assert "neo4j.inspect.node_present_count" in names
     assert "neo4j.inspect.rel_present_count" in names
-    assert len(names) == 17
+    assert len(names) == 18
     for desc in query_catalogue.describe():
         assert desc.output_schema is not None
 
@@ -613,7 +626,9 @@ def test_both_sides_source_breakdown_populated(
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
         neo4j_driver, graph_definition=BOTH_SIDES_MODEL
     )
-    src = profile.rel_type_profiles["MAKES"].source_partitioned_cardinality
+    src = profile.rel_type_profiles[
+        "Operation:MAKES:Sample"
+    ].source_partitioned_cardinality
     assert src is not None, "source_partitioned_cardinality must be populated"
     assert _PAIR in src, f"expected partition {_PAIR!r} in {set(src)}"
     assert src[_PAIR].min == 2
@@ -636,7 +651,9 @@ def test_both_sides_target_breakdown_populated(
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
         neo4j_driver, graph_definition=BOTH_SIDES_MODEL
     )
-    tgt = profile.rel_type_profiles["MAKES"].target_partitioned_cardinality
+    tgt = profile.rel_type_profiles[
+        "Operation:MAKES:Sample"
+    ].target_partitioned_cardinality
     assert tgt is not None, "target_partitioned_cardinality must be populated"
     assert _PAIR in tgt, f"expected partition {_PAIR!r} in {set(tgt)}"
     assert tgt[_PAIR].min == 1
@@ -659,7 +676,7 @@ def test_both_sides_source_and_target_are_distinct(
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
         neo4j_driver, graph_definition=BOTH_SIDES_MODEL
     )
-    rtp = profile.rel_type_profiles["MAKES"]
+    rtp = profile.rel_type_profiles["Operation:MAKES:Sample"]
     src = rtp.source_partitioned_cardinality
     tgt = rtp.target_partitioned_cardinality
     assert src is not None
@@ -846,7 +863,12 @@ def test_rel_type_counts_exact_split(neo4j_driver: Any, neo4j_clean: None) -> No
     rows = _run(
         neo4j_driver,
         ApocRelTypeCountsQuery(
-            identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+            identifiers={
+                "source_label": "Person",
+                "rel_type": "ACTED_IN",
+                "target_label": "Movie",
+                "property_name": "role",
+            }
         ),
         NoParams(),
     )
@@ -1013,7 +1035,9 @@ def test_cypher_fallback_list_property_is_skipped_not_crashed(
         strategy=Neo4jInspectionStrategy.CYPHER, value_counts_top_n=20
     ).inspect(neo4j_driver)
 
-    roles = profile.rel_type_profiles["ACTED_IN"].property_profiles["roles"]
+    roles = profile.rel_type_profiles["Person:ACTED_IN:Movie"].property_profiles[
+        "roles"
+    ]
     # List values are dropped by toStringOrNull → no scalar histogram.
     assert roles.value_distribution is None
     assert roles.observed_type_counts == {}
@@ -1047,7 +1071,7 @@ def test_property_less_relationship_has_nonzero_count(
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
         neo4j_driver
     )
-    links = profile.rel_type_profiles["LINKS"]
+    links = profile.rel_type_profiles["Thing:LINKS:Thing"]
     # The true edge count — independent of (absent) properties.
     assert links.count == 3
     # No properties were stored on the relationship.
@@ -1112,7 +1136,7 @@ def test_apoc_no_scan_rel_present_count_is_truthful(
     profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.APOC).inspect(
         neo4j_driver
     )
-    role = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
+    role = profile.rel_type_profiles["Person:ACTED_IN:Movie"].property_profiles["role"]
     # The corrected present_count equals the true non-null count, not APOC's
     # (potentially sampled / undercounted) propertyObservations.
     assert role.present_count == true_present
@@ -1143,3 +1167,302 @@ def test_apoc_no_scan_partial_completeness_is_truthful(
     assert born.present_count == 90
     assert born.total_count == 150
     assert born.completeness == pytest.approx(0.6)
+
+
+# ---------------------------------------------------------------------------
+# E50.5 — endpoint-aware relationship identity (ADR-037)
+#
+# These tests verify the core correctness guarantee: two edges sharing a bare
+# relationship label but with *different* endpoint labels must produce two
+# **distinct, un-blended** RelationshipTypeProfiles keyed by their identity
+# triple ``"source:LABEL:target"``.  Counts, cardinality, and property stats
+# must not be mixed across the two shapes.
+# ---------------------------------------------------------------------------
+
+
+def _seed_two_knows_shapes(driver: Any) -> None:
+    """Seed Person-KNOWS->Person (3 edges) and Company-KNOWS->Company (1 edge).
+
+    Person shape: p1 knows p2 and p3 (degree 2), p2 knows p3 (degree 1).
+    Company shape: c1 knows c2 (degree 1, one company).
+    Both shapes carry a ``weight`` property so property un-blending is testable.
+    """
+    driver.execute_query(
+        "MERGE (p1:Person {name: 'Alice'})"
+        " MERGE (p2:Person {name: 'Bob'})"
+        " MERGE (p3:Person {name: 'Cara'})"
+        " MERGE (c1:Company {name: 'Acme'})"
+        " MERGE (c2:Company {name: 'Globex'})"
+        " MERGE (p1)-[:KNOWS {weight: 1}]->(p2)"
+        " MERGE (p1)-[:KNOWS {weight: 2}]->(p3)"
+        " MERGE (p2)-[:KNOWS {weight: 3}]->(p3)"
+        " MERGE (c1)-[:KNOWS {weight: 9}]->(c2)"
+    )
+
+
+@pytest.mark.neo4j
+def test_two_shapes_produce_two_distinct_profiles(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """Person-KNOWS->Person and Company-KNOWS->Company are distinct profiles.
+
+    Core E50.5 correctness guarantee (ADR-037): same bare label, different
+    endpoint pairs → different identity triples → different dict entries.
+    rel_type_profiles must have BOTH keys, not one blended entry.
+    """
+    _seed_two_knows_shapes(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
+    assert "Person:KNOWS:Person" in profile.relationship_types
+    assert "Company:KNOWS:Company" in profile.relationship_types
+    # Only the two typed shapes — no bare "KNOWS" key.
+    assert "KNOWS" not in profile.relationship_types
+
+
+@pytest.mark.neo4j
+def test_two_shapes_counts_are_not_blended(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """Counts are per-shape, not aggregated across endpoint pairs.
+
+    Person-KNOWS->Person has 3 edges; Company-KNOWS->Company has 1.
+    A blended inspector would report 4 under one key.
+    """
+    _seed_two_knows_shapes(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
+    assert profile.rel_type_profiles["Person:KNOWS:Person"].count == 3
+    assert profile.rel_type_profiles["Company:KNOWS:Company"].count == 1
+
+
+@pytest.mark.neo4j
+def test_two_shapes_cardinality_not_blended(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """Cardinality stats are per-shape and un-blended.
+
+    Person side: p1 has degree 2, p2 has degree 1, p3 has degree 0 (no outgoing
+    KNOWS) → the OPTIONAL MATCH query counts all Person nodes including zero-degree
+    ones, so min=0, max=2.
+    Company side: c1 has degree 1 → min=0 (c2 has no outgoing), max=1.
+    A blended inspector would have a single entry covering all 4 nodes.
+    """
+    _seed_two_knows_shapes(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
+    person_stats = profile.rel_type_profiles["Person:KNOWS:Person"].cardinality_stats
+    company_stats = profile.rel_type_profiles["Company:KNOWS:Company"].cardinality_stats
+    assert person_stats is not None
+    # 3 Person nodes counted (including p3 with degree 0 via OPTIONAL MATCH).
+    assert person_stats.count == 3
+    assert person_stats.max == 2
+    assert company_stats is not None
+    # 2 Company nodes; c2 has no outgoing edge → degree 0.
+    assert company_stats.count == 2
+    assert company_stats.max == 1
+
+
+@pytest.mark.neo4j
+def test_two_shapes_property_profiles_not_blended(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """Property present_count is per-shape, not summed across endpoint pairs.
+
+    weight is present on all 3 Person-KNOWS->Person edges and on 1
+    Company-KNOWS->Company edge.  A blended inspector would report
+    present_count=4 under one profile; the per-shape inspector must
+    report 3 and 1 separately.
+    """
+    _seed_two_knows_shapes(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
+    person_weight = profile.rel_type_profiles["Person:KNOWS:Person"].property_profiles[
+        "weight"
+    ]
+    company_weight = profile.rel_type_profiles[
+        "Company:KNOWS:Company"
+    ].property_profiles["weight"]
+    assert person_weight.present_count == 3
+    assert company_weight.present_count == 1
+
+
+@pytest.mark.neo4j
+def test_two_shapes_scalar_endpoints_correct(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """Each profile carries correct scalar source_label and target_label."""
+    _seed_two_knows_shapes(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
+    pp = profile.rel_type_profiles["Person:KNOWS:Person"]
+    cp = profile.rel_type_profiles["Company:KNOWS:Company"]
+    assert pp.source_label == "Person"
+    assert pp.target_label == "Person"
+    assert cp.source_label == "Company"
+    assert cp.target_label == "Company"
+
+
+@pytest.mark.neo4j
+def test_two_shapes_parity_with_networkx(neo4j_driver: Any, neo4j_clean: None) -> None:
+    """Per-shape profiles from Neo4j match the NetworkX reference (ADR-009 parity).
+
+    Parity is on counts and cardinality bounds (the statistics that must not be
+    blended), not on observed_types (which Neo4j-CYPHER cannot populate).
+    """
+    import networkx as nx
+
+    from orthograph.backends.networkx.inspector import NetworkxInspector
+
+    _seed_two_knows_shapes(neo4j_driver)
+
+    # NetworkX reference.
+    g: nx.MultiDiGraph[str] = nx.MultiDiGraph()
+    g.add_node("p1", __label__="Person", name="Alice")
+    g.add_node("p2", __label__="Person", name="Bob")
+    g.add_node("p3", __label__="Person", name="Cara")
+    g.add_node("c1", __label__="Company", name="Acme")
+    g.add_node("c2", __label__="Company", name="Globex")
+    g.add_edge("p1", "p2", __label__="KNOWS", weight=1)
+    g.add_edge("p1", "p3", __label__="KNOWS", weight=2)
+    g.add_edge("p2", "p3", __label__="KNOWS", weight=3)
+    g.add_edge("c1", "c2", __label__="KNOWS", weight=9)
+    nx_profile = NetworkxInspector().inspect(g)
+
+    neo4j_profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
+
+    for key in ("Person:KNOWS:Person", "Company:KNOWS:Company"):
+        nx_rtp = nx_profile.rel_type_profiles[key]
+        n4_rtp = neo4j_profile.rel_type_profiles[key]
+        assert n4_rtp.count == nx_rtp.count, f"count mismatch for {key!r}"
+        nx_cs = nx_rtp.cardinality_stats
+        n4_cs = n4_rtp.cardinality_stats
+        assert n4_cs is not None
+        assert nx_cs is not None
+        # max agrees: the highest observed degree is the same on both sides.
+        assert n4_cs.max == nx_cs.max, f"max mismatch for {key!r}"
+        # min differs by design (ADR-009 parity): NetworkX only tracks nodes that
+        # have at least one outgoing edge; Neo4j OPTIONAL MATCH includes all source
+        # nodes so reports min=0 for nodes with no matching edges.  This is honest
+        # per-strategy behaviour, not a bug.
+
+
+@pytest.mark.neo4j
+def test_endpoint_label_splice_safety(neo4j_driver: Any, neo4j_clean: None) -> None:
+    """Endpoint labels are validated through validate_identifier before splicing.
+
+    A label containing injection characters must raise CypherIdentifierError
+    before any Cypher reaches the driver.  This guards the per-shape scans that
+    now splice source_label and target_label as identifiers (ADR-037 §6).
+    """
+
+    with pytest.raises(CypherIdentifierError):
+        RelCountQuery(
+            identifiers={
+                "source_label": "Person) DETACH DELETE (n //",
+                "rel_type": "KNOWS",
+                "target_label": "Person",
+            }
+        ).build(NoParams())
+
+
+# ---------------------------------------------------------------------------
+# E50.5 — validate_database with a dual-same-label GraphDefinition (ADR-037)
+#
+# Exercises the full path:
+#   GraphDefinition(two RelationshipModels sharing __label__ but different
+#   endpoints) → validate_database → compare_profile_to_definition
+# The comparison engine must match each declared shape against its own
+# per-shape profile by the full triple key, not by bare label.
+# ---------------------------------------------------------------------------
+
+
+class _KnowsPerson(RelationshipModel):
+    """Person-KNOWS->Person shape for the dual-shape definition."""
+
+    __label__ = "KNOWS"
+    __source_label__ = "Person"
+    __target_label__ = "Person"
+    weight: int
+
+
+class _KnowsCompany(RelationshipModel):
+    """Company-KNOWS->Company shape for the dual-shape definition."""
+
+    __label__ = "KNOWS"
+    __source_label__ = "Company"
+    __target_label__ = "Company"
+    weight: int
+
+
+class _Company(NodeModel):
+    __label__ = "Company"
+    __uid_field__ = "name"
+    name: str
+
+
+_DUAL_KNOWS_MODEL = GraphDefinition(
+    name="DualKnows",
+    node_types=[Person, _Company],
+    relationship_types=[_KnowsPerson, _KnowsCompany],
+)
+
+
+@pytest.mark.neo4j
+def test_validate_database_dual_same_label_passes_for_matching_db(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """validate_database passes when the DB matches a dual-same-label definition.
+
+    Two RelationshipModel subclasses share ``__label__ = "KNOWS"`` but declare
+    different endpoint pairs (Person→Person, Company→Company).  The comparison
+    engine must route each declared shape to its own per-shape profile by the
+    full triple key ("Person:KNOWS:Person", "Company:KNOWS:Company") — not
+    collapse both under the bare "KNOWS" label.
+
+    Regression guard for the ADR-037 §6 / E50.5 full-path coverage gap:
+    the two-shapes inspection tests already verify profile creation; this test
+    locks the declaration → comparison pipeline.
+    """
+    _seed_two_knows_shapes(neo4j_driver)
+    result = validate_database(neo4j_driver, _DUAL_KNOWS_MODEL)
+    assert result.is_valid, [str(e) for e in result.errors]
+
+
+@pytest.mark.neo4j
+def test_validate_database_dual_same_label_fails_for_wrong_endpoint(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """validate_database reports an error when a declared shape is absent from the DB.
+
+    The DB has Person-KNOWS->Person and Company-KNOWS->Company.  A definition
+    that declares Person-KNOWS->Company (a shape not present in the DB) must
+    surface a missing-relationship-type error, confirming that triple-key
+    matching is used and a wrong endpoint cannot silently pass by matching on
+    bare label alone.
+    """
+
+    class _KnowsPersonToCompany(RelationshipModel):
+        __label__ = "KNOWS"
+        __source_label__ = "Person"
+        __target_label__ = "Company"
+        weight: int
+
+    mismatched_model = GraphDefinition(
+        name="MismatchedKnows",
+        node_types=[Person, _Company],
+        relationship_types=[_KnowsPersonToCompany],
+    )
+
+    _seed_two_knows_shapes(neo4j_driver)
+    result = validate_database(neo4j_driver, mismatched_model)
+    assert not result.is_valid
+    error_strings = [str(e) for e in result.errors]
+    # The declared Person:KNOWS:Company shape must be flagged as missing.
+    assert any("Person:KNOWS:Company" in e for e in error_strings), error_strings

@@ -13,6 +13,7 @@ from orthograph.graph_definition.exceptions import (
     CardinalityParseError,
     MissingClassVarError,
 )
+from orthograph.graph_definition.identity import RelTypeKey
 from orthograph.graph_definition.property_spec import TypeInfo, resolve_type_info
 
 
@@ -631,3 +632,23 @@ class RelationshipModel(_PropertySpecMixin, BaseModel):
         See :meth:`source_cardinality` for why this accessor exists.
         """
         return _coerce_cardinality(cls.__target_cardinality__)
+
+    @classmethod
+    def rel_key(cls) -> str:
+        """Return this type's identity key: ``source:LABEL:target``.
+
+        The declared side's single seam for relationship identity: it composes
+        the three identity dunders into the deterministic key string used as
+        ``dict`` keys, comparison addresses, and serialisation ordering, so
+        callers never hand-build :class:`RelTypeKey` from the dunders.  Encoding
+        itself stays in :class:`RelTypeKey` (the single source of truth); this is
+        a thin delegate, mirroring :meth:`source_cardinality`.  The observed side
+        exposes the symmetric accessor on ``RelationshipTypeProfile`` (E50.3).
+        """
+        return str(
+            RelTypeKey(
+                source_label=cls.__source_label__,
+                label=cls.__label__,
+                target_label=cls.__target_label__,
+            )
+        )

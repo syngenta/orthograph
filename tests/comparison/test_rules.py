@@ -11,7 +11,7 @@ C2 tests cover:
 * Each standard rule emits the exact code + severity as its legacy _check_*
   counterpart (hard constraint).
 * Satisfaction path: rule emits no issues when constraint is met.
-* standard_rules() returns all ten rule instances in order.
+* standard_rules() returns all eleven rule instances in order.
 """
 
 from collections.abc import Iterable
@@ -23,7 +23,6 @@ import pytest
 
 from orthograph.comparison.rules import (
     CardinalityViolationRule,
-    InvalidEndpointRule,
     MissingNodeLabelRule,
     MissingPropertyRule,
     MissingRelTypeRule,
@@ -298,11 +297,11 @@ _STD_PROFILE = GraphProfile(
         "Movie": NodeTypeProfile(label="Movie", count=1),
     },
     rel_type_profiles={
-        "ACTED_IN": RelationshipTypeProfile(
+        "Person:ACTED_IN:Movie": RelationshipTypeProfile(
             rel_type="ACTED_IN",
             count=3,
-            source_labels={"Person"},
-            target_labels={"Movie"},
+            source_label="Person",
+            target_label="Movie",
             cardinality_stats=CardinalityStats(count=2, min=1, max=3, mean=1.5),
         ),
     },
@@ -725,44 +724,64 @@ def test_property_type_mismatch_matching_types_excluded_from_share():
 
 
 # ---------------------------------------------------------------------------
-# InvalidEndpointRule
+# Endpoint reclassification (ADR-037 §4): endpoint mismatch -> presence findings
+#
+# InvalidEndpointRule is deleted.  Under triple identity a different endpoint is
+# a different address, so a declared `Person-ACTED_IN-Movie` vs an observed
+# `Person-ACTED_IN-Company` produces MISSING_REL_TYPE (declared, not observed)
+# and UNEXPECTED_REL_TYPE (observed, not declared) — never INVALID_ENDPOINT.
 # ---------------------------------------------------------------------------
 
 
-def test_invalid_endpoint_rule_code_and_severity():
-    rule = InvalidEndpointRule()
-    rtp = RelationshipTypeProfile(
-        rel_type="ACTED_IN",
-        count=1,
-        source_labels={"WrongNode"},  # declared source is Person
-        target_labels={"Movie"},
+def test_endpoint_mismatch_reclassifies_to_presence_findings():
+    """Declared `Person-ACTED_IN-Movie` vs observed `Person-ACTED_IN-Company`
+    surfaces as MISSING + UNEXPECTED rel-type findings, not INVALID_ENDPOINT."""
+    from orthograph.comparison.engine import compare_profile_to_definition
+
+    class _Actor(NodeModel):
+        __label__ = "Person"
+        name: str
+
+    class _Film(NodeModel):
+        __label__ = "Movie"
+        title: str
+
+    class _ActedInMovie(RelationshipModel):
+        __label__ = "ACTED_IN"
+        __source_label__ = "Person"
+        __target_label__ = "Movie"
+
+    model = GraphDefinition(
+        name="endpoint_reclass",
+        node_types=[_Actor, _Film],
+        relationship_types=[_ActedInMovie],
     )
-    ctx = _ctx(
-        address="ACTED_IN",
-        left=_ActedIn,
-        right=rtp,
+    profile = GraphProfile(
+        source="endpoint_reclass",
+        node_type_profiles={
+            "Person": NodeTypeProfile(label="Person", count=1),
+            "Company": NodeTypeProfile(label="Company", count=1),
+        },
+        rel_type_profiles={
+            "Person:ACTED_IN:Company": RelationshipTypeProfile(
+                rel_type="ACTED_IN",
+                count=1,
+                source_label="Person",
+                target_label="Company",
+            ),
+        },
     )
-    issues = list(rule(ctx))
-    assert len(issues) == 1
-    assert issues[0].code == "INVALID_ENDPOINT"
-    assert issues[0].severity == Severity.ERROR
-    assert issues[0].entity_type == EntityType.RELATIONSHIP
 
+    result = compare_profile_to_definition(profile, model)
+    codes = {i.code for i in result.issues}
+    assert "MISSING_REL_TYPE" in codes
+    assert "UNEXPECTED_REL_TYPE" in codes
+    assert "INVALID_ENDPOINT" not in codes
 
-def test_invalid_endpoint_rule_no_issue_when_valid():
-    rule = InvalidEndpointRule()
-    rtp = RelationshipTypeProfile(
-        rel_type="ACTED_IN",
-        count=1,
-        source_labels={"Person"},
-        target_labels={"Movie"},
-    )
-    ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
-    assert list(rule(ctx)) == []
-
-
-def test_invalid_endpoint_rule_satisfies_protocol():
-    assert isinstance(InvalidEndpointRule(), Rule)
+    missing = next(i for i in result.issues if i.code == "MISSING_REL_TYPE")
+    assert missing.entity_id == "Person:ACTED_IN:Movie"
+    unexpected = next(i for i in result.issues if i.code == "UNEXPECTED_REL_TYPE")
+    assert unexpected.entity_id == "Person:ACTED_IN:Company"
 
 
 # ---------------------------------------------------------------------------
@@ -776,11 +795,11 @@ def test_cardinality_violation_rule_code_and_severity():
     rtp = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=2,
-        source_labels={"Person"},
-        target_labels={"Movie"},
+        source_label="Person",
+        target_label="Movie",
         cardinality_stats=CardinalityStats(count=2, min=0, max=3, mean=1.5),
     )
-    ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
+    ctx = _ctx(address="Person:ACTED_IN:Movie", left=_ActedIn, right=rtp)
     issues = list(rule(ctx))
     assert len(issues) == 1
     assert issues[0].code == "CARDINALITY_VIOLATION"
@@ -793,11 +812,11 @@ def test_cardinality_violation_rule_no_issue_when_satisfied():
     rtp = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=2,
-        source_labels={"Person"},
-        target_labels={"Movie"},
+        source_label="Person",
+        target_label="Movie",
         cardinality_stats=CardinalityStats(count=2, min=1, max=3, mean=2.0),
     )
-    ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
+    ctx = _ctx(address="Person:ACTED_IN:Movie", left=_ActedIn, right=rtp)
     assert list(rule(ctx)) == []
 
 
@@ -806,10 +825,10 @@ def test_cardinality_violation_rule_no_issue_when_no_stats():
     rtp = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=0,
-        source_labels={"Person"},
-        target_labels={"Movie"},
+        source_label="Person",
+        target_label="Movie",
     )
-    ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
+    ctx = _ctx(address="Person:ACTED_IN:Movie", left=_ActedIn, right=rtp)
     assert list(rule(ctx)) == []
 
 
@@ -822,9 +841,9 @@ def test_cardinality_violation_rule_satisfies_protocol():
 # ---------------------------------------------------------------------------
 
 
-def test_standard_rules_returns_twelve_rules():
+def test_standard_rules_returns_eleven_rules():
     rules = standard_rules()
-    assert len(rules) == 12
+    assert len(rules) == 11
 
 
 def test_standard_rules_all_satisfy_protocol():
@@ -849,7 +868,6 @@ def test_standard_rules_expected_keys():
         "property.type_mismatch",
         "property.constraint_presence",
         "property.enum_value",
-        "rel.endpoint",
         "rel.cardinality",
     }
     assert {r.key for r in standard_rules()} == expected
@@ -1104,11 +1122,11 @@ def test_case_b_extension_via_injection():
             ),
         },
         rel_type_profiles={
-            "ACTED_IN": RelationshipTypeProfile(
+            "Person:ACTED_IN:Movie": RelationshipTypeProfile(
                 rel_type="ACTED_IN",
                 count=300,
-                source_labels={"Person"},
-                target_labels={"Movie"},
+                source_label="Person",
+                target_label="Movie",
                 # no cardinality_stats → no CARDINALITY_VIOLATION
             ),
         },
@@ -1201,11 +1219,11 @@ _E407_PROFILE = GraphProfile(
         "Sample": NodeTypeProfile(label="Sample", count=2),
     },
     rel_type_profiles={
-        "HAS_OUTPUT": RelationshipTypeProfile(
+        "Operation:HAS_OUTPUT:Sample": RelationshipTypeProfile(
             rel_type="HAS_OUTPUT",
             count=2,
-            source_labels={"Operation"},
-            target_labels={"Sample"},
+            source_label="Operation",
+            target_label="Sample",
             cardinality_stats=CardinalityStats(count=1, min=1, max=2, mean=1.5),
         ),
     },
@@ -1228,17 +1246,19 @@ def test_cardinality_violation_rule_conditional_yields_unverifiable():
     rtp = RelationshipTypeProfile(
         rel_type="HAS_OUTPUT",
         count=2,
-        source_labels={"Operation"},
-        target_labels={"Sample"},
+        source_label="Operation",
+        target_label="Sample",
         cardinality_stats=CardinalityStats(count=1, min=1, max=2, mean=1.5),
     )
-    ctx = _e407_ctx(address="HAS_OUTPUT", left=_HasOutputConditional, right=rtp)
+    ctx = _e407_ctx(
+        address="Operation:HAS_OUTPUT:Sample", left=_HasOutputConditional, right=rtp
+    )
     issues = list(rule(ctx))
     assert len(issues) == 1
     assert issues[0].code == "CARDINALITY_UNVERIFIABLE"
     assert issues[0].severity == Severity.INFO
     assert issues[0].entity_type == EntityType.RELATIONSHIP
-    assert issues[0].entity_id == "HAS_OUTPUT"
+    assert issues[0].entity_id == "Operation:HAS_OUTPUT:Sample"
 
 
 def test_cardinality_violation_rule_conditional_no_cardinality_violation():
@@ -1248,11 +1268,13 @@ def test_cardinality_violation_rule_conditional_no_cardinality_violation():
     rtp = RelationshipTypeProfile(
         rel_type="HAS_OUTPUT",
         count=0,
-        source_labels={"Operation"},
-        target_labels={"Sample"},
+        source_label="Operation",
+        target_label="Sample",
         cardinality_stats=CardinalityStats(count=0, min=0, max=0, mean=0.0),
     )
-    ctx = _e407_ctx(address="HAS_OUTPUT", left=_HasOutputConditional, right=rtp)
+    ctx = _e407_ctx(
+        address="Operation:HAS_OUTPUT:Sample", left=_HasOutputConditional, right=rtp
+    )
     codes = [i.code for i in rule(ctx)]
     assert "CARDINALITY_VIOLATION" not in codes
 
@@ -1264,11 +1286,11 @@ def test_cardinality_violation_rule_constant_unchanged_regression():
     rtp = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=2,
-        source_labels={"Person"},
-        target_labels={"Movie"},
+        source_label="Person",
+        target_label="Movie",
         cardinality_stats=CardinalityStats(count=2, min=0, max=3, mean=1.5),
     )
-    ctx = _ctx(address="ACTED_IN", left=_ActedIn, right=rtp)
+    ctx = _ctx(address="Person:ACTED_IN:Movie", left=_ActedIn, right=rtp)
     issues = list(rule(ctx))
     assert len(issues) == 1
     assert issues[0].code == "CARDINALITY_VIOLATION"
@@ -1757,11 +1779,11 @@ def test_total_count_never_produces_description_finding():
             ),
         },
         rel_type_profiles={
-            "ACTED_IN": RelationshipTypeProfile(
+            "Person:ACTED_IN:Movie": RelationshipTypeProfile(
                 rel_type="ACTED_IN",
                 count=42,
-                source_labels={"Person"},
-                target_labels={"Movie"},
+                source_label="Person",
+                target_label="Movie",
                 cardinality_stats=CardinalityStats(count=2, min=1, max=3, mean=2.0),
             ),
         },
@@ -1807,12 +1829,12 @@ def _e415_ctx(rel_profile: RelationshipTypeProfile, **kwargs: Any) -> RuleContex
             "Operation": NodeTypeProfile(label="Operation", count=1),
             "Sample": NodeTypeProfile(label="Sample", count=2),
         },
-        rel_type_profiles={"HAS_OUTPUT": rel_profile},
+        rel_type_profiles={"Operation:HAS_OUTPUT:Sample": rel_profile},
     )
     return RuleContext(
         left_graph=DefinitionView(_E407_MODEL),
         right_graph=ProfileView(profile),
-        address="HAS_OUTPUT",
+        address="Operation:HAS_OUTPUT:Sample",
         left=_HasOutputConditional,
         right=rel_profile,
         **kwargs,
@@ -1826,8 +1848,8 @@ def _e415_profile(
     return RelationshipTypeProfile(
         rel_type="HAS_OUTPUT",
         count=2,
-        source_labels={"Operation"},
-        target_labels={"Sample"},
+        source_label="Operation",
+        target_label="Sample",
         cardinality_stats=CardinalityStats(count=1, min=1, max=2, mean=1.5),
         source_partitioned_cardinality=partitioned_cardinality,
     )
@@ -1863,7 +1885,7 @@ def test_cardinality_conditional_partition_out_of_bounds_violation():
     assert len(issues) == 1
     assert issues[0].severity == Severity.ERROR
     assert issues[0].entity_type == EntityType.RELATIONSHIP
-    assert issues[0].entity_id == "HAS_OUTPUT"
+    assert issues[0].entity_id == "Operation:HAS_OUTPUT:Sample"
     assert issues[0].context["source_value"] == "subsampling"
     assert issues[0].context["target_value"] == "subsampling"
 
@@ -1951,8 +1973,8 @@ def test_cardinality_conditional_unmatched_kind_default_floor_violation():
     rtp = RelationshipTypeProfile(
         rel_type="HAS_OUTPUT_FLOOR",
         count=0,
-        source_labels={"Operation"},
-        target_labels={"Sample"},
+        source_label="Operation",
+        target_label="Sample",
         cardinality_stats=CardinalityStats(count=1, min=0, max=0, mean=0.0),
         source_partitioned_cardinality={
             _partition("nothing", "nothing"): BoundedDistribution(
@@ -1964,10 +1986,11 @@ def test_cardinality_conditional_unmatched_kind_default_floor_violation():
         left_graph=DefinitionView(model),
         right_graph=ProfileView(
             GraphProfile(
-                source="e415_floor", rel_type_profiles={"HAS_OUTPUT_FLOOR": rtp}
+                source="e415_floor",
+                rel_type_profiles={"Operation:HAS_OUTPUT_FLOOR:Sample": rtp},
             )
         ),
-        address="HAS_OUTPUT_FLOOR",
+        address="Operation:HAS_OUTPUT_FLOOR:Sample",
         left=_HasOutputFloorDefault,
         right=rtp,
     )
@@ -2023,8 +2046,8 @@ def _floor_ctx(
     rtp = RelationshipTypeProfile(
         rel_type="HAS_OUTPUT_FLOOR",
         count=sum(int(d.max or 0) for d in partitioned.values()),
-        source_labels={"Operation"},
-        target_labels={"Sample"},
+        source_label="Operation",
+        target_label="Sample",
         cardinality_stats=CardinalityStats(count=1, min=0, max=2, mean=1.0),
         source_partitioned_cardinality=partitioned,
     )
@@ -2032,10 +2055,11 @@ def _floor_ctx(
         left_graph=DefinitionView(model),
         right_graph=ProfileView(
             GraphProfile(
-                source="e415_floor_multi", rel_type_profiles={"HAS_OUTPUT_FLOOR": rtp}
+                source="e415_floor_multi",
+                rel_type_profiles={"Operation:HAS_OUTPUT_FLOOR:Sample": rtp},
             )
         ),
-        address="HAS_OUTPUT_FLOOR",
+        address="Operation:HAS_OUTPUT_FLOOR:Sample",
         left=rt_class,
         right=rtp,
     )
@@ -2121,17 +2145,20 @@ def test_cardinality_constant_max_exceeded_violation():
     rtp = RelationshipTypeProfile(
         rel_type="BOUNDED",
         count=3,
-        source_labels={"Operation"},
-        target_labels={"Sample"},
+        source_label="Operation",
+        target_label="Sample",
         # min 1 is within 1..2, but max 3 exceeds it.
         cardinality_stats=CardinalityStats(count=2, min=1, max=3, mean=2.0),
     )
     ctx = RuleContext(
         left_graph=DefinitionView(model),
         right_graph=ProfileView(
-            GraphProfile(source="e415_bounded", rel_type_profiles={"BOUNDED": rtp})
+            GraphProfile(
+                source="e415_bounded",
+                rel_type_profiles={"Operation:BOUNDED:Sample": rtp},
+            )
         ),
-        address="BOUNDED",
+        address="Operation:BOUNDED:Sample",
         left=_BoundedRel,
         right=rtp,
     )
@@ -2197,8 +2224,8 @@ def _both_sides_ctx(
     rtp = RelationshipTypeProfile(
         rel_type="MAKES",
         count=2,
-        source_labels={"Operation"},
-        target_labels={"Sample"},
+        source_label="Operation",
+        target_label="Sample",
         cardinality_stats=CardinalityStats(count=1, min=1, max=2, mean=1.5),
         source_partitioned_cardinality=source_partitioned,
         target_partitioned_cardinality=target_partitioned,
@@ -2206,9 +2233,12 @@ def _both_sides_ctx(
     return RuleContext(
         left_graph=DefinitionView(model),
         right_graph=ProfileView(
-            GraphProfile(source="e417_both", rel_type_profiles={"MAKES": rtp})
+            GraphProfile(
+                source="e417_both",
+                rel_type_profiles={"Operation:MAKES:Sample": rtp},
+            )
         ),
-        address="MAKES",
+        address="Operation:MAKES:Sample",
         left=rt_class,
         right=rtp,
     )

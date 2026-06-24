@@ -24,6 +24,7 @@ from orthograph.graph_profile.models import (
     PartitionKey,
     PropertyProfile,
     RelationshipTypeProfile,
+    RelTypeKey,
 )
 
 
@@ -106,16 +107,25 @@ class NetworkxInspector(GraphInspector):
         node_profiles: dict[str, NodeTypeProfile],
         graph_definition: GraphDefinition | None = None,
     ) -> dict[str, RelationshipTypeProfile]:
-        """Group edges by __label__ and compute property/cardinality profiles."""
-        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        source_labels: dict[str, set[str]] = defaultdict(set)
-        target_labels: dict[str, set[str]] = defaultdict(set)
-        # Track outgoing degree per (rel_type, source_node)
-        outgoing: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-        # Endpoint records per rel_type for the conditional per-pair breakdown:
+        """Group edges by the identity triple ``(source, label, target)``.
+
+        Relationship identity is the endpoint triple, so two edges
+        sharing a label but differing in either endpoint label form **distinct**
+        profiles; their ``count`` / ``cardinality_stats`` / ``property_profiles``
+        are never blended.  Each group is keyed by ``str(RelTypeKey)``.  An edge
+        whose source or target node carries no ``__label__`` cannot form a valid
+        identity triple and is skipped with a warning (mirroring the
+        missing-edge-label skip).
+        """
+        groups: dict[RelTypeKey, list[dict[str, Any]]] = defaultdict(list)
+        # Track outgoing degree per (triple, source_node)
+        outgoing: dict[RelTypeKey, dict[str, int]] = defaultdict(
+            lambda: defaultdict(int)
+        )
+        # Endpoint records per triple for the conditional per-pair breakdown:
         # (src_node, tgt_node, src_attrs, tgt_attrs).  Collected for every edge;
         # only consumed for relationship types with a conditional declared side.
-        endpoints: dict[str, list[_EdgeEndpoints]] = defaultdict(list)
+        endpoints: dict[RelTypeKey, list[_EdgeEndpoints]] = defaultdict(list)
 
         for src, tgt, attrs in graph.edges(data=True):
             label = attrs.get("__label__")
@@ -125,35 +135,42 @@ class NetworkxInspector(GraphInspector):
                 )
                 continue
 
-            groups[label].append(dict(attrs))
-
-            # Resolve node labels from the graph
+            # Resolve endpoint node labels — both are part of identity.
             src_attrs = graph.nodes.get(src, {})
             tgt_attrs = graph.nodes.get(tgt, {})
             src_label = src_attrs.get("__label__")
             tgt_label = tgt_attrs.get("__label__")
-            if src_label:
-                source_labels[label].add(src_label)
-            if tgt_label:
-                target_labels[label].add(tgt_label)
+            if not src_label or not tgt_label:
+                logger.warning(
+                    "Edge %s -[%s]-> %s skipped: endpoint without __label__ "
+                    "cannot form a relationship identity triple",
+                    src,
+                    label,
+                    tgt,
+                )
+                continue
 
-            outgoing[label][src] += 1
-            endpoints[label].append(
+            key = RelTypeKey(
+                source_label=src_label, label=label, target_label=tgt_label
+            )
+            groups[key].append(dict(attrs))
+            outgoing[key][src] += 1
+            endpoints[key].append(
                 _EdgeEndpoints(src, tgt, dict(src_attrs), dict(tgt_attrs))
             )
 
         profiles: dict[str, RelationshipTypeProfile] = {}
-        for label, edges in sorted(groups.items()):
+        for key, edges in sorted(groups.items(), key=lambda kv: str(kv[0])):
             prop_profiles = _compute_property_profiles(edges, self._value_counts_top_n)
-            cardinality = _compute_cardinality(outgoing.get(label, {}))
+            cardinality = _compute_cardinality(outgoing.get(key, {}))
             source_partitioned, target_partitioned = _compute_partitioned_cardinality(
-                label, endpoints.get(label, []), graph_definition
+                key, endpoints.get(key, []), graph_definition
             )
-            profiles[label] = RelationshipTypeProfile(
-                rel_type=label,
+            profiles[str(key)] = RelationshipTypeProfile(
+                rel_type=key.label,
                 count=len(edges),
-                source_labels=source_labels.get(label, set()),
-                target_labels=target_labels.get(label, set()),
+                source_label=key.source_label,
+                target_label=key.target_label,
                 property_profiles=prop_profiles,
                 cardinality_stats=cardinality,
                 source_partitioned_cardinality=source_partitioned,
@@ -394,7 +411,7 @@ def _stats_per_partition(
 
 
 def _compute_partitioned_cardinality(
-    rel_label: str,
+    rel_key: RelTypeKey,
     endpoints: list[_EdgeEndpoints],
     graph_definition: GraphDefinition | None,
 ) -> tuple[
@@ -410,7 +427,11 @@ def _compute_partitioned_cardinality(
     """
     if graph_definition is None:
         return None, None
-    rel_type = graph_definition.get_relationship_type(rel_label)
+    # Resolve the declared shape by its identity triple: the profile is
+    # now grouped per endpoint pair, so the exact declared type is addressable.
+    rel_type = graph_definition.get_relationship_type(
+        rel_key.source_label, rel_key.label, rel_key.target_label
+    )
     if rel_type is None:
         return None, None
     if not endpoints:

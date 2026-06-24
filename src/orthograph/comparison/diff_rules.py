@@ -103,36 +103,8 @@ def _resolved_profile_types(
 
 
 # ---------------------------------------------------------------------------
-# Endpoint helpers (profile ↔ profile)
+# Endpoint helpers (definition ↔ definition)
 # ---------------------------------------------------------------------------
-
-
-def _endpoint_issues_profile(
-    rt: str,
-    left: RelationshipTypeProfile,
-    right: RelationshipTypeProfile,
-) -> Iterable[ValidationIssue]:
-    """Yield ENDPOINTS_CHANGED issues for a profile ↔ profile comparison."""
-    for role, left_labels, right_labels in (
-        ("source", left.source_labels, right.source_labels),
-        ("target", left.target_labels, right.target_labels),
-    ):
-        if left_labels != right_labels:
-            yield ValidationIssue(
-                code="ENDPOINTS_CHANGED",
-                severity=Severity.INFO,
-                entity_type=EntityType.RELATIONSHIP,
-                entity_id=rt,
-                message=(
-                    f"Relationship '{rt}' {role} labels differ: "
-                    f"left={sorted(left_labels)} right={sorted(right_labels)}"
-                ),
-                context={
-                    "role": role,
-                    "left": sorted(left_labels),
-                    "right": sorted(right_labels),
-                },
-            )
 
 
 def _endpoint_issues_definition(
@@ -140,25 +112,30 @@ def _endpoint_issues_definition(
     left: type[RelationshipModel],
     right: type[RelationshipModel],
 ) -> Iterable[ValidationIssue]:
-    """Yield ENDPOINTS_CHANGED issues for a definition ↔ definition comparison."""
-    for role, left_val, right_val in (
-        ("source", left.__source_label__, right.__source_label__),
-        ("target", left.__target_label__, right.__target_label__),
-        ("directed", left.__directed__, right.__directed__),
-    ):
-        if left_val != right_val:
-            yield ValidationIssue(
-                code="ENDPOINTS_CHANGED",
-                severity=Severity.INFO,
-                entity_type=EntityType.RELATIONSHIP,
-                entity_id=rt,
-                message=(
-                    f"Relationship '{rt}' {role} "
-                    f"{'label' if role != 'directed' else 'flag'} differs: "
-                    f"left={left_val!r} right={right_val!r}"
-                ),
-                context={"role": role, "left": left_val, "right": right_val},
-            )
+    """Yield ENDPOINTS_CHANGED issues for a definition ↔ definition comparison.
+
+     The source/target labels are part of relationship *identity*
+    (encoded in the address), so a difference in either is a different address
+    and is reported by the presence rules — never here.  Only the
+    ``__directed__`` flag remains an *attribute* delta, so this rule shrinks to
+    the direction-flag signal.
+    """
+    if left.__directed__ != right.__directed__:
+        yield ValidationIssue(
+            code="ENDPOINTS_CHANGED",
+            severity=Severity.INFO,
+            entity_type=EntityType.RELATIONSHIP,
+            entity_id=rt,
+            message=(
+                f"Relationship '{rt}' directed flag differs: "
+                f"left={left.__directed__!r} right={right.__directed__!r}"
+            ),
+            context={
+                "role": "directed",
+                "left": left.__directed__,
+                "right": right.__directed__,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -472,16 +449,19 @@ class PropertyTypeChangedRule:
 
 @dataclass
 class EndpointsChangedRule:
-    """Emits ``ENDPOINTS_CHANGED`` (INFO) when both sides define a relationship
-    type but the source or target label sets differ.
+    """Emits ``ENDPOINTS_CHANGED`` (INFO) when two definition operands share a
+    relationship-type identity but differ in the ``__directed__`` flag.
 
-    Handles:
+    Source/target labels are part of relationship *identity* (the
+    address), so an endpoint difference is a different address and surfaces via
+    the presence rules (``REL_TYPE_ONLY_IN_LEFT`` / ``..._RIGHT``) — never here.
+    Direction (``__directed__``) is the only endpoint-related *attribute* left to
+    compare, and only the declared side carries it:
 
-    - ``RelationshipTypeProfile`` ↔ ``RelationshipTypeProfile``  (profile ↔ profile):
-      compare ``source_labels`` and ``target_labels``.
     - ``RelationshipModel`` subclass ↔ ``RelationshipModel`` subclass
-      (definition ↔ definition): compare ``__source_label__``, ``__target_label__``,
-      and ``__directed__``.
+      (definition ↔ definition): compare ``__directed__``.
+    - ``RelationshipTypeProfile`` ↔ ``RelationshipTypeProfile``: silent — the
+      profile carries no direction field and its endpoints are identity.
     """
 
     key: str = "diff.rel.endpoints_changed"
@@ -494,9 +474,7 @@ class EndpointsChangedRule:
 
         rt: str = context.address
         kind = _rel_operand_kind(context.left, context.right)
-        if kind == "profile":
-            yield from _endpoint_issues_profile(rt, context.left, context.right)
-        elif kind == "definition":
+        if kind == "definition":
             yield from _endpoint_issues_definition(rt, context.left, context.right)
 
 

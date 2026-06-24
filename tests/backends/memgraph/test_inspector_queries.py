@@ -178,22 +178,42 @@ def test_mg_node_count_injected_label_raises() -> None:
 
 
 def test_mg_rel_count_build_splices_rel_type() -> None:
-    q = MemgraphRelCountQuery(identifiers={"rel_type": "ACTED_IN"})
+    q = MemgraphRelCountQuery(
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+        }
+    )
     cypher, params = q.build(_no_params())
     assert "`ACTED_IN`" in cypher
+    assert "`Person`" in cypher
+    assert "`Movie`" in cypher
     assert "count(r) AS count" in cypher
     assert params == {}
 
 
 def test_mg_rel_count_materialize() -> None:
-    q = MemgraphRelCountQuery(identifiers={"rel_type": "ACTED_IN"})
+    q = MemgraphRelCountQuery(
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+        }
+    )
     row = q.materialize({"count": 49})
     assert isinstance(row, MemgraphCountRow)
     assert row.count == 49
 
 
 def test_mg_rel_count_injected_rel_type_raises() -> None:
-    q = MemgraphRelCountQuery(identifiers={"rel_type": "X`bad"})
+    q = MemgraphRelCountQuery(
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "X`bad",
+            "target_label": "Movie",
+        }
+    )
     with pytest.raises(CypherIdentifierError, match="relationship type"):
         q.build(_no_params())
 
@@ -205,17 +225,18 @@ def test_mg_rel_count_injected_rel_type_raises() -> None:
 
 def test_mg_cardinality_build_splices_identifiers() -> None:
     q = MemgraphCardinalityQuery(
-        identifiers={"label": "Person", "rel_type": "ACTED_IN"}
+        identifiers={"label": "Person", "rel_type": "ACTED_IN", "target_label": "Movie"}
     )
     cypher, params = q.build(_no_params())
     assert "`Person`" in cypher
     assert "`ACTED_IN`" in cypher
+    assert "`Movie`" in cypher
     assert params == {}
 
 
 def test_mg_cardinality_materialize() -> None:
     q = MemgraphCardinalityQuery(
-        identifiers={"label": "Person", "rel_type": "ACTED_IN"}
+        identifiers={"label": "Person", "rel_type": "ACTED_IN", "target_label": "Movie"}
     )
     row = q.materialize(
         {"min_degree": 1, "max_degree": 3, "avg_degree": 2.0, "sample_size": 50}
@@ -226,14 +247,20 @@ def test_mg_cardinality_materialize() -> None:
 
 def test_mg_cardinality_injected_label_raises() -> None:
     q = MemgraphCardinalityQuery(
-        identifiers={"label": "Person) DETACH DELETE (n", "rel_type": "X"}
+        identifiers={
+            "label": "Person) DETACH DELETE (n",
+            "rel_type": "X",
+            "target_label": "Movie",
+        }
     )
     with pytest.raises(CypherIdentifierError, match="label"):
         q.build(_no_params())
 
 
 def test_mg_cardinality_injected_rel_type_raises() -> None:
-    q = MemgraphCardinalityQuery(identifiers={"label": "Person", "rel_type": "X`bad"})
+    q = MemgraphCardinalityQuery(
+        identifiers={"label": "Person", "rel_type": "X`bad", "target_label": "Movie"}
+    )
     with pytest.raises(CypherIdentifierError, match="relationship type"):
         q.build(_no_params())
 
@@ -337,7 +364,12 @@ def test_mg_node_type_counts_materialize_unknown_type_passes_through() -> None:
 
 def test_mg_rel_type_counts_build() -> None:
     q = MemgraphRelTypeCountsQuery(
-        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+            "property_name": "role",
+        }
     )
     cypher, params = q.build(_no_params())
     assert "`ACTED_IN`" in cypher
@@ -372,7 +404,12 @@ def test_mg_node_value_histogram_materialize() -> None:
 
 def test_mg_rel_value_histogram_build() -> None:
     q = MemgraphRelValueHistogramQuery(
-        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+            "property_name": "role",
+        }
     )
     cypher, params = q.build(MemgraphTopNParams(top_n=5))
     assert "`ACTED_IN`" in cypher

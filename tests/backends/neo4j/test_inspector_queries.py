@@ -17,8 +17,8 @@ from orthograph.backends.neo4j.queries import (
     ApocNodePropertiesQuery,
     ApocNodeTypeCountsQuery,
     ApocNodeValueHistogramQuery,
-    ApocRelPropertiesQuery,
     ApocRelTypeCountsQuery,
+    ApocRelTypesQuery,
     ApocRelValueHistogramQuery,
     CypherNodePropertiesQuery,
     CypherNodeValueHistogramQuery,
@@ -165,38 +165,46 @@ def test_apoc_node_properties_injected_label_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ApocRelPropertiesQuery
+# ApocRelTypesQuery  (ADR-037 §6a: bulk bare-type source, replaces per-rel APOC)
 # ---------------------------------------------------------------------------
 
 
-def test_apoc_rel_properties_build_contains_rel_type() -> None:
-    q = ApocRelPropertiesQuery(identifiers={"rel_type": "ACTED_IN"})
+def test_apoc_rel_types_build_calls_apoc_meta() -> None:
+    """ApocRelTypesQuery is a bulk query — no identifier slots, calls apoc.meta."""
+    q = ApocRelTypesQuery()
     cypher, params = q.build(_no_params())
     assert "apoc.meta.relTypeProperties" in cypher
-    assert "ACTED_IN" in cypher
+    assert "relType" in cypher
+    assert "propertyName" in cypher
+    assert "propertyTypes" in cypher
     assert params == {}
 
 
-def test_apoc_rel_properties_injected_rel_type_raises() -> None:
-    q = ApocRelPropertiesQuery(identifiers={"rel_type": "X} DELETE ALL //"})
-    with pytest.raises(CypherIdentifierError, match="relationship type"):
-        q.build(_no_params())
-
-
-def test_apoc_rel_properties_materialize() -> None:
-    q = ApocRelPropertiesQuery(identifiers={"rel_type": "ACTED_IN"})
+def test_apoc_rel_types_materialize_with_property() -> None:
+    """A row with a property name and types materialises as DbSchemaRelTypeRow."""
+    q = ApocRelTypesQuery()
     row = q.materialize(
         {
+            "relType": ":`ACTED_IN`",
             "propertyName": "role",
             "propertyTypes": ["String"],
-            "mandatory": True,
-            "propertyObservations": 200,
-            "totalObservations": 200,
         }
     )
+    assert isinstance(row, DbSchemaRelTypeRow)
+    assert row.rel_type == "ACTED_IN"  # backtick-quoted prefix stripped
     assert row.property_name == "role"
-    assert row.property_types == ["String"]
-    assert row.mandatory is True
+    assert row.observed_types == ["String"]
+
+
+def test_apoc_rel_types_materialize_no_property() -> None:
+    """A row with propertyName=None materialises with property_name=None."""
+    q = ApocRelTypesQuery()
+    row = q.materialize(
+        {"relType": ":`HAS_OUTPUT`", "propertyName": None, "propertyTypes": None}
+    )
+    assert row.rel_type == "HAS_OUTPUT"
+    assert row.property_name is None
+    assert row.observed_types == []
 
 
 # ---------------------------------------------------------------------------
@@ -240,16 +248,42 @@ def test_cypher_node_properties_injected_label_raises() -> None:
 
 
 def test_cypher_rel_properties_build_contains_rel_type() -> None:
-    q = CypherRelPropertiesQuery(identifiers={"rel_type": "OWNS"})
+    q = CypherRelPropertiesQuery(
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "OWNS",
+            "target_label": "Movie",
+        }
+    )
     cypher, params = q.build(_no_params())
     assert "`OWNS`" in cypher
     assert cypher.count("`OWNS`") == 2
+    assert "`Person`" in cypher
+    assert "`Movie`" in cypher
     assert params == {}
 
 
 def test_cypher_rel_properties_injected_rel_type_raises() -> None:
-    q = CypherRelPropertiesQuery(identifiers={"rel_type": "X`Y"})
+    q = CypherRelPropertiesQuery(
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "X`Y",
+            "target_label": "Movie",
+        }
+    )
     with pytest.raises(CypherIdentifierError, match="relationship type"):
+        q.build(_no_params())
+
+
+def test_cypher_rel_properties_injected_source_label_raises() -> None:
+    q = CypherRelPropertiesQuery(
+        identifiers={
+            "source_label": "Person) DETACH DELETE (n //",
+            "rel_type": "KNOWS",
+            "target_label": "Person",
+        }
+    )
+    with pytest.raises(CypherIdentifierError, match="label"):
         q.build(_no_params())
 
 
@@ -427,7 +461,12 @@ def test_apoc_node_type_counts_injected_property_raises() -> None:
 
 def test_apoc_rel_type_counts_build_groups_by_type() -> None:
     q = ApocRelTypeCountsQuery(
-        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+            "property_name": "role",
+        }
     )
     cypher, params = q.build(_no_params())
     assert "`ACTED_IN`" in cypher
@@ -438,7 +477,12 @@ def test_apoc_rel_type_counts_build_groups_by_type() -> None:
 
 def test_apoc_rel_type_counts_materialize() -> None:
     q = ApocRelTypeCountsQuery(
-        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+            "property_name": "role",
+        }
     )
     row = q.materialize({"type_name": "STRING", "type_count": 200})
     assert row.type_name == "String"
@@ -447,7 +491,12 @@ def test_apoc_rel_type_counts_materialize() -> None:
 
 def test_apoc_rel_type_counts_injected_rel_type_raises() -> None:
     q = ApocRelTypeCountsQuery(
-        identifiers={"rel_type": "X} DELETE ALL //", "property_name": "role"}
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "X} DELETE ALL //",
+            "target_label": "Movie",
+            "property_name": "role",
+        }
     )
     with pytest.raises(CypherIdentifierError, match="relationship type"):
         q.build(_no_params())
@@ -513,13 +562,14 @@ def test_apoc_node_value_histogram_unwraps_json_string() -> None:
 
 
 def test_apoc_rel_value_histogram_keeps_json_array_verbatim() -> None:
-    """A JSON array key (list-valued property) is kept as its JSON form.
-
-    apoc.convert.toJson(['Neo']) yields '["Neo"]'; this is not a JSON string, so
-    the materialiser keeps it verbatim (stable, unambiguous key).
-    """
+    """A JSON array key (list-valued property) is kept as its JSON form."""
     q = ApocRelValueHistogramQuery(
-        identifiers={"rel_type": "ACTED_IN", "property_name": "roles"}
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+            "property_name": "roles",
+        }
     )
     row = q.materialize({"value": '["Neo"]', "value_count": 3})
     assert row.value == '["Neo"]'
@@ -535,7 +585,12 @@ def test_apoc_node_value_histogram_injected_label_raises() -> None:
 
 def test_apoc_rel_value_histogram_build_limits_by_param() -> None:
     q = ApocRelValueHistogramQuery(
-        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+            "property_name": "role",
+        }
     )
     cypher, params = q.build(q.Params(top_n=5))
     assert "`ACTED_IN`" in cypher
@@ -546,7 +601,12 @@ def test_apoc_rel_value_histogram_build_limits_by_param() -> None:
 
 def test_apoc_rel_value_histogram_materialize() -> None:
     q = ApocRelValueHistogramQuery(
-        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+            "property_name": "role",
+        }
     )
     row = q.materialize({"value": "Neo", "value_count": 3})
     assert row.value == "Neo"
@@ -602,7 +662,12 @@ def test_cypher_node_value_histogram_injected_label_raises() -> None:
 
 def test_cypher_rel_value_histogram_uses_to_string_or_null() -> None:
     q = CypherRelValueHistogramQuery(
-        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+            "property_name": "role",
+        }
     )
     cypher, params = q.build(q.Params(top_n=5))
     assert "`ACTED_IN`" in cypher
@@ -616,7 +681,12 @@ def test_cypher_rel_value_histogram_uses_to_string_or_null() -> None:
 
 def test_cypher_rel_value_histogram_materialize() -> None:
     q = CypherRelValueHistogramQuery(
-        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+        identifiers={
+            "source_label": "Person",
+            "rel_type": "ACTED_IN",
+            "target_label": "Movie",
+            "property_name": "role",
+        }
     )
     row = q.materialize({"value": "Neo", "value_count": 3})
     assert row.value == "Neo"
@@ -637,7 +707,10 @@ def test_apoc_catalogue_registered_names() -> None:
     assert "neo4j.inspect.node_count" in names
     assert "neo4j.inspect.rel_count" in names
     assert "neo4j.inspect.apoc.node_properties" in names
-    assert "neo4j.inspect.apoc.rel_properties" in names
+    # ADR-037 §6a: bulk rel-type-map source (was per-rel-type apoc.rel_properties).
+    assert "neo4j.inspect.apoc.rel_types" in names
+    # Per-shape rel-property counts via endpoint-filtered pattern scan.
+    assert "neo4j.inspect.cypher.rel_properties" in names
     assert "inspect.cardinality" in names
     assert "neo4j.inspect.constraints" in names
     assert "inspect.endpoint_labels" in names
@@ -651,7 +724,7 @@ def test_apoc_catalogue_registered_names() -> None:
     # ADR-036: property-independent present-count queries (APOC count correction).
     assert "neo4j.inspect.node_present_count" in names
     assert "neo4j.inspect.rel_present_count" in names
-    assert len(names) == 17
+    assert len(names) == 18
 
 
 def test_cypher_catalogue_registered_names() -> None:

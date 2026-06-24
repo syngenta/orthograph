@@ -114,7 +114,7 @@ def _normalise_value_type_name(raw_type: str) -> str:
     """Map a ``valueType()`` name to the ``observed_types`` vocabulary.
 
     Unrecognised names pass through unchanged so Memgraph never invents or
-    silently drops a type it cannot map (ADR-035 §5 honesty).
+    silently drops a type it cannot map (honesty principle).
     """
     return _VALUE_TYPE_NAME_MAP.get(raw_type, raw_type)
 
@@ -240,9 +240,11 @@ class _MemgraphNodeLabelIdentifiers(BaseModel):
 
 
 class _MemgraphRelTypeIdentifiers(BaseModel):
-    """Identifier group scoping a count query to one relationship type."""
+    """Identifier group scoping a count query to one relationship *shape*."""
 
+    source_label: str  # kind = "label"
     rel_type: str  # kind = "relationship type"
+    target_label: str  # kind = "label"
 
 
 with _warnings.catch_warnings():
@@ -285,7 +287,8 @@ with _warnings.catch_warnings():
 
         def build(self, params: NoParams) -> CypherQueryData:
             cypher = render_with_identifiers(
-                "MATCH ()-[r:`<<rel_type>>`]->() RETURN count(r) AS count",
+                "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
+                " RETURN count(r) AS count",
                 self._identifiers,
             )
             return CypherQueryData(cypher, {})
@@ -300,7 +303,7 @@ with _warnings.catch_warnings():
 # scalar {value: count} histogram (via toStringOrNull, group by value, LIMIT).
 # Both functions are built-in (no MAGE), so the value scan is always available
 # on Memgraph.  Identifiers (label / rel_type / property_name) are spliced via
-# <<placeholder>> (ADR-008); values are never interpolated.  Imperative build()
+# <<placeholder>>; values are never interpolated.  Imperative build()
 # because valueType()/toStringOrNull() in a grouping WITH are not parsed by the
 # graphglot dialect validator.
 # ---------------------------------------------------------------------------
@@ -314,9 +317,11 @@ class _MemgraphNodePropertyScanIdentifiers(BaseModel):
 
 
 class _MemgraphRelPropertyScanIdentifiers(BaseModel):
-    """Identifier group scoping a value scan to one property of one rel type."""
+    """Identifier group scoping a value scan to one property of one rel shape."""
 
+    source_label: str  # kind = "label"
     rel_type: str  # kind = "relationship type"
+    target_label: str  # kind = "label"
     property_name: str  # property key (kind = "label" grammar)
 
 
@@ -363,7 +368,7 @@ with _warnings.catch_warnings():
 
         def build(self, params: NoParams) -> CypherQueryData:
             cypher = render_with_identifiers(
-                "MATCH ()-[r:`<<rel_type>>`]->()"
+                "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
                 " WHERE r.`<<property_name>>` IS NOT NULL"
                 " WITH valueType(r.`<<property_name>>`) AS type_name,"
                 " count(*) AS type_count"
@@ -430,7 +435,7 @@ with _warnings.catch_warnings():
 
         def build(self, params: MemgraphTopNParams) -> CypherQueryData:
             cypher = render_with_identifiers(
-                "MATCH ()-[r:`<<rel_type>>`]->()"
+                "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
                 " WITH toStringOrNull(r.`<<property_name>>`) AS value"
                 " WHERE value IS NOT NULL"
                 " WITH value, count(*) AS value_count"
@@ -488,7 +493,20 @@ class MemgraphTargetPartitionedCardinalityQuery(
 
 
 _VALUE_SCAN_PLACEHOLDER_NODE = {"label": "_", "property_name": "_"}
-_VALUE_SCAN_PLACEHOLDER_REL = {"rel_type": "_", "property_name": "_"}
+_VALUE_SCAN_PLACEHOLDER_REL = {
+    "source_label": "_",
+    "rel_type": "_",
+    "target_label": "_",
+    "property_name": "_",
+}
+_REL_SHAPE_PLACEHOLDER = {"source_label": "_", "rel_type": "_", "target_label": "_"}
+_PARTITIONED_PLACEHOLDER = {
+    "label": "_",
+    "rel_type": "_",
+    "endpoint_label": "_",
+    "source_discriminator": "_",
+    "target_discriminator": "_",
+}
 
 
 def build_memgraph_catalogue() -> QueryCatalogue:
@@ -498,32 +516,22 @@ def build_memgraph_catalogue() -> QueryCatalogue:
     query_catalogue.register_read(MemgraphRelPropertiesQuery())
     query_catalogue.register_read(MemgraphConstraintsQuery())
     query_catalogue.register_read(MemgraphNodeCountQuery(identifiers={"label": "_"}))
-    query_catalogue.register_read(MemgraphRelCountQuery(identifiers={"rel_type": "_"}))
     query_catalogue.register_read(
-        MemgraphCardinalityQuery(identifiers={"label": "_", "rel_type": "_"})
+        MemgraphRelCountQuery(identifiers=_REL_SHAPE_PLACEHOLDER)
+    )
+    query_catalogue.register_read(
+        MemgraphCardinalityQuery(
+            identifiers={"label": "_", "rel_type": "_", "target_label": "_"}
+        )
     )
     query_catalogue.register_read(
         MemgraphEndpointLabelsQuery(identifiers={"rel_type": "_"})
     )
     query_catalogue.register_read(
-        MemgraphSourcePartitionedCardinalityQuery(
-            identifiers={
-                "label": "_",
-                "rel_type": "_",
-                "source_discriminator": "_",
-                "target_discriminator": "_",
-            }
-        )
+        MemgraphSourcePartitionedCardinalityQuery(identifiers=_PARTITIONED_PLACEHOLDER)
     )
     query_catalogue.register_read(
-        MemgraphTargetPartitionedCardinalityQuery(
-            identifiers={
-                "label": "_",
-                "rel_type": "_",
-                "source_discriminator": "_",
-                "target_discriminator": "_",
-            }
-        )
+        MemgraphTargetPartitionedCardinalityQuery(identifiers=_PARTITIONED_PLACEHOLDER)
     )
     # Value scan: type counts (valueType) + scalar histogram
     # (toStringOrNull).  Both functions are built-in, so the scan is always

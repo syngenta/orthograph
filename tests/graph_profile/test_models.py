@@ -12,6 +12,7 @@ from orthograph.graph_profile.models import (
     PartitionKey,
     PropertyProfile,
     RelationshipTypeProfile,
+    RelTypeKey,
 )
 
 
@@ -316,13 +317,29 @@ def test_relationship_type_profile():
     r = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=200,
-        source_labels={"Person"},
-        target_labels={"Movie"},
+        source_label="Person",
+        target_label="Movie",
     )
     assert r.rel_type == "ACTED_IN"
     assert r.count == 200
-    assert r.source_labels == {"Person"}
+    assert r.source_label == "Person"
+    assert r.target_label == "Movie"
     assert r.cardinality_stats is None
+
+
+def test_relationship_type_profile_scalar_endpoints_describe_one_shape():
+    """A profile carries scalar endpoints — exactly one (src, label, tgt) shape."""
+    r = RelationshipTypeProfile(
+        rel_type="KNOWS",
+        count=10,
+        source_label="Person",
+        target_label="Company",
+    )
+    # The set fields of the blended-identity era are gone (ADR-037 §5).
+    assert not hasattr(r, "source_labels")
+    assert not hasattr(r, "target_labels")
+    assert isinstance(r.source_label, str)
+    assert isinstance(r.target_label, str)
 
 
 def test_relationship_type_profile_with_cardinality():
@@ -330,8 +347,8 @@ def test_relationship_type_profile_with_cardinality():
     r = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=200,
-        source_labels={"Person"},
-        target_labels={"Movie"},
+        source_label="Person",
+        target_label="Movie",
         cardinality_stats=stats,
     )
     assert r.cardinality_stats is not None
@@ -349,6 +366,7 @@ def test_graph_profile_basic():
 
 
 def test_graph_profile_with_data():
+    key = str(RelTypeKey(source_label="Person", label="ACTED_IN", target_label="Movie"))
     profile = GraphProfile(
         source="networkx",
         node_type_profiles={
@@ -356,16 +374,62 @@ def test_graph_profile_with_data():
             "Movie": NodeTypeProfile(label="Movie", count=5),
         },
         rel_type_profiles={
-            "ACTED_IN": RelationshipTypeProfile(
+            key: RelationshipTypeProfile(
                 rel_type="ACTED_IN",
                 count=20,
-                source_labels={"Person"},
-                target_labels={"Movie"},
+                source_label="Person",
+                target_label="Movie",
             ),
         },
     )
     assert profile.node_labels == {"Person", "Movie"}
-    assert profile.relationship_types == {"ACTED_IN"}
+    assert profile.relationship_types == {"Person:ACTED_IN:Movie"}
+
+
+def test_graph_profile_distinguishes_same_label_different_endpoints():
+    """Two same-label/different-endpoint profiles round-trip with distinct keys."""
+    k1 = str(RelTypeKey(source_label="Person", label="KNOWS", target_label="Person"))
+    k2 = str(RelTypeKey(source_label="Company", label="KNOWS", target_label="Company"))
+    profile = GraphProfile(
+        source="networkx",
+        rel_type_profiles={
+            k1: RelationshipTypeProfile(
+                rel_type="KNOWS",
+                count=7,
+                source_label="Person",
+                target_label="Person",
+                cardinality_stats=CardinalityStats(count=7, min=1.0, max=3.0),
+            ),
+            k2: RelationshipTypeProfile(
+                rel_type="KNOWS",
+                count=2,
+                source_label="Company",
+                target_label="Company",
+                cardinality_stats=CardinalityStats(count=2, min=4.0, max=9.0),
+            ),
+        },
+    )
+    # relationship_types returns the two distinct key strings.
+    assert profile.relationship_types == {
+        "Person:KNOWS:Person",
+        "Company:KNOWS:Company",
+    }
+    # Statistics are NOT blended across the two shapes.
+    assert profile.rel_type_profiles[k1].count == 7
+    assert profile.rel_type_profiles[k2].count == 2
+    stats1 = profile.rel_type_profiles[k1].cardinality_stats
+    stats2 = profile.rel_type_profiles[k2].cardinality_stats
+    assert stats1 is not None
+    assert stats1.max == 3.0
+    assert stats2 is not None
+    assert stats2.max == 9.0
+
+    restored = GraphProfile.model_validate(profile.model_dump())
+    assert restored == profile
+    assert restored.relationship_types == {
+        "Person:KNOWS:Person",
+        "Company:KNOWS:Company",
+    }
 
 
 # --- PropertyProfile value_distribution ---
@@ -523,11 +587,11 @@ def test_full_reshaped_graph_profile_round_trip():
             )
         },
         rel_type_profiles={
-            "ACTED_IN": RelationshipTypeProfile(
+            "Person:ACTED_IN:Movie": RelationshipTypeProfile(
                 rel_type="ACTED_IN",
                 count=200,
-                source_labels={"Person"},
-                target_labels={"Movie"},
+                source_label="Person",
+                target_label="Movie",
                 cardinality_stats=cardinality,
             )
         },
@@ -572,7 +636,7 @@ def test_full_reshaped_graph_profile_round_trip():
     assert age_pp.value_distribution is None
 
     # Cardinality stats (re-expressed on BoundedDistribution)
-    rel = restored.rel_type_profiles["ACTED_IN"]
+    rel = restored.rel_type_profiles["Person:ACTED_IN:Movie"]
     assert rel.cardinality_stats is not None
     assert rel.cardinality_stats.count == 50
     assert rel.cardinality_stats.min == 1.0
@@ -695,8 +759,8 @@ def test_relationship_type_profile_partitioned_cardinality_defaults_none():
     r = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=200,
-        source_labels={"Person"},
-        target_labels={"Movie"},
+        source_label="Person",
+        target_label="Movie",
     )
     assert r.source_partitioned_cardinality is None
     assert r.target_partitioned_cardinality is None
@@ -713,8 +777,8 @@ def test_relationship_type_profile_with_partitioned_cardinality():
     r = RelationshipTypeProfile(
         rel_type="PRODUCES",
         count=15,
-        source_labels={"Operation"},
-        target_labels={"Sample"},
+        source_label="Operation",
+        target_label="Sample",
         source_partitioned_cardinality=partitions,
     )
     assert r.source_partitioned_cardinality is not None
@@ -734,8 +798,8 @@ def test_relationship_type_profile_both_sides_independent_no_collision():
     r = RelationshipTypeProfile(
         rel_type="HAS_OUTPUT",
         count=4,
-        source_labels={"Operation"},
-        target_labels={"Sample"},
+        source_label="Operation",
+        target_label="Sample",
         source_partitioned_cardinality={
             str(k): BoundedDistribution(count=1, min=2.0, max=2.0)
         },
@@ -770,8 +834,8 @@ def test_relationship_type_profile_partitioned_cardinality_round_trip():
     r = RelationshipTypeProfile(
         rel_type="PRODUCES",
         count=13,
-        source_labels={"Operation"},
-        target_labels={"Sample"},
+        source_label="Operation",
+        target_label="Sample",
         cardinality_stats=CardinalityStats(count=13, min=0.0, max=2.0),
         source_partitioned_cardinality=partitions,
     )
@@ -795,6 +859,8 @@ def test_relationship_type_profile_cardinality_stats_partition_loses_subtype():
     r = RelationshipTypeProfile(
         rel_type="REL",
         count=5,
+        source_label="A",
+        target_label="B",
         source_partitioned_cardinality={
             str(k): CardinalityStats(count=5, min=1.0, max=3.0)
         },
@@ -817,6 +883,8 @@ def test_partitioned_cardinality_accepts_bounded_distribution():
     r = RelationshipTypeProfile(
         rel_type="REL",
         count=5,
+        source_label="A",
+        target_label="B",
         source_partitioned_cardinality=partitions,
     )
     assert r.source_partitioned_cardinality is not None
@@ -831,6 +899,8 @@ def test_relationship_type_profile_existing_aggregate_unaffected():
     r = RelationshipTypeProfile(
         rel_type="REL",
         count=15,
+        source_label="A",
+        target_label="B",
         cardinality_stats=agg,
         source_partitioned_cardinality={
             str(k): BoundedDistribution(count=10, min=1.0, max=2.0)
@@ -838,3 +908,90 @@ def test_relationship_type_profile_existing_aggregate_unaffected():
     )
     assert r.cardinality_stats == agg
     assert r.source_partitioned_cardinality is not None
+
+
+# ---------------------------------------------------------------------------
+# RelTypeKey -- relationship-identity encoding/decoding (ADR-037, E50.1)
+# ---------------------------------------------------------------------------
+
+
+def test_rel_type_key_str_form():
+    """__str__ is the 'source:LABEL:target' form."""
+    k = RelTypeKey(source_label="Person", label="KNOWS", target_label="Person")
+    assert str(k) == "Person:KNOWS:Person"
+
+
+def test_rel_type_key_str_deterministic():
+    """Same inputs always produce the same __str__ output."""
+    k1 = RelTypeKey(source_label="Person", label="KNOWS", target_label="Company")
+    k2 = RelTypeKey(source_label="Person", label="KNOWS", target_label="Company")
+    assert str(k1) == str(k2)
+
+
+def test_rel_type_key_str_distinguishes_endpoints():
+    """Same label, different endpoints produce different strings (the whole point)."""
+    k1 = RelTypeKey(source_label="Person", label="KNOWS", target_label="Person")
+    k2 = RelTypeKey(source_label="Company", label="KNOWS", target_label="Company")
+    assert str(k1) != str(k2)
+
+
+def test_rel_type_key_parse_round_trips():
+    """parse(str(k)) == k for representative triples."""
+    for k in (
+        RelTypeKey(source_label="Person", label="KNOWS", target_label="Person"),
+        RelTypeKey(source_label="Company", label="KNOWS", target_label="Company"),
+        RelTypeKey(source_label="Person", label="ACTED_IN", target_label="Movie"),
+        RelTypeKey(source_label="_A", label="R0", target_label="B_1"),
+    ):
+        assert RelTypeKey.parse(str(k)) == k
+
+
+def test_rel_type_key_parse_returns_fields():
+    """parse recovers each part exactly."""
+    k = RelTypeKey.parse("Person:ACTED_IN:Movie")
+    assert k.source_label == "Person"
+    assert k.label == "ACTED_IN"
+    assert k.target_label == "Movie"
+
+
+def test_rel_type_key_frozen():
+    """RelTypeKey is immutable."""
+    import pytest
+    from pydantic import ValidationError
+
+    k = RelTypeKey(source_label="Person", label="KNOWS", target_label="Person")
+    with pytest.raises(ValidationError):
+        k.label = "LIKES"  # type: ignore[misc]
+
+
+def test_rel_type_key_round_trips_as_dict_key():
+    """str(RelTypeKey) is a usable, recoverable dict key."""
+    k = RelTypeKey(source_label="Person", label="KNOWS", target_label="Company")
+    d = {str(k): "value"}
+    assert str(k) in d
+    assert RelTypeKey.parse(next(iter(d))) == k
+
+
+def test_rel_type_key_parse_rejects_too_few_parts():
+    """A string with fewer than two delimiters is malformed."""
+    import pytest
+
+    with pytest.raises(ValueError):
+        RelTypeKey.parse("Person:KNOWS")
+
+
+def test_rel_type_key_parse_rejects_too_many_parts():
+    """A string with more than two delimiters is malformed (would mis-split)."""
+    import pytest
+
+    with pytest.raises(ValueError):
+        RelTypeKey.parse("Person:KNOWS:Person:extra")
+
+
+def test_rel_type_key_parse_rejects_empty_part():
+    """An empty part silently mis-identifies a type — reject it."""
+    import pytest
+
+    for bad in ("Person:KNOWS:", ":KNOWS:Person", "Person::Person"):
+        with pytest.raises(ValueError):
+            RelTypeKey.parse(bad)

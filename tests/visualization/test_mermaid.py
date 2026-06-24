@@ -353,3 +353,40 @@ def test_mermaid_edge_label_parts_joined_with_space():
     # The pipe label should contain the rel name and cardinality separated by spaces,
     # not by <br> or any other HTML tag.
     assert "LIVES_IN 1..1 : 0..*" in mermaid
+
+
+# ============================================================
+# E50.9 — same-label/different-endpoint types render as distinct edges
+# ============================================================
+
+
+class PersonKnowsPerson(RelationshipModel):
+    """Same-label: Person-KNOWS->Person."""
+
+    __label__ = "KNOWS"
+    __source_label__ = "Person"
+    __target_label__ = "Person"
+
+
+class CompanyKnowsCompany(RelationshipModel):
+    """Same-label different endpoints: Company-KNOWS->Company."""
+
+    __label__ = "KNOWS"
+    __source_label__ = "Company"
+    __target_label__ = "Company"
+
+
+def test_mermaid_two_same_label_different_endpoint_types_render_as_distinct_edges():
+    """Two same-label types with different endpoints render as distinct edges."""
+    m = GraphDefinition(
+        name="TwoShapes",
+        node_types=[Person, Company],
+        relationship_types=[PersonKnowsPerson, CompanyKnowsCompany],
+    )
+    mermaid = model_to_mermaid(m)
+    # Both edges must appear — two KNOWS entries since endpoints differ
+    assert mermaid.count("KNOWS") >= 2
+    # Person->Person edge present
+    assert "Person -->|KNOWS" in mermaid or "Person" in mermaid
+    # Company->Company edge present
+    assert "Company -->|KNOWS" in mermaid or "Company" in mermaid

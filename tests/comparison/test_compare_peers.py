@@ -92,10 +92,12 @@ def test_compare_profiles_node_label_only_in_right():
 
 
 def test_compare_profiles_rel_type_only_in_left():
-    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
     left = GraphProfile(
         source="left",
-        rel_type_profiles={"ACTED_IN": rtp},
+        rel_type_profiles={"Person:ACTED_IN:Movie": rtp},
     )
     right = GraphProfile(source="right")
     result = compare_profiles(left, right)
@@ -105,11 +107,13 @@ def test_compare_profiles_rel_type_only_in_left():
 
 
 def test_compare_profiles_rel_type_only_in_right():
-    rtp = RelationshipTypeProfile(rel_type="ACTED_IN", count=5)
+    rtp = RelationshipTypeProfile(
+        rel_type="ACTED_IN", count=5, source_label="Person", target_label="Movie"
+    )
     left = GraphProfile(source="left")
     right = GraphProfile(
         source="right",
-        rel_type_profiles={"ACTED_IN": rtp},
+        rel_type_profiles={"Person:ACTED_IN:Movie": rtp},
     )
     result = compare_profiles(left, right)
     assert "REL_TYPE_ONLY_IN_RIGHT" in _issue_codes(result)
@@ -198,23 +202,33 @@ def test_compare_profiles_property_type_changed():
     assert result.is_valid is True
 
 
-def test_compare_profiles_endpoints_changed():
+def test_compare_profiles_endpoint_difference_is_presence_diff():
+    """ADR-037: differing endpoints are different identities (addresses), so a
+    profile↔profile endpoint difference surfaces as REL_TYPE_ONLY_IN_* presence
+    diffs — not ENDPOINTS_CHANGED (which no longer applies to profiles)."""
     rtp_left = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
-        source_labels={"Person"},
-        target_labels={"Movie"},
+        source_label="Person",
+        target_label="Movie",
     )
     rtp_right = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
-        source_labels={"Director"},
-        target_labels={"Movie"},
+        source_label="Director",
+        target_label="Movie",
     )
-    left = GraphProfile(source="left", rel_type_profiles={"ACTED_IN": rtp_left})
-    right = GraphProfile(source="right", rel_type_profiles={"ACTED_IN": rtp_right})
+    left = GraphProfile(
+        source="left", rel_type_profiles={"Person:ACTED_IN:Movie": rtp_left}
+    )
+    right = GraphProfile(
+        source="right", rel_type_profiles={"Director:ACTED_IN:Movie": rtp_right}
+    )
     result = compare_profiles(left, right)
-    assert "ENDPOINTS_CHANGED" in _issue_codes(result)
+    codes = _issue_codes(result)
+    assert "ENDPOINTS_CHANGED" not in codes
+    assert "REL_TYPE_ONLY_IN_LEFT" in codes
+    assert "REL_TYPE_ONLY_IN_RIGHT" in codes
     assert result.is_valid is True
 
 
@@ -222,13 +236,25 @@ def test_compare_profiles_cardinality_changed():
     stats_1 = CardinalityStats(count=5, min=1, max=3, mean=2.0)
     stats_2 = CardinalityStats(count=5, min=2, max=6, mean=4.0)
     rtp_left = RelationshipTypeProfile(
-        rel_type="ACTED_IN", count=5, cardinality_stats=stats_1
+        rel_type="ACTED_IN",
+        count=5,
+        source_label="Person",
+        target_label="Movie",
+        cardinality_stats=stats_1,
     )
     rtp_right = RelationshipTypeProfile(
-        rel_type="ACTED_IN", count=5, cardinality_stats=stats_2
+        rel_type="ACTED_IN",
+        count=5,
+        source_label="Person",
+        target_label="Movie",
+        cardinality_stats=stats_2,
     )
-    left = GraphProfile(source="left", rel_type_profiles={"ACTED_IN": rtp_left})
-    right = GraphProfile(source="right", rel_type_profiles={"ACTED_IN": rtp_right})
+    left = GraphProfile(
+        source="left", rel_type_profiles={"Person:ACTED_IN:Movie": rtp_left}
+    )
+    right = GraphProfile(
+        source="right", rel_type_profiles={"Person:ACTED_IN:Movie": rtp_right}
+    )
     result = compare_profiles(left, right)
     assert "CARDINALITY_CHANGED" in _issue_codes(result)
     assert result.is_valid is True
@@ -444,9 +470,46 @@ _GD_ORIG_ENDPOINTS = GraphDefinition(
 )
 
 
-def test_compare_definitions_endpoints_changed():
+def test_compare_definitions_endpoint_difference_is_presence_diff():
+    """ADR-037: differing endpoints are different identities (addresses), so a
+    definition↔definition endpoint difference surfaces as REL_TYPE_ONLY_IN_*
+    presence diffs — ENDPOINTS_CHANGED is trimmed to the ``__directed__`` delta."""
     result = compare_definitions(_GD_ORIG_ENDPOINTS, _GD_ALT_ENDPOINTS)
-    assert "ENDPOINTS_CHANGED" in _issue_codes(result)
+    codes = _issue_codes(result)
+    assert "ENDPOINTS_CHANGED" not in codes
+    assert "REL_TYPE_ONLY_IN_LEFT" in codes
+    assert "REL_TYPE_ONLY_IN_RIGHT" in codes
+    assert result.is_valid is True
+
+
+class _ActedInUndirectedDef(RelationshipModel):
+    """ACTED_IN with the same triple as _ActedInDef but undirected."""
+
+    __label__ = "ACTED_IN"
+    __source_label__ = "Person"
+    __target_label__ = "Movie"
+    __directed__ = False
+
+
+_GD_DIRECTED = GraphDefinition(
+    name="directed",
+    node_types=[_PersonDef, _MovieDef],
+    relationship_types=[_ActedInDef],
+)
+
+_GD_UNDIRECTED = GraphDefinition(
+    name="undirected",
+    node_types=[_PersonDef, _MovieDef],
+    relationship_types=[_ActedInUndirectedDef],
+)
+
+
+def test_compare_definitions_directed_flag_changed():
+    """Same identity triple, differing ``__directed__`` → ENDPOINTS_CHANGED (INFO)."""
+    result = compare_definitions(_GD_DIRECTED, _GD_UNDIRECTED)
+    issues = [i for i in result.issues if i.code == "ENDPOINTS_CHANGED"]
+    assert len(issues) == 1
+    assert issues[0].context["role"] == "directed"
     assert result.is_valid is True
 
 
@@ -498,8 +561,10 @@ def test_compare_definitions_no_error_severity():
     _assert_no_error(compare_definitions(_GD_WITH_EMAIL, _GD_WITHOUT_EMAIL))
     # property type changed
     _assert_no_error(compare_definitions(_GD_INT_NAME, _GD_STR_NAME))
-    # endpoints changed
+    # endpoint difference (now a presence diff, not ENDPOINTS_CHANGED)
     _assert_no_error(compare_definitions(_GD_ORIG_ENDPOINTS, _GD_ALT_ENDPOINTS))
+    # directed-flag delta (ENDPOINTS_CHANGED, INFO)
+    _assert_no_error(compare_definitions(_GD_DIRECTED, _GD_UNDIRECTED))
     # cardinality changed
     _assert_no_error(compare_definitions(_GD_STRICT, _GD_LOOSE))
 
@@ -523,22 +588,22 @@ def test_compare_profiles_no_error_severity_extended():
     r1 = GraphProfile(
         source="c",
         rel_type_profiles={
-            "ACTED_IN": RelationshipTypeProfile(
+            "Person:ACTED_IN:Movie": RelationshipTypeProfile(
                 rel_type="ACTED_IN",
                 count=5,
-                source_labels={"Person"},
-                target_labels={"Movie"},
+                source_label="Person",
+                target_label="Movie",
             )
         },
     )
     r2 = GraphProfile(
         source="d",
         rel_type_profiles={
-            "DIRECTED": RelationshipTypeProfile(
+            "Director:DIRECTED:Film": RelationshipTypeProfile(
                 rel_type="DIRECTED",
                 count=2,
-                source_labels={"Director"},
-                target_labels={"Film"},
+                source_label="Director",
+                target_label="Film",
             )
         },
     )
@@ -571,9 +636,24 @@ def test_compare_profiles_filmography_identical(filmography_model: GraphDefiniti
             "City": NodeTypeProfile(label="City", count=3),
         },
         rel_type_profiles={
-            "ACTED_IN": RelationshipTypeProfile(rel_type="ACTED_IN", count=20),
-            "LIVES_IN": RelationshipTypeProfile(rel_type="LIVES_IN", count=10),
-            "DIRECTED": RelationshipTypeProfile(rel_type="DIRECTED", count=5),
+            "Person:ACTED_IN:Movie": RelationshipTypeProfile(
+                rel_type="ACTED_IN",
+                count=20,
+                source_label="Person",
+                target_label="Movie",
+            ),
+            "Person:LIVES_IN:City": RelationshipTypeProfile(
+                rel_type="LIVES_IN",
+                count=10,
+                source_label="Person",
+                target_label="City",
+            ),
+            "Person:DIRECTED:Movie": RelationshipTypeProfile(
+                rel_type="DIRECTED",
+                count=5,
+                source_label="Person",
+                target_label="Movie",
+            ),
         },
     )
     result = compare_profiles(profile, profile)
