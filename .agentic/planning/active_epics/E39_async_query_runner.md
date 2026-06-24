@@ -9,6 +9,11 @@
 > (`WriteResultSummary` protocol — refined, not reversed, by T1), and the planned MP-backend
 > (`mp-backend`) consumer whose `app/db/transaction_context.py` owns the transaction boundary and
 > yields a live `neo4j.AsyncTransaction | AsyncSession` to its repositories.
+> **Carries the live Constraint-13 executor work** that the retired E10 (Connection Ownership Audit)
+> never covered: E10's inspector subject was already delivered by E25/ADR-011 (D1, stateless
+> `inspect(self, connection)`); the GQLAlchemy client is E9's; and the one genuine ownership breach —
+> `CypherExecutor.write()` self-committing — is removed here in Wave 0 (T2). E10 was retired
+> (2026-06-24) with no tasks migrated, because doing so would re-open work E25 settled.
 
 ---
 

@@ -181,18 +181,29 @@ def _compute_property_profiles(
         present_count = 0
         observed_types: set[str] = set()
         value_counts: Counter[str] = Counter()
+        # observed_type_counts is gated on the same value-scan opt-in as the
+        # histogram: a single knob, so when counts are populated
+        # value_distribution is too and the reconciliation invariant
+        # (sum(type_counts) == value_distribution.count == present_count) holds.
+        type_counts: Counter[str] = Counter()
         for entity in entities:
             if key in entity and entity[key] is not None:
                 # an explicit ``null`` is *not* present.
                 present_count += 1
-                observed_types.add(type(entity[key]).__name__)
+                type_name = type(entity[key]).__name__
+                observed_types.add(type_name)
                 if value_counts_top_n:
                     value_counts[str(entity[key])] += 1
+                    # Type counts reuse the observed_types vocabulary
+                    # (type(value).__name__) and are exact
+                    # (grouped by type, never truncated ).
+                    type_counts[type_name] += 1
         profiles[key] = PropertyProfile(
             name=key,
             present_count=present_count,
             total_count=total,
             observed_types=sorted(observed_types),
+            observed_type_counts=dict(type_counts),
             value_distribution=_build_value_distribution(
                 value_counts, present_count, value_counts_top_n
             ),

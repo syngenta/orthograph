@@ -299,6 +299,115 @@ def test_inspect_value_distribution_null_values_excluded():
     assert dist.count == 2  # only non-null
 
 
+# --- observed_type_counts ---
+
+
+def test_inspect_observed_type_counts_single_type():
+    """A uniformly-typed property reports one type key with the full count."""
+    g = _make_graph()
+    g.add_node("a", __label__="Person", name="Alice")
+    g.add_node("b", __label__="Person", name="Bob")
+    g.add_node("c", __label__="Person", name="Charlie")
+
+    profile = NetworkxInspector().inspect(g)
+    name = profile.node_type_profiles["Person"].property_profiles["name"]
+
+    assert name.observed_type_counts == {"str": 3}
+
+
+def test_inspect_observed_type_counts_mixed_type_split():
+    """A mixed-type property reports the exact per-type split (int vs float)."""
+    g = _make_graph()
+    # 3 ints, 1 float on the same property.
+    g.add_node("a", __label__="Reading", value=1)
+    g.add_node("b", __label__="Reading", value=2)
+    g.add_node("c", __label__="Reading", value=3)
+    g.add_node("d", __label__="Reading", value=4.5)
+
+    profile = NetworkxInspector().inspect(g)
+    value = profile.node_type_profiles["Reading"].property_profiles["value"]
+
+    assert value.observed_type_counts == {"int": 3, "float": 1}
+
+
+def test_inspect_observed_type_counts_subset_of_observed_types():
+    """ADR-035 §3: set(observed_type_counts) ⊆ set(observed_types)."""
+    g = _make_graph()
+    g.add_node("a", __label__="Reading", value=1)
+    g.add_node("b", __label__="Reading", value=4.5)
+
+    profile = NetworkxInspector().inspect(g)
+    value = profile.node_type_profiles["Reading"].property_profiles["value"]
+
+    assert set(value.observed_type_counts) <= set(value.observed_types)
+
+
+def test_inspect_observed_type_counts_reconciliation_invariant():
+    """ADR-035 §2: sum(type counts) == value_distribution.count == present_count."""
+    g = _make_graph()
+    g.add_node("a", __label__="Reading", value=1)
+    g.add_node("b", __label__="Reading", value=2)
+    g.add_node("c", __label__="Reading", value=4.5)
+    g.add_node("d", __label__="Reading")  # value absent → not present
+
+    profile = NetworkxInspector().inspect(g)
+    value = profile.node_type_profiles["Reading"].property_profiles["value"]
+
+    total = sum(value.observed_type_counts.values())
+    assert value.value_distribution is not None
+    assert total == value.value_distribution.count == value.present_count == 3
+
+
+def test_inspect_observed_type_counts_null_values_excluded():
+    """An explicit ``None`` contributes no type count (parity with present_count)."""
+    g = _make_graph()
+    g.add_node("a", __label__="Person", nickname="Al")
+    g.add_node("b", __label__="Person", nickname=None)
+
+    profile = NetworkxInspector().inspect(g)
+    nickname = profile.node_type_profiles["Person"].property_profiles["nickname"]
+
+    assert nickname.observed_type_counts == {"str": 1}
+
+
+def test_inspect_observed_type_counts_on_relationships():
+    """Relationship properties carry type counts too."""
+    g = _make_graph()
+    g.add_node("a", __label__="Person", name="Alice")
+    g.add_node("m1", __label__="Movie", title="X")
+    g.add_node("m2", __label__="Movie", title="Y")
+    g.add_edge("a", "m1", __label__="ACTED_IN", role="Lead")
+    g.add_edge("a", "m2", __label__="ACTED_IN", role="Extra")
+
+    profile = NetworkxInspector().inspect(g)
+    role = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
+
+    assert role.observed_type_counts == {"str": 2}
+
+
+def test_inspect_observed_type_counts_disabled_when_top_n_none():
+    """top_n=None disables the value scan ⇒ observed_type_counts == {} (ADR-035 §1)."""
+    g = _make_graph()
+    g.add_node("a", __label__="Person", name="Alice")
+
+    profile = NetworkxInspector(value_counts_top_n=None).inspect(g)
+    name = profile.node_type_profiles["Person"].property_profiles["name"]
+
+    assert name.observed_type_counts == {}
+    assert name.value_distribution is None
+
+
+def test_inspect_observed_type_counts_disabled_when_top_n_zero():
+    """top_n=0 disables the value scan ⇒ observed_type_counts == {}."""
+    g = _make_graph()
+    g.add_node("a", __label__="Person", name="Alice")
+
+    profile = NetworkxInspector(value_counts_top_n=0).inspect(g)
+    name = profile.node_type_profiles["Person"].property_profiles["name"]
+
+    assert name.observed_type_counts == {}
+
+
 # --- partitioned_cardinality ---
 
 

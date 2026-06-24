@@ -108,7 +108,7 @@ def model_to_mermaid(graph_definition: GraphDefinition) -> str:
         tgt_card = _format_cardinality(rt.target_cardinality())
         label_parts.append(f"{src_card} : {tgt_card}")
 
-        label_str = "<br>".join(label_parts)
+        label_str = " ".join(label_parts)
         lines.append(f"    {src} {arrow}|{label_str}| {tgt}")
 
     return "\n".join(lines)

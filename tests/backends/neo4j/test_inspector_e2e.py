@@ -455,7 +455,14 @@ def test_injection_raises_before_reaching_driver(
 
 @pytest.mark.neo4j
 def test_internal_catalogue_populated(neo4j_driver: Any, neo4j_clean: None) -> None:
-    """The pure-Cypher catalogue holds exactly the 7 expected query names."""
+    """The pure-Cypher catalogue holds exactly the expected query names.
+
+    The APOC-keyed value scan (type counts via apoc.meta.cypher.type, and the
+    list-keeping histogram via apoc.convert.toJson) is an APOC feature, so the
+    pure-Cypher catalogue omits those four queries.
+    adds a scalar-only histogram fallback (toStringOrNull) for node and rel
+    properties, so those two ARE present.
+    """
     from orthograph.backends.neo4j.queries import build_cypher_catalogue
 
     Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(neo4j_driver)
@@ -463,6 +470,8 @@ def test_internal_catalogue_populated(neo4j_driver: Any, neo4j_clean: None) -> N
     assert names == {
         "neo4j.inspect.node_labels",
         "neo4j.inspect.rel_types",
+        "neo4j.inspect.node_count",
+        "neo4j.inspect.rel_count",
         "neo4j.inspect.cypher.node_properties",
         "neo4j.inspect.cypher.rel_properties",
         "inspect.cardinality",
@@ -470,6 +479,12 @@ def test_internal_catalogue_populated(neo4j_driver: Any, neo4j_clean: None) -> N
         "inspect.endpoint_labels",
         "inspect.partitioned_cardinality.source",
         "inspect.partitioned_cardinality.target",
+        # E46.6: scalar-only pure-Cypher histogram fallback.
+        "neo4j.inspect.cypher.node_value_histogram",
+        "neo4j.inspect.cypher.rel_value_histogram",
+        # ADR-036: property-independent present-count queries.
+        "neo4j.inspect.node_present_count",
+        "neo4j.inspect.rel_present_count",
     }
 
 
@@ -486,7 +501,18 @@ def test_apoc_catalogue_offline_describe(neo4j_driver: Any, neo4j_clean: None) -
     names = set(query_catalogue.names())
     assert "neo4j.inspect.apoc.node_properties" in names
     assert "neo4j.inspect.apoc.rel_properties" in names
-    assert len(names) == 9
+    # Authoritative instance-count queries (property-independent).
+    assert "neo4j.inspect.node_count" in names
+    assert "neo4j.inspect.rel_count" in names
+    # E46.1: APOC catalogue gains type-count + histogram queries (node + rel).
+    assert "neo4j.inspect.apoc.node_type_counts" in names
+    assert "neo4j.inspect.apoc.rel_type_counts" in names
+    assert "neo4j.inspect.apoc.node_value_histogram" in names
+    assert "neo4j.inspect.apoc.rel_value_histogram" in names
+    # ADR-036: property-independent present-count queries.
+    assert "neo4j.inspect.node_present_count" in names
+    assert "neo4j.inspect.rel_present_count" in names
+    assert len(names) == 17
     for desc in query_catalogue.describe():
         assert desc.output_schema is not None
 
@@ -655,3 +681,465 @@ def test_both_sides_compare_passes_when_in_bounds(
     result = validate_database(neo4j_driver, BOTH_SIDES_MODEL)
     violations = [i for i in result.issues if i.code == "CARDINALITY_VIOLATION"]
     assert violations == [], [str(v) for v in violations]
+
+
+# ---------------------------------------------------------------------------
+# Value-scan queries — type counts + histogram (E46.1, ADR-035)
+#
+# These exercise the new queries directly against a live instance (inspector
+# wiring).  They prove the runtime behaviours mocks can only
+# approximate: the GROUP BY type aggregation, the bounded cost, the histogram
+# truncation, and the APOC-vs-CYPHER availability of the runtime-type function.
+# ---------------------------------------------------------------------------
+
+
+def _run(driver: Any, query: Any, params: Any) -> list[Any]:
+    """Build a query, execute it, and materialise every record."""
+    cypher, bound = query.build(params)
+    records, _, _ = driver.execute_query(cypher, bound)
+    return [query.materialize(r) for r in records]
+
+
+def _seed_mixed_born(driver: Any) -> None:
+    """Person.born is mostly Long with a couple of String rows (dirty data).
+
+    3 ints (1980, 1985, 1990) and 2 strings ('1999', 'unknown') → on a live
+    instance: {'Long': 3, 'String': 2}, present_count == 5.
+    """
+    driver.execute_query(
+        "MERGE (:Person {name: 'a', born: 1980})"
+        " MERGE (:Person {name: 'b', born: 1985})"
+        " MERGE (:Person {name: 'c', born: 1990})"
+        " MERGE (:Person {name: 'd', born: '1999'})"
+        " MERGE (:Person {name: 'e', born: 'unknown'})"
+    )
+
+
+@pytest.mark.neo4j
+def test_node_type_counts_exact_split(neo4j_driver: Any, neo4j_clean: None) -> None:
+    """A mixed-type property yields the exact {type: count} split (APOC)."""
+    from orthograph.backends.neo4j.queries import ApocNodeTypeCountsQuery
+
+    _seed_mixed_born(neo4j_driver)
+    rows = _run(
+        neo4j_driver,
+        ApocNodeTypeCountsQuery(
+            identifiers={"label": "Person", "property_name": "born"}
+        ),
+        NoParams(),
+    )
+    counts = {r.type_name: r.type_count for r in rows}
+    assert counts == {"Long": 3, "String": 2}
+
+
+@pytest.mark.neo4j
+def test_type_counts_reconcile_with_present_count(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """sum(type counts) == present_count (the ADR-035 reconciliation total).
+
+    The histogram count (non-truncated here) equals the same total, so the
+    type side and value side reconcile at the total.
+    """
+    from orthograph.backends.neo4j.queries import (
+        ApocNodeTypeCountsQuery,
+        ApocNodeValueHistogramQuery,
+    )
+
+    _seed_mixed_born(neo4j_driver)
+    type_rows = _run(
+        neo4j_driver,
+        ApocNodeTypeCountsQuery(
+            identifiers={"label": "Person", "property_name": "born"}
+        ),
+        NoParams(),
+    )
+    hist_rows = _run(
+        neo4j_driver,
+        ApocNodeValueHistogramQuery(
+            identifiers={"label": "Person", "property_name": "born"}
+        ),
+        ApocNodeValueHistogramQuery.Params(top_n=100),
+    )
+    type_total = sum(r.type_count for r in type_rows)
+    hist_total = sum(r.value_count for r in hist_rows)
+    assert type_total == 5  # present_count
+    assert hist_total == 5
+
+
+@pytest.mark.neo4j
+def test_type_counts_bounded_on_high_cardinality(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """The type-count query returns <= (distinct types) rows even on a UID-like
+    property with many distinct values — it groups by *type*, never by value.
+    """
+    from orthograph.backends.neo4j.queries import ApocNodeTypeCountsQuery
+
+    # 50 distinct string UIDs → 1 distinct type ('String').
+    neo4j_driver.execute_query(
+        "UNWIND range(1, 50) AS i"
+        " CREATE (:Widget {uid: toString(i) + '-' + randomUUID()})"
+    )
+    rows = _run(
+        neo4j_driver,
+        ApocNodeTypeCountsQuery(
+            identifiers={"label": "Widget", "property_name": "uid"}
+        ),
+        NoParams(),
+    )
+    # One row per distinct TYPE, not per distinct value.
+    assert len(rows) == 1
+    assert rows[0].type_name == "String"
+    assert rows[0].type_count == 50
+
+
+@pytest.mark.neo4j
+def test_value_histogram_truncates_while_type_stays_exact(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """A high-cardinality property: histogram hits the LIMIT (truncates) while
+    the type-count query stays exact (single {'String': total} entry).
+    """
+    from orthograph.backends.neo4j.queries import (
+        ApocNodeTypeCountsQuery,
+        ApocNodeValueHistogramQuery,
+    )
+
+    neo4j_driver.execute_query(
+        "UNWIND range(1, 50) AS i CREATE (:Widget {uid: toString(i)})"
+    )
+    top_n = 10
+    hist_rows = _run(
+        neo4j_driver,
+        ApocNodeValueHistogramQuery(
+            identifiers={"label": "Widget", "property_name": "uid"}
+        ),
+        ApocNodeValueHistogramQuery.Params(top_n=top_n),
+    )
+    # The histogram is capped at top_n (the truncating part).
+    assert len(hist_rows) == top_n
+    # The type counts remain exact and complete (not truncated).
+    type_rows = _run(
+        neo4j_driver,
+        ApocNodeTypeCountsQuery(
+            identifiers={"label": "Widget", "property_name": "uid"}
+        ),
+        NoParams(),
+    )
+    assert len(type_rows) == 1
+    assert type_rows[0].type_name == "String"
+    assert type_rows[0].type_count == 50
+
+
+@pytest.mark.neo4j
+def test_rel_type_counts_exact_split(neo4j_driver: Any, neo4j_clean: None) -> None:
+    """Relationship property type counts mirror the node-side behaviour."""
+    from orthograph.backends.neo4j.queries import ApocRelTypeCountsQuery
+
+    neo4j_driver.execute_query(
+        "MERGE (p:Person {name: 'p'})"
+        " MERGE (m:Movie {title: 'm', year: 2000})"
+        " MERGE (p)-[:ACTED_IN {role: 'Lead'}]->(m)"
+        " MERGE (p)-[:ACTED_IN {role: 2}]->(m)"
+    )
+    rows = _run(
+        neo4j_driver,
+        ApocRelTypeCountsQuery(
+            identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+        ),
+        NoParams(),
+    )
+    counts = {r.type_name: r.type_count for r in rows}
+    assert counts == {"String": 1, "Long": 1}
+
+
+# ---------------------------------------------------------------------------
+# Inspector wiring — value_counts_top_n (E46.2, ADR-035)
+#
+# These tests exercise Neo4jInspector end-to-end with value_counts_top_n set,
+# proving the $top_n parameter binding reaches the live driver (not only
+# MagicMock, which ignores kwargs) and that the profile fields are populated
+# and reconcile.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.neo4j
+def test_inspector_value_counts_top_n_apoc_wiring(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """APOC + value_counts_top_n wires $top_n through to the live driver.
+
+    Exercises the inspector end-to-end with value_counts_top_n set, proving:
+    - The histogram $top_n parameter binding reaches the driver (mocks ignore
+      kwargs; this test does not).
+    - observed_type_counts and value_distribution are both populated.
+    - Reconciliation invariant: sum(type_counts) == value_distribution.count
+      == present_count (ADR-035 §2).
+    """
+    _seed_mixed_born(neo4j_driver)
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.APOC, value_counts_top_n=20
+    ).inspect(neo4j_driver)
+
+    born = profile.node_type_profiles["Person"].property_profiles["born"]
+
+    # Type counts populated with the exact per-type split.
+    assert born.observed_type_counts == {"Long": 3, "String": 2}
+    # Histogram populated (all 5 distinct values fit within top_n=20).
+    assert born.value_distribution is not None
+    assert born.value_distribution.sample_complete is True
+    assert born.value_distribution.count == 5
+    # Reconciliation invariant.
+    assert sum(born.observed_type_counts.values()) == born.value_distribution.count
+    assert born.value_distribution.count == born.present_count
+
+
+@pytest.mark.neo4j
+def test_inspector_value_counts_top_n_cypher_yields_empty_type_counts(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """CYPHER + value_counts_top_n: no type counts (no runtime-type function).
+
+    Type counts need apoc.meta.cypher.type, which pure-CYPHER lacks, so
+    observed_type_counts == {} . restores a scalar
+    histogram fallback (toStringOrNull), so value_distribution IS populated for
+    the scalar Person.born — see test_cypher_fallback_scalar_histogram_populated
+    for the histogram assertions.  present_count comes from the pure-Cypher scan.
+    """
+    _seed_mixed_born(neo4j_driver)
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.CYPHER, value_counts_top_n=20
+    ).inspect(neo4j_driver)
+
+    born = profile.node_type_profiles["Person"].property_profiles["born"]
+
+    # No runtime-type function on pure-Cypher → no type counts.
+    assert born.observed_type_counts == {}
+    # present_count still comes from the pure-Cypher property scan.
+    assert born.present_count == 5
+
+
+@pytest.mark.neo4j
+def test_inspector_value_counts_top_n_truncation(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """top_n smaller than distinct values truncates histogram; type counts exact.
+
+    Seeds 50 distinct string UIDs, inspects with top_n=5.  The histogram is
+    capped at 5 rows (sample_complete=False, other_count>0); type counts report
+    the full {'String': 50} without truncation (ADR-035 §4).
+    """
+    neo4j_driver.execute_query(
+        "UNWIND range(1, 50) AS i CREATE (:Widget {uid: toString(i)})"
+    )
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.APOC, value_counts_top_n=5
+    ).inspect(neo4j_driver)
+
+    uid = profile.node_type_profiles["Widget"].property_profiles["uid"]
+
+    # Histogram truncated.
+    assert uid.value_distribution is not None
+    assert uid.value_distribution.sample_complete is False
+    assert uid.value_distribution.limit == 5
+    assert uid.value_distribution.other_count is not None
+    assert uid.value_distribution.other_count > 0
+    # Type counts exact and untruncated.
+    assert uid.observed_type_counts == {"String": 50}
+    # Reconciliation still holds at the total.
+    assert sum(uid.observed_type_counts.values()) == uid.value_distribution.count
+    assert uid.value_distribution.count == uid.present_count
+
+
+# ---------------------------------------------------------------------------
+# Pure-Cypher scalar histogram fallback
+#
+# On a strategy without APOC, value_counts_top_n still populates a *scalar*
+# value_distribution via the toStringOrNull pure-Cypher histogram; list/array
+# properties are left None (skipped) rather than crashing toString(list).
+# Type counts stay {} (no portable runtime-type function on pure-Cypher).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.neo4j
+def test_cypher_fallback_scalar_histogram_populated(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """CYPHER + value_counts_top_n → scalar property gets a histogram, no types.
+
+    Seeds Person.born scalars; under strategy=CYPHER the toStringOrNull fallback
+    histogram populates value_distribution while observed_type_counts stays {}
+    (no apoc.meta.cypher.type on pure-Cypher).
+    """
+    _seed_mixed_born(neo4j_driver)
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.CYPHER, value_counts_top_n=20
+    ).inspect(neo4j_driver)
+
+    born = profile.node_type_profiles["Person"].property_profiles["born"]
+
+    # No runtime-type function on pure-Cypher → no type counts.
+    assert born.observed_type_counts == {}
+    # E46.6: the scalar histogram fallback IS populated (all 5 values are scalar
+    # — ints and strings both stringify, so the histogram is complete).
+    assert born.value_distribution is not None
+    assert born.value_distribution.count == 5
+    assert born.value_distribution.sample_complete is True
+    histogram = born.value_distribution.histogram
+    assert histogram is not None
+    assert sum(histogram.values()) == 5
+
+
+@pytest.mark.neo4j
+def test_cypher_fallback_list_property_is_skipped_not_crashed(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """CYPHER + a StringArray property → value_distribution is None (NO crash).
+
+    Hard regression guard for the discovered toString(list) failure
+    (`Invalid input for function 'toString()': … StringArray`).  ACTED_IN.roles
+    is a StringArray; under strategy=CYPHER the toStringOrNull fallback returns
+    null for every list value, so the scalar histogram is empty → None.  The
+    inspection must complete without a TypeError.
+    """
+    neo4j_driver.execute_query(
+        "MERGE (p:Person {name: 'Alice'})"
+        " MERGE (m:Movie {title: 'Inception', year: 2010})"
+        " MERGE (p)-[:ACTED_IN {roles: ['Cobb', 'Lead']}]->(m)"
+    )
+    # Must not raise (the whole point of the guard).
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.CYPHER, value_counts_top_n=20
+    ).inspect(neo4j_driver)
+
+    roles = profile.rel_type_profiles["ACTED_IN"].property_profiles["roles"]
+    # List values are dropped by toStringOrNull → no scalar histogram.
+    assert roles.value_distribution is None
+    assert roles.observed_type_counts == {}
+    # Presence is still truthful (the edge has the property).
+    assert roles.present_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Instance count is property-independent
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.neo4j
+def test_property_less_relationship_has_nonzero_count(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """A relationship type with NO properties still reports its true edge count.
+
+    Regression guard for the bug where rel/node count was derived from property
+    observations: a property-less type yielded count=0 despite having edges.
+    LINKS carries no properties; three edges are seeded, so count must be 3.
+    """
+    neo4j_driver.execute_query(
+        "MERGE (a:Thing {id: 'a'})"
+        " MERGE (b:Thing {id: 'b'})"
+        " MERGE (c:Thing {id: 'c'})"
+        " MERGE (a)-[:LINKS]->(b)"
+        " MERGE (b)-[:LINKS]->(c)"
+        " MERGE (a)-[:LINKS]->(c)"
+    )
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
+    links = profile.rel_type_profiles["LINKS"]
+    # The true edge count — independent of (absent) properties.
+    assert links.count == 3
+    # No properties were stored on the relationship.
+    assert links.property_profiles == {}
+
+
+@pytest.mark.neo4j
+def test_property_less_node_label_has_nonzero_count(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """A node label with NO properties still reports its true node count.
+
+    Companion to the relationship guard: a property-less label must not collapse
+    to count=0.  Two property-less Marker nodes are seeded.
+    """
+    neo4j_driver.execute_query("CREATE (:Marker) CREATE (:Marker)")
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver
+    )
+    marker = profile.node_type_profiles["Marker"]
+    assert marker.count == 2
+    assert marker.property_profiles == {}
+
+
+# ---------------------------------------------------------------------------
+# APOC no-scan count correction (ADR-036)
+#
+# The APOC strategy historically sourced present_count from APOC's sampled
+# propertyObservations, which undercounts relationship properties (the
+# 100-vs-172 finding).  ADR-036 corrects this on the default no-scan path via a
+# dedicated count() … IS NOT NULL.  These tests need a dataset large enough to
+# actually trip APOC's relationship-property sampling, so they seed > 100 edges.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.neo4j
+def test_apoc_no_scan_rel_present_count_is_truthful(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """APOC default (no value scan): relationship present_count is the TRUE count.
+
+    Seeds 172 ACTED_IN edges, every one carrying ``role`` (non-null).  Under the
+    APOC strategy with no ``value_counts_top_n``, ADR-036 derives present_count
+    from a real ``count() … IS NOT NULL`` rather than APOC's
+    ``apoc.meta.relTypeProperties`` observation count (which undercounts).  The
+    profile must therefore report 172, matching a direct Cypher count.
+    """
+    # 172 distinct Person→Movie edges, each with a role.
+    neo4j_driver.execute_query(
+        "MERGE (m:Movie {title: 'Inception', year: 2010})"
+        " WITH m UNWIND range(1, 172) AS i"
+        " MERGE (p:Person {name: 'actor_' + toString(i)})"
+        " MERGE (p)-[:ACTED_IN {role: 'role_' + toString(i)}]->(m)"
+    )
+    # Ground truth straight from the DB.
+    recs, _, _ = neo4j_driver.execute_query(
+        "MATCH ()-[r:ACTED_IN]->() WHERE r.role IS NOT NULL RETURN count(r) AS c"
+    )
+    true_present = recs[0]["c"]
+    assert true_present == 172  # sanity: the seed is what we think it is.
+
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.APOC).inspect(
+        neo4j_driver
+    )
+    role = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
+    # The corrected present_count equals the true non-null count, not APOC's
+    # (potentially sampled / undercounted) propertyObservations.
+    assert role.present_count == true_present
+    # total_count is the property-independent edge count; role is on every edge.
+    assert role.total_count == 172
+    assert role.completeness == 1.0
+
+
+@pytest.mark.neo4j
+def test_apoc_no_scan_partial_completeness_is_truthful(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """APOC default: a partially-present property reports true completeness.
+
+    150 Person nodes; ``born`` set on exactly 90 of them.  ADR-036 makes
+    present_count (90) and total_count (150) both come from real counts, so
+    completeness is 0.6 regardless of APOC's sampling.
+    """
+    neo4j_driver.execute_query(
+        "UNWIND range(1, 150) AS i"
+        " CREATE (p:Person {name: 'p_' + toString(i)})"
+        " WITH p, i WHERE i <= 90 SET p.born = 1900 + i"
+    )
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.APOC).inspect(
+        neo4j_driver
+    )
+    born = profile.node_type_profiles["Person"].property_profiles["born"]
+    assert born.present_count == 90
+    assert born.total_count == 150
+    assert born.completeness == pytest.approx(0.6)

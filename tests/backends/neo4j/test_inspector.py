@@ -64,6 +64,15 @@ def test_neo4j_detect_strategy_schema() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -87,6 +96,15 @@ def test_neo4j_detect_strategy_cypher() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid .
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -259,6 +277,15 @@ def test_schema_strategy_merges_counts_and_types() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid .
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries  are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -308,6 +335,15 @@ def test_schema_strategy_scan_only_property_keeps_empty_types() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries  are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -325,10 +361,13 @@ def test_schema_strategy_scan_only_property_keeps_empty_types() -> None:
 
 
 def test_apoc_strategy_regression_lock() -> None:
-    """APOC strategy: output is the existing APOC behaviour, unchanged.
+    """APOC strategy: types from APOC; counts corrected via real count() (ADR-036).
 
-    apoc.meta present → APOC selected; no db.schema query is issued and the
-    profile carries APOC-derived counts and types.
+    apoc.meta present → APOC selected; no db.schema query is issued.  Types come
+    from APOC, but ``present_count`` now comes from the dedicated
+    ``count() … IS NOT NULL`` query (superseding APOC's sampled
+    ``propertyObservations``), and ``total_count`` from the instance count.
+    On a quiescent DB the corrected count equals APOC's reported value (100).
     """
     driver = MagicMock()
     call_count = 0
@@ -357,6 +396,13 @@ def test_apoc_strategy_regression_lock() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # ADR-036: total_count from the instance count, present_count from the
+        # real count() … IS NOT NULL.  Quiescent DB → corrected count == 100.
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 100}], ["count"])
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 100}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -366,10 +412,143 @@ def test_apoc_strategy_regression_lock() -> None:
     profile = Neo4jInspector().inspect(driver)
     name = profile.node_type_profiles["Person"].property_profiles["name"]
     assert name.present_count == 100
+    assert name.total_count == 100
     assert name.observed_types == ["String"]
     # No db.schema query was issued on the APOC path.
     for call in driver.execute_query.call_args_list:
         assert "db.schema" not in str(call)
+
+
+# --- ADR-036: APOC no-scan count correction ---
+
+
+def _apoc_count_correction_driver(
+    *,
+    node_props: list[dict[str, Any]],
+    rel_props: list[dict[str, Any]],
+    node_total: int,
+    rel_total: int,
+    node_present: dict[str, int],
+    rel_present: dict[str, int],
+) -> MagicMock:
+    """Build an APOC-strategy driver dispatching on rendered Cypher (ADR-036).
+
+    Property *metadata* (types, APOC's sampled observations) comes from the
+    ordered ``apoc.meta.*`` responses; the instance counts and per-property
+    present-counts are dispatched by their distinctive Cypher so the test can
+    return a *true* count that differs from APOC's reported observation count.
+    """
+    driver = MagicMock()
+    ordered = [
+        mock_execute_query([{"cnt": 3}], ["cnt"]),  # apoc.meta present → APOC
+        mock_execute_query([{"label": "Person"}], ["label"]),
+        mock_execute_query([{"relationshipType": "ACTED_IN"}], ["relationshipType"]),
+        mock_execute_query([], []),  # constraints
+        mock_execute_query(node_props),  # apoc node_properties (Person)
+        mock_execute_query(rel_props),  # apoc rel_properties (ACTED_IN)
+        mock_execute_query([{"source_labels": ["Person"], "target_labels": ["Movie"]}]),
+        mock_execute_query(
+            [{"min_degree": 1, "max_degree": 2, "avg_degree": 1.5, "sample_size": 3}]
+        ),
+    ]
+    ordered_iter = iter(ordered)
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        if "count(n) AS count" in cypher:
+            return mock_execute_query([{"count": node_total}], ["count"])
+        if "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": rel_total}], ["count"])
+        if "count(n) AS present_count" in cypher:
+            # Dispatch by property key embedded in the rendered Cypher.
+            prop = next(p for p in node_present if f"n.`{p}`" in cypher)
+            return mock_execute_query(
+                [{"present_count": node_present[prop]}], ["present_count"]
+            )
+        if "count(r) AS present_count" in cypher:
+            prop = next(p for p in rel_present if f"r.`{p}`" in cypher)
+            return mock_execute_query(
+                [{"present_count": rel_present[prop]}], ["present_count"]
+            )
+        return next(ordered_iter)
+
+    driver.execute_query.side_effect = side_effect
+    return driver
+
+
+def test_apoc_no_scan_corrects_rel_present_count_undercount() -> None:
+    """APOC no-scan: the relationship present_count comes from a real count().
+
+    Reproduces the E46.2 finding: APOC reports propertyObservations=100 for
+    ACTED_IN.role while the true non-null count is 172.  ADR-036 sources
+    present_count from a dedicated count() … IS NOT NULL, so the profile reports
+    172, and total_count from the instance count (172 edges).
+    """
+    driver = _apoc_count_correction_driver(
+        node_props=[
+            {
+                "propertyName": "name",
+                "propertyTypes": ["String"],
+                "mandatory": True,
+                "propertyObservations": 10,
+                "totalObservations": 10,
+            }
+        ],
+        rel_props=[
+            {
+                "propertyName": "role",
+                "propertyTypes": ["String"],
+                "mandatory": True,
+                "propertyObservations": 100,  # APOC undercount
+                "totalObservations": 100,
+            }
+        ],
+        node_total=10,
+        rel_total=172,
+        node_present={"name": 10},
+        rel_present={"role": 172},  # the true non-null count
+    )
+
+    profile = Neo4jInspector().inspect(driver)
+    role = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
+    # present_count is the TRUE count, not APOC's undercounted 100.
+    assert role.present_count == 172
+    # total_count is the property-independent instance count (edge count).
+    assert role.total_count == 172
+    assert role.completeness == 1.0
+    # observed_types still come from APOC.
+    assert role.observed_types == ["String"]
+
+
+def test_apoc_no_scan_corrects_node_counts() -> None:
+    """APOC no-scan: node present_count / total_count come from real counts.
+
+    Person has 50 nodes; `email` is present on 30 (partial).  APOC reported a
+    different (sampled) observation count, but the profile must reflect the true
+    30/50 from the dedicated count queries.
+    """
+    driver = _apoc_count_correction_driver(
+        node_props=[
+            {
+                "propertyName": "email",
+                "propertyTypes": ["String"],
+                "mandatory": False,
+                "propertyObservations": 20,  # APOC undercount
+                "totalObservations": 40,
+            }
+        ],
+        rel_props=[],
+        node_total=50,
+        rel_total=0,
+        node_present={"email": 30},  # the true non-null count
+        rel_present={},
+    )
+
+    profile = Neo4jInspector().inspect(driver)
+    email = profile.node_type_profiles["Person"].property_profiles["email"]
+    assert email.present_count == 30
+    assert email.total_count == 50
+    assert email.completeness == 0.6
 
 
 def test_apoc_null_property_row_is_skipped() -> None:
@@ -406,6 +585,15 @@ def test_apoc_null_property_row_is_skipped() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -494,6 +682,15 @@ def test_neo4j_inspect_labels() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -626,6 +823,15 @@ def test_neo4j_inspect_produces_profile() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # APOC strategy + ADR-036: total_count comes from the instance count and
+        # present_count from a real count() … IS NOT NULL.  Serve a quiescent-DB
+        # value where APOC's reported counts were accurate so completeness == 1.0
+        # for the fully-present `name` property the assertion below checks.
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 100}], ["count"])
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 100}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -706,6 +912,15 @@ def test_neo4j_value_distribution_is_none() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -854,6 +1069,15 @@ def test_neo4j_partitioned_cardinality_assembles_expected_partitions() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -938,6 +1162,15 @@ def test_neo4j_partitioned_cardinality_zero_degree_rows_suppressed() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -1009,6 +1242,15 @@ def test_neo4j_partitioned_cardinality_constant_type_is_none() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -1054,6 +1296,15 @@ def test_neo4j_partitioned_cardinality_no_definition_is_none() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -1144,6 +1395,15 @@ def test_neo4j_partitioned_cardinality_parity_with_networkx() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -1294,6 +1554,13 @@ def test_neo4j_partitioned_cardinality_both_sides_parity_with_networkx() -> None
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         cypher = args[0] if args else kwargs.get("query", "")
+        # Dedicated instance-count queries (count(n) AS count / count(r) AS count)
+        # are served out of band before the count(n)/count(m) partitioned dispatch.
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) served out of band too.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         is_partitioned = "AS sk" in cypher and "AS tk" in cypher
         if not is_partitioned:
             return next(ordered_iter)
@@ -1390,6 +1657,15 @@ def test_neo4j_validate_database_forwards_graph_definition() -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -1512,6 +1788,15 @@ def test_neo4j_unprocessable_first_side_falls_through_to_processable_second() ->
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result
@@ -1532,6 +1817,770 @@ def test_neo4j_unprocessable_first_side_falls_through_to_processable_second() ->
     )
     # The unprocessable multi-property source side leaves source breakdown None.
     assert produces.source_partitioned_cardinality is None
+
+
+# ---------------------------------------------------------------------------
+# Value scan: value_counts_top_n gates type counts + histogram (E46.2)
+# ---------------------------------------------------------------------------
+
+
+def test_value_scan_skipped_when_top_n_is_none() -> None:
+    """When value_counts_top_n is None (default), no value-scan queries are issued.
+
+    observed_type_counts stays {} and value_distribution stays None.
+    The call count must equal the baseline (no extra per-property queries).
+    """
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        # node_labels (no strategy-detection call — explicit APOC)
+        mock_execute_query([{"label": "Person"}], ["label"]),
+        # rel_types
+        mock_execute_query([], []),
+        # constraints
+        mock_execute_query([], []),
+        # node_properties for Person
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "name",
+                    "propertyTypes": ["String"],
+                    "mandatory": True,
+                    "propertyObservations": 5,
+                    "totalObservations": 5,
+                },
+            ],
+        ),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    # Default (no value_counts_top_n) — no extra queries.
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.APOC).inspect(driver)
+    name = profile.node_type_profiles["Person"].property_profiles["name"]
+    assert name.observed_type_counts == {}
+    assert name.value_distribution is None
+    # 4 schema queries: labels + rel_types + constraints + props.  (Dedicated
+    # instance-count queries are intercepted out of band and not tallied here;
+    # this asserts the value scan was skipped, not the absolute driver-call total.)
+    assert call_count == 4, (
+        f"Expected 4 schema queries (no value scan), got {call_count}"
+    )
+
+
+def test_node_type_counts_populated_with_apoc() -> None:
+    """APOC + value_counts_top_n → type counts and value_distribution populated.
+
+    One type-count query and one histogram query are issued per property.
+    The type counts carry normalised names (coerce_types vocabulary).
+    """
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        # node_labels (no detection — explicit APOC)
+        mock_execute_query([{"label": "Person"}], ["label"]),
+        # rel_types
+        mock_execute_query([], []),
+        # constraints
+        mock_execute_query([], []),
+        # node_properties for Person (born: 7/10, name: 10/10)
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "born",
+                    "propertyTypes": ["Long", "String"],
+                    "mandatory": False,
+                    "propertyObservations": 7,
+                    "totalObservations": 10,
+                },
+                {
+                    "propertyName": "name",
+                    "propertyTypes": ["String"],
+                    "mandatory": True,
+                    "propertyObservations": 10,
+                    "totalObservations": 10,
+                },
+            ],
+        ),
+        # value-scan for Person.born — type counts (APOC)
+        mock_execute_query(
+            [
+                {"type_name": "Long", "type_count": 5},
+                {"type_name": "String", "type_count": 2},
+            ],
+        ),
+        # value-scan for Person.born — histogram
+        mock_execute_query(
+            [
+                {"value": "1985", "value_count": 3},
+                {"value": "1980", "value_count": 2},
+                {"value": "unknown", "value_count": 2},
+            ],
+        ),
+        # value-scan for Person.name — type counts
+        mock_execute_query(
+            [{"type_name": "String", "type_count": 10}],
+        ),
+        # value-scan for Person.name — histogram
+        mock_execute_query(
+            [
+                {"value": "Alice", "value_count": 3},
+                {"value": "Bob", "value_count": 3},
+                {"value": "Carol", "value_count": 4},
+            ],
+        ),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.APOC, value_counts_top_n=10
+    ).inspect(driver)
+    person = profile.node_type_profiles["Person"]
+
+    born = person.property_profiles["born"]
+    assert born.observed_type_counts == {"Long": 5, "String": 2}
+    assert born.value_distribution is not None
+    assert born.value_distribution.count == 7  # present_count
+    assert born.value_distribution.histogram == {"1985": 3, "1980": 2, "unknown": 2}
+    assert born.value_distribution.sample_complete is True
+
+    name = person.property_profiles["name"]
+    assert name.observed_type_counts == {"String": 10}
+    assert name.value_distribution is not None
+    assert name.value_distribution.count == 10
+
+
+def test_value_scan_empty_type_rows_preserves_fallback_present_count() -> None:
+    """Empty type-count rows + positive APOC fallback → honest degradation.
+
+    Regression guard (review E46.1/E46.2 issue #5): if the runtime-type
+    aggregation classifies nothing (e.g. apoc.meta.cypher.type yields NULL and
+    the GROUP BY drops every row) the scan must NOT zero out present_count.
+    It keeps APOC's propertyObservations, reports observed_type_counts == {}
+    and value_distribution is None (never invent, never silently regress
+    presence — ADR-035 §5).
+    """
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        # node_labels (explicit APOC — no detection)
+        mock_execute_query([{"label": "Person"}], ["label"]),
+        # rel_types
+        mock_execute_query([], []),
+        # constraints
+        mock_execute_query([], []),
+        # node_properties for Person.born: APOC says 7 present out of 10
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "born",
+                    "propertyTypes": ["Long"],
+                    "mandatory": False,
+                    "propertyObservations": 7,
+                    "totalObservations": 10,
+                },
+            ],
+        ),
+        # value-scan type counts — EMPTY (type fn classified nothing)
+        mock_execute_query([], []),
+        # NOTE: no histogram response — the scan must short-circuit before it.
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.APOC, value_counts_top_n=10
+    ).inspect(driver)
+    born = profile.node_type_profiles["Person"].property_profiles["born"]
+
+    # present_count keeps the APOC fallback — NOT zeroed.
+    assert born.present_count == 7
+    # No counts could be derived — honest empty / None.
+    assert born.observed_type_counts == {}
+    assert born.value_distribution is None
+    # The histogram query was never issued (short-circuit before it): only
+    # labels + rel_types + constraints + props + type-counts = 5 non-count calls.
+    assert call_count == 5, f"Expected 5 queries (no histogram), got {call_count}"
+
+
+def test_rel_type_counts_populated_with_apoc() -> None:
+    """APOC + value_counts_top_n → rel property observed_type_counts populated."""
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        # node_labels (no detection — explicit APOC)
+        mock_execute_query([], []),
+        # rel_types
+        mock_execute_query([{"relationshipType": "ACTED_IN"}], ["relationshipType"]),
+        # constraints
+        mock_execute_query([], []),
+        # rel_properties for ACTED_IN
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "role",
+                    "propertyTypes": ["String"],
+                    "mandatory": True,
+                    "propertyObservations": 3,
+                    "totalObservations": 3,
+                },
+            ],
+        ),
+        # value-scan for ACTED_IN.role — type counts
+        mock_execute_query([{"type_name": "String", "type_count": 3}]),
+        # value-scan for ACTED_IN.role — histogram
+        mock_execute_query(
+            [
+                {"value": "Lead", "value_count": 2},
+                {"value": "Supporting", "value_count": 1},
+            ]
+        ),
+        # endpoint_labels for ACTED_IN
+        mock_execute_query([{"source_labels": [], "target_labels": []}]),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.APOC, value_counts_top_n=10
+    ).inspect(driver)
+    role = profile.rel_type_profiles["ACTED_IN"].property_profiles["role"]
+    assert role.observed_type_counts == {"String": 3}
+    assert role.value_distribution is not None
+    assert role.value_distribution.count == 3
+
+
+def test_reconciliation_invariant_holds() -> None:
+    """sum(type_counts) == value_distribution.count == present_count (ADR-035 §2)."""
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        # node_labels (no detection — explicit APOC)
+        mock_execute_query([{"label": "Item"}], ["label"]),
+        mock_execute_query([], []),
+        mock_execute_query([], []),
+        # node_properties for Item.score: 8 present out of 10
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "score",
+                    "propertyTypes": ["Long", "Float"],
+                    "mandatory": False,
+                    "propertyObservations": 8,
+                    "totalObservations": 10,
+                }
+            ]
+        ),
+        # type counts for Item.score
+        mock_execute_query(
+            [
+                {"type_name": "Long", "type_count": 6},
+                {"type_name": "Double", "type_count": 2},
+            ]
+        ),
+        # histogram for Item.score (all 8 fit, no truncation)
+        mock_execute_query(
+            [
+                {"value": "1", "value_count": 3},
+                {"value": "2", "value_count": 3},
+                {"value": "1.5", "value_count": 1},
+                {"value": "2.5", "value_count": 1},
+            ]
+        ),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.APOC, value_counts_top_n=20
+    ).inspect(driver)
+    score = profile.node_type_profiles["Item"].property_profiles["score"]
+
+    assert score.present_count == 8
+    assert score.value_distribution is not None
+    type_total = sum(score.observed_type_counts.values())
+    assert type_total == score.value_distribution.count == score.present_count, (
+        f"Reconciliation failed: type_total={type_total}, "
+        f"hist_count={score.value_distribution.count}, "
+        f"present_count={score.present_count}"
+    )
+
+
+def test_observed_type_counts_subset_of_observed_types() -> None:
+    """set(observed_type_counts) ⊆ set(observed_types) (ADR-035 §3)."""
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        # node_labels (no detection — explicit APOC)
+        mock_execute_query([{"label": "Node"}], ["label"]),
+        mock_execute_query([], []),
+        mock_execute_query([], []),
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "val",
+                    "propertyTypes": ["String", "Long"],
+                    "mandatory": False,
+                    "propertyObservations": 4,
+                    "totalObservations": 5,
+                }
+            ]
+        ),
+        mock_execute_query(
+            [
+                {"type_name": "String", "type_count": 3},
+                {"type_name": "Long", "type_count": 1},
+            ]
+        ),
+        mock_execute_query(
+            [
+                {"value": "a", "value_count": 2},
+                {"value": "b", "value_count": 1},
+                {"value": "1", "value_count": 1},
+            ]
+        ),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.APOC, value_counts_top_n=10
+    ).inspect(driver)
+    val = profile.node_type_profiles["Node"].property_profiles["val"]
+
+    assert set(val.observed_type_counts) <= set(val.observed_types), (
+        f"observed_type_counts keys {set(val.observed_type_counts)} "
+        f"not a subset of observed_types {set(val.observed_types)}"
+    )
+
+
+def test_cypher_strategy_scalar_histogram_fallback_no_type_counts() -> None:
+    """CYPHER + value_counts_top_n → scalar histogram fallback, no type counts.
+
+    type counts need apoc.meta.cypher.type which
+    pure-CYPHER lacks, so observed_type_counts stays {}.  But a scalar-only
+    histogram is restored via the toStringOrNull pure-Cypher fallback, so a
+    scalar property like Tag.name DOES get a value_distribution.
+    """
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        # node_labels (no strategy detection — explicit CYPHER)
+        mock_execute_query([{"label": "Tag"}], ["label"]),
+        # rel_types
+        mock_execute_query([], []),
+        # constraints
+        mock_execute_query([], []),
+        # node_properties for Tag
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "name",
+                    "propertyTypes": [],
+                    "mandatory": True,
+                    "propertyObservations": 6,
+                    "totalObservations": 6,
+                }
+            ]
+        ),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
+        # E46.6: the pure-Cypher fallback histogram (toStringOrNull) is served out
+        # of band — Tag.name has 6 scalar values across 3 distinct strings.
+        if "toStringOrNull" in cypher:
+            return mock_execute_query(
+                [
+                    {"value": "a", "value_count": 3},
+                    {"value": "b", "value_count": 2},
+                    {"value": "c", "value_count": 1},
+                ],
+            )
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.CYPHER, value_counts_top_n=10
+    ).inspect(driver)
+    name = profile.node_type_profiles["Tag"].property_profiles["name"]
+
+    # CYPHER: no APOC → no runtime-type function → no type counts.
+    assert name.observed_type_counts == {}
+    # E46.6: the scalar histogram fallback IS populated.
+    assert name.value_distribution is not None
+    assert name.value_distribution.count == 6  # pure-Cypher present_count
+    assert name.value_distribution.histogram == {"a": 3, "b": 2, "c": 1}
+    assert name.value_distribution.sample_complete is True
+    # present_count comes from the pure-Cypher property scan (unchanged).
+    assert name.present_count == 6
+    # 4 schema calls: labels + rel_types + constraints + props.  The fallback
+    # histogram (and instance-count) queries are intercepted out of band.
+    assert call_count == 4, f"Expected 4 schema queries, got {call_count}"
+
+
+def test_cypher_strategy_list_property_yields_no_histogram() -> None:
+    """CYPHER + a list-valued property → value_distribution is None (no crash).
+
+    Hard regression guard for the discovered toString(list) failure.  On the
+    pure-Cypher fallback toStringOrNull returns null for a list, so every row is
+    dropped and the scalar histogram is empty → BoundedDistribution is None.
+    The inspection completes without a TypeError.
+    """
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        mock_execute_query([{"label": "Movie"}], ["label"]),
+        mock_execute_query([], []),
+        mock_execute_query([], []),
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "genres",
+                    "propertyTypes": [],
+                    "mandatory": True,
+                    "propertyObservations": 4,
+                    "totalObservations": 4,
+                }
+            ]
+        ),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # The toStringOrNull histogram drops every (list) value → no rows.
+        if "toStringOrNull" in cypher:
+            return mock_execute_query([], [])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.CYPHER, value_counts_top_n=10
+    ).inspect(driver)
+    genres = profile.node_type_profiles["Movie"].property_profiles["genres"]
+
+    # No scalar values → no histogram (honest None), no type counts, no crash.
+    assert genres.observed_type_counts == {}
+    assert genres.value_distribution is None
+    # Presence is preserved from the pure-Cypher scan.
+    assert genres.present_count == 4
+
+
+def test_cypher_strategy_list_property_does_not_crash_via_real_query() -> None:
+    """The fallback histogram query NEVER emits a crashing toString(list).
+
+    Stronger guard than the response-shape test: assert the actual Cypher issued
+    on the fallback path uses toStringOrNull (list-safe) and never plain
+    toString( on the property value.
+    """
+    driver = MagicMock()
+    responses = [
+        mock_execute_query([{"label": "Movie"}], ["label"]),
+        mock_execute_query([], []),
+        mock_execute_query([], []),
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "genres",
+                    "propertyTypes": [],
+                    "mandatory": True,
+                    "propertyObservations": 4,
+                    "totalObservations": 4,
+                }
+            ]
+        ),
+    ]
+    call_count = 0
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        if "toStringOrNull" in cypher:
+            return mock_execute_query([], [])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.CYPHER, value_counts_top_n=10
+    ).inspect(driver)
+
+    issued = [str(c) for c in driver.execute_query.call_args_list]
+    # The list-safe key was used on the fallback histogram.
+    assert any("toStringOrNull(n.`genres`)" in c for c in issued)
+    # Plain toString(<property>) — the crashing form — was never issued.
+    assert not any("toString(n.`genres`)" in c for c in issued)
+
+
+def test_schema_strategy_without_apoc_scalar_histogram_fallback() -> None:
+    """SCHEMA + value_counts_top_n but no APOC → scalar histogram fallback.
+
+    SCHEMA is the auto-detected fallback precisely when apoc.meta is absent.  The
+    type-count query needs apoc.meta.cypher.type, so observed_type_counts stays
+    {} (no APOC).  E46.6: a scalar-only pure-Cypher histogram (toStringOrNull) is
+    still produced — the APOC-keyed histogram (apoc.convert.toJson) is NOT issued.
+    observed_types still comes from db.schema.* (the SCHEMA contract).
+    """
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        # node_labels (explicit SCHEMA — no strategy detection)
+        mock_execute_query([{"label": "Tag"}], ["label"]),
+        # rel_types
+        mock_execute_query([], []),
+        # bulk db.schema node types
+        mock_execute_query(
+            [
+                {
+                    "nodeType": ":`Tag`",
+                    "nodeLabels": ["Tag"],
+                    "propertyName": "name",
+                    "propertyTypes": ["String"],
+                    "mandatory": True,
+                },
+            ],
+        ),
+        # bulk db.schema rel types (none)
+        mock_execute_query([]),
+        # _is_apoc_available probe: apoc.meta absent
+        mock_execute_query([{"cnt": 0}], ["cnt"]),
+        # constraints
+        mock_execute_query([], []),
+        # CypherNodePropertiesQuery for Tag (true counts, types from db.schema)
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "name",
+                    "propertyTypes": [],
+                    "mandatory": True,
+                    "propertyObservations": 6,
+                    "totalObservations": 6,
+                },
+            ],
+        ),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
+        # E46.6 fallback histogram (served out of band).
+        if "toStringOrNull" in cypher:
+            return mock_execute_query(
+                [
+                    {"value": "x", "value_count": 4},
+                    {"value": "y", "value_count": 2},
+                ],
+            )
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.SCHEMA, value_counts_top_n=10
+    ).inspect(driver)
+    name = profile.node_type_profiles["Tag"].property_profiles["name"]
+
+    # No APOC → no runtime-type function → no type counts.
+    assert name.observed_type_counts == {}
+    # E46.6: the scalar histogram fallback IS populated.
+    assert name.value_distribution is not None
+    assert name.value_distribution.histogram == {"x": 4, "y": 2}
+    assert name.value_distribution.count == 6
+    # Types still come from db.schema.* (SCHEMA strategy contract).
+    assert name.observed_types == ["String"]
+    # present_count from the pure-Cypher scan (unchanged).
+    assert name.present_count == 6
+    # 7 schema calls — the fallback histogram + instance-count queries are
+    # intercepted out of band and not tallied here.
+    assert call_count == 7, f"Expected 7 schema queries, got {call_count}"
+    # Guard: no APOC-keyed value-scan query was issued (only the pure-Cypher
+    # toStringOrNull fallback).
+    for call in driver.execute_query.call_args_list:
+        assert "apoc.meta.cypher.type" not in str(call)
+        assert "apoc.convert.toJson" not in str(call)
+
+
+def test_histogram_truncates_correctly() -> None:
+    """When top_n < distinct values, histogram truncates with other_count set."""
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        # node_labels (no detection — explicit APOC)
+        mock_execute_query([{"label": "Doc"}], ["label"]),
+        mock_execute_query([], []),
+        mock_execute_query([], []),
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "tag",
+                    "propertyTypes": ["String"],
+                    "mandatory": True,
+                    "propertyObservations": 10,
+                    "totalObservations": 10,
+                }
+            ]
+        ),
+        # type counts: all String
+        mock_execute_query([{"type_name": "String", "type_count": 10}]),
+        # histogram: top_n=3, but 5 distinct values (top 3 returned, other_count=2)
+        mock_execute_query(
+            [
+                {"value": "a", "value_count": 4},
+                {"value": "b", "value_count": 2},
+                {"value": "c", "value_count": 2},
+                # 'd' (count=1) and 'e' (count=1) fall into other_count
+            ]
+        ),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector(
+        strategy=Neo4jInspectionStrategy.APOC, value_counts_top_n=3
+    ).inspect(driver)
+    tag = profile.node_type_profiles["Doc"].property_profiles["tag"]
+
+    assert tag.value_distribution is not None
+    assert tag.value_distribution.sample_complete is False
+    assert tag.value_distribution.limit == 3
+    # The inspector receives exactly what the DB returned (3 rows); the remaining
+    # 2 counts are inferred: other_count = present_count - sum(hist.values()).
+    assert tag.value_distribution.other_count == 2  # 10 - (4+2+2) = 2
+    assert tag.value_distribution.count == 10
+    # Type counts exact — unaffected by histogram truncation.
+    assert tag.observed_type_counts == {"String": 10}
 
 
 def test_neo4j_validate_database(graph_definition: GraphDefinition) -> None:
@@ -1629,6 +2678,15 @@ def test_neo4j_validate_database(graph_definition: GraphDefinition) -> None:
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        # Dedicated instance-count queries are served out of band so existing
+        # strict-ordered response lists stay valid (E46.x count fix).
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        # Property present-count queries (ADR-036) are likewise served out of
+        # band so the APOC no-scan correction does not shift response indices.
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
         result = responses[call_count]
         call_count += 1
         return result

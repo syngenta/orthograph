@@ -15,9 +15,15 @@ import pytest
 
 from orthograph.backends.neo4j.queries import (
     ApocNodePropertiesQuery,
+    ApocNodeTypeCountsQuery,
+    ApocNodeValueHistogramQuery,
     ApocRelPropertiesQuery,
+    ApocRelTypeCountsQuery,
+    ApocRelValueHistogramQuery,
     CypherNodePropertiesQuery,
+    CypherNodeValueHistogramQuery,
     CypherRelPropertiesQuery,
+    CypherRelValueHistogramQuery,
     DbSchemaNodeTypeRow,
     DbSchemaNodeTypesQuery,
     DbSchemaRelTypeRow,
@@ -28,6 +34,8 @@ from orthograph.backends.neo4j.queries import (
     NodeLabelRow,
     NodePropertyRow,
     RelTypeLabelRow,
+    TypeCountRow,
+    ValueHistogramRow,
     build_apoc_catalogue,
     build_cypher_catalogue,
     build_schema_catalogue,
@@ -343,6 +351,279 @@ def test_db_schema_rel_types_materialize_none_property() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Value-scan: type-count queries
+# Group by runtime type, count per group -> exact, bounded {type: count}.
+# ---------------------------------------------------------------------------
+
+
+def test_apoc_node_type_counts_build_groups_by_type_not_value() -> None:
+    q = ApocNodeTypeCountsQuery(
+        identifiers={"label": "Person", "property_name": "born"}
+    )
+    cypher, params = q.build(_no_params())
+    # Scoped to the property of the label, splicing the identifiers safely.
+    assert "`Person`" in cypher
+    assert "`born`" in cypher
+    # Groups by runtime type via the APOC type function, never by raw value.
+    assert "apoc.meta.cypher.type" in cypher
+    # The grouped value is the type name, not the value itself.
+    assert "count(" in cypher
+    # No driver value parameters and no value interpolation.
+    assert params == {}
+
+
+def test_apoc_node_type_counts_materialize() -> None:
+    q = ApocNodeTypeCountsQuery(
+        identifiers={"label": "Person", "property_name": "born"}
+    )
+    # apoc.meta.cypher.type yields the upper-case runtime vocabulary
+    # ('INTEGER'); the materialiser normalises to the observed_types vocabulary
+    # ('Long') so set(observed_type_counts) ⊆ set(observed_types) (ADR-035 §3).
+    row = q.materialize({"type_name": "INTEGER", "type_count": 95})
+    assert isinstance(row, TypeCountRow)
+    assert row.type_name == "Long"
+    assert row.type_count == 95
+
+
+def test_apoc_node_type_counts_materialize_normalises_vocabulary() -> None:
+    q = ApocNodeTypeCountsQuery(
+        identifiers={"label": "Person", "property_name": "tags"}
+    )
+    assert q.materialize({"type_name": "STRING", "type_count": 3}).type_name == (
+        "String"
+    )
+    assert q.materialize({"type_name": "FLOAT", "type_count": 1}).type_name == (
+        "Double"
+    )
+    assert (
+        q.materialize({"type_name": "LIST OF INTEGER", "type_count": 2}).type_name
+        == "LongArray"
+    )
+    # An unrecognised runtime type passes through verbatim (never invented).
+    assert q.materialize({"type_name": "EXOTIC", "type_count": 1}).type_name == "EXOTIC"
+    # A mixed-element list yields 'LIST OF ANY' from apoc.meta.cypher.type; it is
+    # not in the map, so it passes through unchanged (honest, never invented).
+    assert (
+        q.materialize({"type_name": "LIST OF ANY", "type_count": 1}).type_name
+        == "LIST OF ANY"
+    )
+
+
+def test_apoc_node_type_counts_injected_label_raises() -> None:
+    q = ApocNodeTypeCountsQuery(
+        identifiers={"label": "P) DETACH DELETE (n //", "property_name": "born"}
+    )
+    with pytest.raises(CypherIdentifierError, match="label"):
+        q.build(_no_params())
+
+
+def test_apoc_node_type_counts_injected_property_raises() -> None:
+    q = ApocNodeTypeCountsQuery(
+        identifiers={"label": "Person", "property_name": "x` // bad"}
+    )
+    with pytest.raises(CypherIdentifierError):
+        q.build(_no_params())
+
+
+def test_apoc_rel_type_counts_build_groups_by_type() -> None:
+    q = ApocRelTypeCountsQuery(
+        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+    )
+    cypher, params = q.build(_no_params())
+    assert "`ACTED_IN`" in cypher
+    assert "`role`" in cypher
+    assert "apoc.meta.cypher.type" in cypher
+    assert params == {}
+
+
+def test_apoc_rel_type_counts_materialize() -> None:
+    q = ApocRelTypeCountsQuery(
+        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+    )
+    row = q.materialize({"type_name": "STRING", "type_count": 200})
+    assert row.type_name == "String"
+    assert row.type_count == 200
+
+
+def test_apoc_rel_type_counts_injected_rel_type_raises() -> None:
+    q = ApocRelTypeCountsQuery(
+        identifiers={"rel_type": "X} DELETE ALL //", "property_name": "role"}
+    )
+    with pytest.raises(CypherIdentifierError, match="relationship type"):
+        q.build(_no_params())
+
+
+# ---------------------------------------------------------------------------
+# Value-scan: value-histogram queries (E46.1)
+# Group by value, ORDER BY frequency, LIMIT top_n -> the only truncating part.
+# ---------------------------------------------------------------------------
+
+
+def test_apoc_node_value_histogram_build_limits_by_param() -> None:
+    q = ApocNodeValueHistogramQuery(
+        identifiers={"label": "Person", "property_name": "born"}
+    )
+    cypher, params = q.build(q.Params(top_n=10))
+    assert "`Person`" in cypher
+    assert "`born`" in cypher
+    # The histogram groups by value and truncates with a parameterised LIMIT.
+    assert "LIMIT $top_n" in cypher
+    # The value key is apoc.convert.toJson (list-safe — plain toString throws on
+    # list/array properties); ties break on that JSON key ASC for determinism.
+    # Note: this does not perfectly match NetworkX's str(value) tie-break for
+    # string/array properties — parity at the truncation boundary is E46.3's concern.
+    assert "apoc.convert.toJson(n.`born`)" in cypher
+    assert "ORDER BY value_count DESC, value ASC" in cypher
+    # top_n is a driver value parameter (never interpolated into the string).
+    assert params == {"top_n": 10}
+    assert "10" not in cypher
+
+
+def test_apoc_node_value_histogram_materialize() -> None:
+    q = ApocNodeValueHistogramQuery(
+        identifiers={"label": "Person", "property_name": "born"}
+    )
+    row = q.materialize({"value": "1980", "value_count": 42})
+    assert isinstance(row, ValueHistogramRow)
+    assert row.value == "1980"
+    assert row.value_count == 42
+
+
+def test_apoc_node_value_histogram_materialize_coerces_value_to_str() -> None:
+    q = ApocNodeValueHistogramQuery(
+        identifiers={"label": "Person", "property_name": "born"}
+    )
+    # The histogram key currency is str(value) (parity with NetworkX).
+    row = q.materialize({"value": 1980, "value_count": 42})
+    assert row.value == "1980"
+
+
+def test_apoc_node_value_histogram_unwraps_json_string() -> None:
+    """A JSON-encoded string key from apoc.convert.toJson is unwrapped.
+
+    apoc.convert.toJson('A Few Good Men') yields the quoted string
+    '"A Few Good Men"'; the materialiser strips the JSON quotes so the histogram
+    key reads naturally and matches NetworkX's str(value).
+    """
+    q = ApocNodeValueHistogramQuery(
+        identifiers={"label": "Movie", "property_name": "title"}
+    )
+    row = q.materialize({"value": '"A Few Good Men"', "value_count": 1})
+    assert row.value == "A Few Good Men"
+
+
+def test_apoc_rel_value_histogram_keeps_json_array_verbatim() -> None:
+    """A JSON array key (list-valued property) is kept as its JSON form.
+
+    apoc.convert.toJson(['Neo']) yields '["Neo"]'; this is not a JSON string, so
+    the materialiser keeps it verbatim (stable, unambiguous key).
+    """
+    q = ApocRelValueHistogramQuery(
+        identifiers={"rel_type": "ACTED_IN", "property_name": "roles"}
+    )
+    row = q.materialize({"value": '["Neo"]', "value_count": 3})
+    assert row.value == '["Neo"]'
+
+
+def test_apoc_node_value_histogram_injected_label_raises() -> None:
+    q = ApocNodeValueHistogramQuery(
+        identifiers={"label": "1Bad", "property_name": "born"}
+    )
+    with pytest.raises(CypherIdentifierError, match="label"):
+        q.build(q.Params(top_n=10))
+
+
+def test_apoc_rel_value_histogram_build_limits_by_param() -> None:
+    q = ApocRelValueHistogramQuery(
+        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+    )
+    cypher, params = q.build(q.Params(top_n=5))
+    assert "`ACTED_IN`" in cypher
+    assert "`role`" in cypher
+    assert "LIMIT $top_n" in cypher
+    assert params == {"top_n": 5}
+
+
+def test_apoc_rel_value_histogram_materialize() -> None:
+    q = ApocRelValueHistogramQuery(
+        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+    )
+    row = q.materialize({"value": "Neo", "value_count": 3})
+    assert row.value == "Neo"
+    assert row.value_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Value-scan: pure-Cypher scalar histogram fallback
+# No APOC: group on toStringOrNull(v) (list-safe — lists become null and are
+# dropped), so scalar-typed properties still get a histogram; lists/maps are
+# skipped rather than crashing (plain toString(list) throws).  No type counts.
+# ---------------------------------------------------------------------------
+
+
+def test_cypher_node_value_histogram_uses_to_string_or_null() -> None:
+    q = CypherNodeValueHistogramQuery(
+        identifiers={"label": "Person", "property_name": "born"}
+    )
+    cypher, params = q.build(q.Params(top_n=10))
+    assert "`Person`" in cypher
+    assert "`born`" in cypher
+    # The scalar-safe value key: toStringOrNull returns null for list/map values,
+    # which the WHERE then drops (never reaching a crashing toString(list)).
+    assert "toStringOrNull(n.`born`)" in cypher
+    # Lists are dropped, not crashed.
+    assert "value IS NOT NULL" in cypher
+    # The only truncating part — a parameterised LIMIT (never interpolated).
+    assert "LIMIT $top_n" in cypher
+    assert "ORDER BY value_count DESC, value ASC" in cypher
+    assert params == {"top_n": 10}
+    assert "10" not in cypher
+    # No APOC functions on the pure-Cypher fallback.
+    assert "apoc." not in cypher
+
+
+def test_cypher_node_value_histogram_materialize() -> None:
+    q = CypherNodeValueHistogramQuery(
+        identifiers={"label": "Person", "property_name": "born"}
+    )
+    row = q.materialize({"value": "1980", "value_count": 42})
+    assert isinstance(row, ValueHistogramRow)
+    assert row.value == "1980"
+    assert row.value_count == 42
+
+
+def test_cypher_node_value_histogram_injected_label_raises() -> None:
+    q = CypherNodeValueHistogramQuery(
+        identifiers={"label": "1Bad", "property_name": "born"}
+    )
+    with pytest.raises(CypherIdentifierError, match="label"):
+        q.build(q.Params(top_n=10))
+
+
+def test_cypher_rel_value_histogram_uses_to_string_or_null() -> None:
+    q = CypherRelValueHistogramQuery(
+        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+    )
+    cypher, params = q.build(q.Params(top_n=5))
+    assert "`ACTED_IN`" in cypher
+    assert "`role`" in cypher
+    assert "toStringOrNull(r.`role`)" in cypher
+    assert "value IS NOT NULL" in cypher
+    assert "LIMIT $top_n" in cypher
+    assert params == {"top_n": 5}
+    assert "apoc." not in cypher
+
+
+def test_cypher_rel_value_histogram_materialize() -> None:
+    q = CypherRelValueHistogramQuery(
+        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+    )
+    row = q.materialize({"value": "Neo", "value_count": 3})
+    assert row.value == "Neo"
+    assert row.value_count == 3
+
+
+# ---------------------------------------------------------------------------
 # Catalogue factories
 # ---------------------------------------------------------------------------
 
@@ -352,6 +633,9 @@ def test_apoc_catalogue_registered_names() -> None:
     names = query_catalogue.names()
     assert "neo4j.inspect.node_labels" in names
     assert "neo4j.inspect.rel_types" in names
+    # Authoritative instance-count queries (property-independent).
+    assert "neo4j.inspect.node_count" in names
+    assert "neo4j.inspect.rel_count" in names
     assert "neo4j.inspect.apoc.node_properties" in names
     assert "neo4j.inspect.apoc.rel_properties" in names
     assert "inspect.cardinality" in names
@@ -359,18 +643,44 @@ def test_apoc_catalogue_registered_names() -> None:
     assert "inspect.endpoint_labels" in names
     assert "inspect.partitioned_cardinality.source" in names
     assert "inspect.partitioned_cardinality.target" in names
-    assert len(names) == 9
+    # E46.1/E46.2 value scan: APOC type counts + APOC histograms (node + rel).
+    assert "neo4j.inspect.apoc.node_type_counts" in names
+    assert "neo4j.inspect.apoc.rel_type_counts" in names
+    assert "neo4j.inspect.apoc.node_value_histogram" in names
+    assert "neo4j.inspect.apoc.rel_value_histogram" in names
+    # ADR-036: property-independent present-count queries (APOC count correction).
+    assert "neo4j.inspect.node_present_count" in names
+    assert "neo4j.inspect.rel_present_count" in names
+    assert len(names) == 17
 
 
 def test_cypher_catalogue_registered_names() -> None:
     query_catalogue = build_cypher_catalogue()
     names = query_catalogue.names()
+    assert "neo4j.inspect.node_count" in names
+    assert "neo4j.inspect.rel_count" in names
     assert "neo4j.inspect.cypher.node_properties" in names
     assert "neo4j.inspect.cypher.rel_properties" in names
     assert "inspect.endpoint_labels" in names
     assert "inspect.partitioned_cardinality.source" in names
     assert "inspect.partitioned_cardinality.target" in names
-    assert len(names) == 9
+    # APOC-keyed value-scan queries are NOT
+    # registered on pure-Cypher.  Type counts need apoc.meta.cypher.type and the
+    # APOC histogram needs apoc.convert.toJson (keeps lists in the histogram).
+    assert "neo4j.inspect.apoc.node_type_counts" not in names
+    assert "neo4j.inspect.apoc.rel_type_counts" not in names
+    assert "neo4j.inspect.apoc.node_value_histogram" not in names
+    assert "neo4j.inspect.apoc.rel_value_histogram" not in names
+    # a scalar-only pure-Cypher histogram fallback IS registered
+    # (toStringOrNull drops lists, so scalar properties still get a histogram).
+    # Type counts remain unavailable on pure-Cypher (no runtime-type function).
+    assert "neo4j.inspect.cypher.node_value_histogram" in names
+    assert "neo4j.inspect.cypher.rel_value_histogram" in names
+    # ADR-036: present-count queries registered in every catalogue for parity
+    # (used by the inspector only on the APOC strategy).
+    assert "neo4j.inspect.node_present_count" in names
+    assert "neo4j.inspect.rel_present_count" in names
+    assert len(names) == 15
 
 
 def test_schema_catalogue_registered_names() -> None:
@@ -385,12 +695,28 @@ def test_schema_catalogue_registered_names() -> None:
     # Shared neutral queries
     assert "neo4j.inspect.node_labels" in names
     assert "neo4j.inspect.rel_types" in names
+    assert "neo4j.inspect.node_count" in names
+    assert "neo4j.inspect.rel_count" in names
     assert "inspect.cardinality" in names
     assert "neo4j.inspect.constraints" in names
     assert "inspect.endpoint_labels" in names
     assert "inspect.partitioned_cardinality.source" in names
     assert "inspect.partitioned_cardinality.target" in names
-    assert len(names) == 11
+    # SCHEMA may use the APOC type function when APOC is present;
+    # the inspector gates at runtime.  Histograms are value-only.
+    assert "neo4j.inspect.apoc.node_type_counts" in names
+    assert "neo4j.inspect.apoc.rel_type_counts" in names
+    assert "neo4j.inspect.apoc.node_value_histogram" in names
+    assert "neo4j.inspect.apoc.rel_value_histogram" in names
+    # the scalar-only pure-Cypher histogram fallback is also registered so
+    # a SCHEMA-without-APOC deployment still gets a histogram (the inspector picks
+    # this path when the runtime APOC probe is negative).
+    assert "neo4j.inspect.cypher.node_value_histogram" in names
+    assert "neo4j.inspect.cypher.rel_value_histogram" in names
+    # ADR-036: present-count queries registered for parity.
+    assert "neo4j.inspect.node_present_count" in names
+    assert "neo4j.inspect.rel_present_count" in names
+    assert len(names) == 21
 
 
 def test_catalogue_all_reads_have_output_schema() -> None:

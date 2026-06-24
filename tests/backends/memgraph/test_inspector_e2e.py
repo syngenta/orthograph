@@ -12,21 +12,24 @@ which wipes all nodes and relationships both before and after the test.
 What is covered
 ---------------
 - Empty database: no profiles returned
-- Node property profiles: count (parity gap: always 0), mandatory heuristic
-- Relationship profile: properties, count (parity gap: always 0)
+- Node property profiles: truthful instance count, completeness semantics
+- Relationship profile: properties, truthful instance count
 - Endpoint labels (source_labels / target_labels)
 - Cardinality statistics computed from confirmed source labels
 - ``validate_database()`` passes for a matching model
 - ``CypherIdentifierError`` raised on injection attempt
 - Internal ``QueryCatalogue`` populated with expected query names
 
-Parity gaps (documented, not tested for non-zero values)
----------------------------------------------------------
-- ``NodeTypeProfile.count`` is always 0: Memgraph's
-  ``schema.node_type_properties()`` yields no observation counts.
-- ``RelationshipTypeProfile.count`` is always 0, same reason.
-- ``PropertyProfile.present_count`` / ``.total_count`` use a mandatory
-  heuristic (present=int(mandatory), total=1).
+Count / completeness semantics (E46.3)
+--------------------------------------
+- ``NodeTypeProfile.count`` / ``RelationshipTypeProfile.count`` are truthful,
+  sourced from a property-independent ``count()`` (no longer a 0 parity gap).
+- ``PropertyProfile.total_count`` is that same true entity total.
+- The schema ``mandatory`` boolean is **not** used as a present==total proxy:
+  presence requirements are carried by ``constraint_required`` (real DB
+  constraints).  Without a value scan there is no observed completeness signal
+  (``present_count == total_count`` ⇒ completeness 1.0); the opt-in value scan
+  (``value_counts_top_n``) supplies the truthful non-null ``present_count``.
 """
 
 from typing import Any, Optional
@@ -134,15 +137,16 @@ def test_node_labels_detected(memgraph_driver: Any, memgraph_clean: None) -> Non
 
 
 @pytest.mark.memgraph
-def test_node_count_is_zero_parity_gap(
-    memgraph_driver: Any, memgraph_clean: None
-) -> None:
-    """Documented parity gap: Memgraph schema procedures yield no counts."""
+def test_node_count_is_truthful(memgraph_driver: Any, memgraph_clean: None) -> None:
+    """Instance count comes from a property-independent count() (E46.3).
+
+    The seed creates 2 Person nodes and 2 Movie nodes; the count must reflect
+    that, not the old ``0`` parity-gap placeholder.
+    """
     _seed(memgraph_driver)
     profile = MemgraphInspector().inspect(memgraph_driver)
-    # count is always 0 — this test documents the known gap, not a bug
-    assert profile.node_type_profiles["Person"].count == 0
-    assert profile.node_type_profiles["Movie"].count == 0
+    assert profile.node_type_profiles["Person"].count == 2
+    assert profile.node_type_profiles["Movie"].count == 2
 
 
 @pytest.mark.memgraph
@@ -156,25 +160,46 @@ def test_node_property_names(memgraph_driver: Any, memgraph_clean: None) -> None
 
 
 @pytest.mark.memgraph
-def test_mandatory_property_heuristic(
+def test_no_scan_completeness_is_unsignalled(
     memgraph_driver: Any, memgraph_clean: None
 ) -> None:
-    """name is required on every Person → heuristic marks it required."""
+    """Without a value scan, completeness carries no incompleteness signal.
+
+    The schema ``mandatory`` flag is no longer used as a present==total proxy
+    (presence requirements are carried by ``constraint_required``).  So without
+    a scan, every property reports ``completeness == 1.0`` — even ``born``,
+    which is absent on Bob — because there is no *observed* completeness datum.
+    """
     _seed(memgraph_driver)
     profile = MemgraphInspector().inspect(memgraph_driver)
-    name_pp = profile.node_type_profiles["Person"].property_profiles["name"]
-    assert name_pp.completeness == 1.0
+    person_props = profile.node_type_profiles["Person"].property_profiles
+    assert person_props["name"].completeness == 1.0
+    assert person_props["born"].completeness == 1.0
 
 
 @pytest.mark.memgraph
-def test_optional_property_heuristic(
+def test_value_scan_reports_truthful_completeness(
     memgraph_driver: Any, memgraph_clean: None
 ) -> None:
-    """born is absent on Bob → heuristic marks it non-required."""
+    """With a value scan, completeness reflects the real non-null occurrences.
+
+    ``born`` is present on Alice but absent on Bob, so among 2 Person nodes its
+    completeness is 0.5 — the value scan, not the dropped ``mandatory``
+    heuristic, supplies the truthful figure.
+    """
     _seed(memgraph_driver)
-    profile = MemgraphInspector().inspect(memgraph_driver)
-    born_pp = profile.node_type_profiles["Person"].property_profiles["born"]
-    assert born_pp.completeness < 1.0
+    profile = MemgraphInspector(value_counts_top_n=10).inspect(memgraph_driver)
+    person_props = profile.node_type_profiles["Person"].property_profiles
+    name_pp = person_props["name"]
+    born_pp = person_props["born"]
+    # name is present on every Person.
+    assert name_pp.present_count == 2
+    assert name_pp.total_count == 2
+    assert name_pp.completeness == 1.0
+    # born is present on Alice only.
+    assert born_pp.present_count == 1
+    assert born_pp.total_count == 2
+    assert born_pp.completeness == 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +328,7 @@ def test_injection_raises_before_reaching_driver(
 def test_internal_catalogue_populated(
     memgraph_driver: Any, memgraph_clean: None
 ) -> None:
-    """The Memgraph catalogue holds exactly the 7 expected query names."""
+    """The Memgraph catalogue holds exactly the expected query names."""
     from orthograph.backends.memgraph.queries import build_memgraph_catalogue
 
     MemgraphInspector().inspect(memgraph_driver)
@@ -316,7 +341,82 @@ def test_internal_catalogue_populated(
         "memgraph.inspect.endpoint_labels",
         "memgraph.inspect.partitioned_cardinality.source",
         "memgraph.inspect.partitioned_cardinality.target",
+        "memgraph.inspect.node_type_counts",
+        "memgraph.inspect.rel_type_counts",
+        "memgraph.inspect.node_value_histogram",
+        "memgraph.inspect.rel_value_histogram",
     }
+
+
+# ---------------------------------------------------------------------------
+# Value scan — observed_type_counts + value_distribution (E46.3, ADR-035)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.memgraph
+def test_value_scan_mixed_type_property_split(
+    memgraph_driver: Any, memgraph_clean: None
+) -> None:
+    """A mixed-type property reports the exact per-type split (valueType, exact)."""
+    memgraph_driver.execute_query(
+        "CREATE (:Reading {value: 1})"
+        " CREATE (:Reading {value: 2})"
+        " CREATE (:Reading {value: 3})"
+        " CREATE (:Reading {value: 4.5})"
+    )
+    profile = MemgraphInspector(value_counts_top_n=10).inspect(memgraph_driver)
+    value = profile.node_type_profiles["Reading"].property_profiles["value"]
+
+    assert value.observed_type_counts == {"Int": 3, "Float": 1}
+    assert set(value.observed_type_counts) <= set(value.observed_types)
+
+
+@pytest.mark.memgraph
+def test_value_scan_reconciliation_invariant(
+    memgraph_driver: Any, memgraph_clean: None
+) -> None:
+    """sum(type counts) == value_distribution.count == present_count (ADR-035 §2)."""
+    memgraph_driver.execute_query(
+        "CREATE (:Reading {value: 1})"
+        " CREATE (:Reading {value: 1})"
+        " CREATE (:Reading {value: 2})"
+    )
+    profile = MemgraphInspector(value_counts_top_n=10).inspect(memgraph_driver)
+    value = profile.node_type_profiles["Reading"].property_profiles["value"]
+
+    total = sum(value.observed_type_counts.values())
+    assert value.value_distribution is not None
+    assert total == value.value_distribution.count == value.present_count == 3
+
+
+@pytest.mark.memgraph
+def test_value_scan_list_property_dropped_from_histogram_no_crash(
+    memgraph_driver: Any, memgraph_clean: None
+) -> None:
+    """A list-typed property: type counts exact; toStringOrNull drops it (no crash)."""
+    memgraph_driver.execute_query("CREATE (:Tag {labels: ['a', 'b']})")
+    profile = MemgraphInspector(value_counts_top_n=10).inspect(memgraph_driver)
+    labels = profile.node_type_profiles["Tag"].property_profiles["labels"]
+
+    # Type counts classify the list exactly; the scalar histogram dropped it,
+    # so its whole population folds into other_count (or value_distribution is
+    # None when nothing scalar was histogrammed).
+    assert labels.observed_type_counts == {"List[Any]": 1}
+    if labels.value_distribution is not None:
+        assert labels.value_distribution.histogram in ({}, None)
+
+
+@pytest.mark.memgraph
+def test_value_scan_disabled_yields_empty_counts(
+    memgraph_driver: Any, memgraph_clean: None
+) -> None:
+    """Without value_counts_top_n the scan is skipped (counts {} / dist None)."""
+    memgraph_driver.execute_query("CREATE (:Reading {value: 1})")
+    profile = MemgraphInspector().inspect(memgraph_driver)
+    value = profile.node_type_profiles["Reading"].property_profiles["value"]
+
+    assert value.observed_type_counts == {}
+    assert value.value_distribution is None
 
 
 # ---------------------------------------------------------------------------

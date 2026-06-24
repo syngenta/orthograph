@@ -14,11 +14,21 @@ from orthograph.backends.memgraph.queries import (
     MemgraphCardinalityQuery,
     MemgraphConstraintRow,
     MemgraphConstraintsQuery,
+    MemgraphCountRow,
     MemgraphEndpointLabelsQuery,
+    MemgraphNodeCountQuery,
     MemgraphNodePropertiesQuery,
     MemgraphNodePropertyRow,
+    MemgraphNodeTypeCountsQuery,
+    MemgraphNodeValueHistogramQuery,
+    MemgraphRelCountQuery,
     MemgraphRelPropertiesQuery,
     MemgraphRelPropertyRow,
+    MemgraphRelTypeCountsQuery,
+    MemgraphRelValueHistogramQuery,
+    MemgraphTopNParams,
+    MemgraphTypeCountRow,
+    MemgraphValueHistogramRow,
     build_memgraph_catalogue,
 )
 from orthograph.cypher.bindings import NoParams
@@ -141,6 +151,54 @@ def test_mg_constraints_materialize() -> None:
 
 
 # ---------------------------------------------------------------------------
+# MemgraphNodeCountQuery / MemgraphRelCountQuery (E46.3 — true completeness
+# denominator; property-independent count())
+# ---------------------------------------------------------------------------
+
+
+def test_mg_node_count_build_splices_label() -> None:
+    q = MemgraphNodeCountQuery(identifiers={"label": "Person"})
+    cypher, params = q.build(_no_params())
+    assert "`Person`" in cypher
+    assert "count(n) AS count" in cypher
+    assert params == {}
+
+
+def test_mg_node_count_materialize() -> None:
+    q = MemgraphNodeCountQuery(identifiers={"label": "Person"})
+    row = q.materialize({"count": 172})
+    assert isinstance(row, MemgraphCountRow)
+    assert row.count == 172
+
+
+def test_mg_node_count_injected_label_raises() -> None:
+    q = MemgraphNodeCountQuery(identifiers={"label": "Person) DETACH DELETE (n"})
+    with pytest.raises(CypherIdentifierError, match="label"):
+        q.build(_no_params())
+
+
+def test_mg_rel_count_build_splices_rel_type() -> None:
+    q = MemgraphRelCountQuery(identifiers={"rel_type": "ACTED_IN"})
+    cypher, params = q.build(_no_params())
+    assert "`ACTED_IN`" in cypher
+    assert "count(r) AS count" in cypher
+    assert params == {}
+
+
+def test_mg_rel_count_materialize() -> None:
+    q = MemgraphRelCountQuery(identifiers={"rel_type": "ACTED_IN"})
+    row = q.materialize({"count": 49})
+    assert isinstance(row, MemgraphCountRow)
+    assert row.count == 49
+
+
+def test_mg_rel_count_injected_rel_type_raises() -> None:
+    q = MemgraphRelCountQuery(identifiers={"rel_type": "X`bad"})
+    with pytest.raises(CypherIdentifierError, match="relationship type"):
+        q.build(_no_params())
+
+
+# ---------------------------------------------------------------------------
 # MemgraphCardinalityQuery (subclass of shared InspectCardinalityQuery)
 # ---------------------------------------------------------------------------
 
@@ -219,11 +277,17 @@ def test_memgraph_catalogue_registered_names() -> None:
     assert "memgraph.inspect.node_properties" in names
     assert "memgraph.inspect.rel_properties" in names
     assert "memgraph.inspect.constraints" in names
+    assert "memgraph.inspect.node_count" in names
+    assert "memgraph.inspect.rel_count" in names
     assert "memgraph.inspect.cardinality" in names
     assert "memgraph.inspect.endpoint_labels" in names
     assert "memgraph.inspect.partitioned_cardinality.source" in names
     assert "memgraph.inspect.partitioned_cardinality.target" in names
-    assert len(names) == 7
+    assert "memgraph.inspect.node_type_counts" in names
+    assert "memgraph.inspect.rel_type_counts" in names
+    assert "memgraph.inspect.node_value_histogram" in names
+    assert "memgraph.inspect.rel_value_histogram" in names
+    assert len(names) == 13
 
 
 def test_memgraph_catalogue_all_reads_have_output_schema() -> None:
@@ -231,3 +295,95 @@ def test_memgraph_catalogue_all_reads_have_output_schema() -> None:
     for desc in query_catalogue.describe():
         if desc.kind == "read":
             assert desc.output_schema is not None, f"{desc.name} has no output_schema"
+
+
+# ---------------------------------------------------------------------------
+# Value-scan queries (E46.3, ADR-035) — type counts + scalar histogram
+# ---------------------------------------------------------------------------
+
+
+def test_mg_node_type_counts_build_groups_by_type_not_value() -> None:
+    """Type-count query groups on valueType() (by type, never by value)."""
+    q = MemgraphNodeTypeCountsQuery(
+        identifiers={"label": "Reading", "property_name": "value"}
+    )
+    cypher, params = q.build(_no_params())
+    assert "`Reading`" in cypher
+    assert "`value`" in cypher
+    assert "valueType(" in cypher
+    assert "IS NOT NULL" in cypher
+    # Bounded: groups by type, no value interpolation, no LIMIT needed.
+    assert "$" not in cypher  # no value parameters
+    assert params == {}
+
+
+def test_mg_node_type_counts_materialize_normalises_vocabulary() -> None:
+    """valueType() names map onto the schema observed_types vocabulary."""
+    q = MemgraphNodeTypeCountsQuery(
+        identifiers={"label": "Reading", "property_name": "value"}
+    )
+    row = q.materialize({"type_name": "INTEGER", "type_count": 95})
+    assert isinstance(row, MemgraphTypeCountRow)
+    assert row.type_name == "Int"
+    assert row.type_count == 95
+
+
+def test_mg_node_type_counts_materialize_unknown_type_passes_through() -> None:
+    """Unrecognised valueType() names pass through verbatim (never invent)."""
+    q = MemgraphNodeTypeCountsQuery(identifiers={"label": "X", "property_name": "p"})
+    row = q.materialize({"type_name": "SOMETHING_NEW", "type_count": 1})
+    assert row.type_name == "SOMETHING_NEW"
+
+
+def test_mg_rel_type_counts_build() -> None:
+    q = MemgraphRelTypeCountsQuery(
+        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+    )
+    cypher, params = q.build(_no_params())
+    assert "`ACTED_IN`" in cypher
+    assert "`role`" in cypher
+    assert "valueType(" in cypher
+    assert params == {}
+
+
+def test_mg_node_value_histogram_build_is_scalar_safe_and_bounded() -> None:
+    """Histogram groups on toStringOrNull() (list-safe) and applies LIMIT $top_n."""
+    q = MemgraphNodeValueHistogramQuery(
+        identifiers={"label": "Reading", "property_name": "value"}
+    )
+    cypher, params = q.build(MemgraphTopNParams(top_n=10))
+    assert "`Reading`" in cypher
+    assert "`value`" in cypher
+    # toStringOrNull is the list-safe key (lists -> null -> dropped).
+    assert "toStringOrNull(" in cypher
+    assert "LIMIT $top_n" in cypher
+    assert params == {"top_n": 10}
+
+
+def test_mg_node_value_histogram_materialize() -> None:
+    q = MemgraphNodeValueHistogramQuery(
+        identifiers={"label": "Reading", "property_name": "value"}
+    )
+    row = q.materialize({"value": "active", "value_count": 3})
+    assert isinstance(row, MemgraphValueHistogramRow)
+    assert row.value == "active"
+    assert row.value_count == 3
+
+
+def test_mg_rel_value_histogram_build() -> None:
+    q = MemgraphRelValueHistogramQuery(
+        identifiers={"rel_type": "ACTED_IN", "property_name": "role"}
+    )
+    cypher, params = q.build(MemgraphTopNParams(top_n=5))
+    assert "`ACTED_IN`" in cypher
+    assert "toStringOrNull(" in cypher
+    assert "LIMIT $top_n" in cypher
+    assert params == {"top_n": 5}
+
+
+def test_mg_type_counts_injected_label_raises() -> None:
+    q = MemgraphNodeTypeCountsQuery(
+        identifiers={"label": "Reading`) DETACH DELETE (n", "property_name": "value"}
+    )
+    with pytest.raises(CypherIdentifierError):
+        q.build(_no_params())

@@ -1,13 +1,22 @@
 """Memgraph graph inspector (stateless; connection injected per call).
 
-Parity gaps vs. NetworkX / Neo4j — documented explicitly:
+Counts and completeness — truthful, via dedicated property-independent
+``count()`` queries (parity with Neo4j):
 
-  * ``NodeTypeProfile.count`` is always 0: ``schema.node_type_properties()``
-    yields no observation counts.
-  * ``RelationshipTypeProfile.count`` is always 0, same reason.
-  * ``PropertyProfile.present_count`` / ``.total_count`` use a mandatory
-    heuristic (``present=int(mandatory), total=1``) because the Memgraph schema
-    procedures yield a boolean, not observation counts.
+  * ``NodeTypeProfile.count`` / ``RelationshipTypeProfile.count`` come from
+    ``MATCH (n:Label) RETURN count(n)`` / the edge equivalent — not from the
+    schema procedures (which yield no observation counts).
+  * ``PropertyProfile.total_count`` is that same true entity total, so
+    ``completeness = present_count / total_count`` is meaningful.  When the
+    value scan runs (``value_counts_top_n`` set), ``present_count`` is its exact
+    non-null count and ``completeness`` is truthful.  Without a scan there is no
+    *observed* completeness datum: the schema ``mandatory`` boolean is **not**
+    used as a present==total proxy (presence requirements are carried by
+    ``constraint_required``, sourced from real DB constraints — ADR-034 §4), so
+    ``present_count == total_count`` (completeness 1.0, no incompleteness claim).
+    ``total_count`` is **never** derived from ``present_count`` — doing so would
+    fabricate ``completeness == 1.0`` even when a scan observed fewer values, and
+    suppress ``PROPERTY_INCOMPLETE`` (ADR-035 "never invent counts").
 
 ``cardinality_stats`` and ``source_labels``/``target_labels`` ARE populated
 (using the vendor-neutral shared Cypher).
@@ -19,10 +28,19 @@ from orthograph.backends.memgraph.queries import (
     MemgraphCardinalityQuery,
     MemgraphConstraintsQuery,
     MemgraphEndpointLabelsQuery,
+    MemgraphNodeCountQuery,
     MemgraphNodePropertiesQuery,
+    MemgraphNodeTypeCountsQuery,
+    MemgraphNodeValueHistogramQuery,
+    MemgraphRelCountQuery,
     MemgraphRelPropertiesQuery,
+    MemgraphRelTypeCountsQuery,
+    MemgraphRelValueHistogramQuery,
     MemgraphSourcePartitionedCardinalityQuery,
     MemgraphTargetPartitionedCardinalityQuery,
+    MemgraphTopNParams,
+    MemgraphTypeCountRow,
+    MemgraphValueHistogramRow,
 )
 from orthograph.comparison.engine import compare_profile_to_definition
 from orthograph.diagnostics.result import ValidationResult
@@ -31,6 +49,7 @@ from orthograph.graph_definition.models import ConditionalCardinality
 from orthograph.graph_profile.constraints import is_presence_constraint_for
 from orthograph.graph_profile.inspection import CypherInspector, _extract_discriminators
 from orthograph.graph_profile.models import (
+    BoundedDistribution,
     ConstraintInfo,
     GraphProfile,
     NodeTypeProfile,
@@ -43,7 +62,19 @@ class MemgraphInspector(CypherInspector):
     """Inspects a Memgraph database and produces a :class:`GraphProfile`.
 
     Stateless: the driver is passed to :meth:`inspect` per call, never stored.
+
+    Parameters
+    ----------
+    value_counts_top_n:
+        When set, run an opt-in per-property value scan (ADR-035 §1) that
+        populates ``observed_type_counts`` (via ``valueType``, exact) and a
+        scalar ``value_distribution`` histogram (via ``toStringOrNull``, bounded
+        to ``top_n``).  ``None`` / ``0`` runs no value-touching scan: both fields
+        stay ``{}`` / ``None`` (byte-for-byte the previous behaviour).
     """
+
+    def __init__(self, value_counts_top_n: int | None = None) -> None:
+        self._value_counts_top_n = value_counts_top_n
 
     # ------------------------------------------------------------------
     # Public interface
@@ -103,20 +134,41 @@ class MemgraphInspector(CypherInspector):
 
         profiles: dict[str, NodeTypeProfile] = {}
         for label, prop_rows in sorted(label_props.items()):
+            # Truthful entity total via a property-independent count() — the only
+            # honest denominator for completeness (never derive it from
+            # present_count, which would fabricate completeness == 1.0).
+            label_total = self._fetch_node_count(connection, label)
             props: dict[str, PropertyProfile] = {}
             for r in prop_rows:
                 name = r.property_name
+                # No-scan fallback: Memgraph's schema procedures yield only a
+                # `mandatory` boolean, never observation counts.  `mandatory` is
+                # deliberately NOT used as a present==total proxy (presence
+                # requirements are carried by `constraint_required`, sourced from
+                # real DB constraints — ADR-034 §4).  Without a value scan there
+                # is no observed completeness signal, so present_count == total
+                # (completeness 1.0 — no *observed* incompleteness claimed).  The
+                # value scan, when enabled, supersedes this with the exact
+                # non-null count and a truthful completeness.
+                type_counts, value_dist, present_count = self._fetch_node_value_scan(
+                    connection,
+                    label,
+                    name,
+                    fallback_present_count=label_total,
+                )
                 props[name] = PropertyProfile(
                     name=name,
-                    present_count=1 if r.mandatory else 0,
-                    total_count=1,
+                    present_count=present_count,
+                    total_count=max(label_total, present_count),
                     observed_types=r.property_types,
                     constraint_required=is_presence_constraint_for(
                         constraints, "NODE", label, name
                     ),
+                    observed_type_counts=type_counts,
+                    value_distribution=value_dist,
                 )
             profiles[label] = NodeTypeProfile(
-                label=label, count=0, property_profiles=props
+                label=label, count=label_total, property_profiles=props
             )
 
         return profiles
@@ -138,24 +190,38 @@ class MemgraphInspector(CypherInspector):
 
         profiles: dict[str, RelationshipTypeProfile] = {}
         for rel_type, prop_rows in sorted(type_rows.items()):
+            # Truthful edge total via a property-independent count() (parity with
+            # node labels and Neo4j); the only honest completeness denominator.
+            rel_total = self._fetch_rel_count(connection, rel_type)
             props: dict[str, PropertyProfile] = {}
             for r in prop_rows:
                 name = r.property_name
                 if not name:
                     continue
+                # No-scan fallback scaled to the true edge total (see node side):
+                # `mandatory` is not used as a presence proxy; without a scan
+                # there is no observed completeness signal (present == total).
+                type_counts, value_dist, present_count = self._fetch_rel_value_scan(
+                    connection,
+                    rel_type,
+                    name,
+                    fallback_present_count=rel_total,
+                )
                 props[name] = PropertyProfile(
                     name=name,
-                    present_count=1 if r.mandatory else 0,
-                    total_count=1,
+                    present_count=present_count,
+                    total_count=max(rel_total, present_count),
                     observed_types=r.property_types,
                     constraint_required=is_presence_constraint_for(
                         constraints, "RELATIONSHIP", rel_type, name
                     ),
+                    observed_type_counts=type_counts,
+                    value_distribution=value_dist,
                 )
 
             profiles[rel_type] = RelationshipTypeProfile(
                 rel_type=rel_type,
-                count=0,  # Parity gap — unavailable from schema procedures
+                count=rel_total,
                 property_profiles=props,
             )
 
@@ -216,6 +282,122 @@ class MemgraphInspector(CypherInspector):
             for row in rows
         ]
 
+    # ------------------------------------------------------------------
+    # Internal — value scan helpers
+    # ------------------------------------------------------------------
+
+    def _fetch_node_count(self, connection: Any, label: str) -> int:
+        """Return the node count for ``label`` via a property-independent count().
+
+        Independent of properties: a label with no properties still has a
+        truthful instance count (the schema scan supplies none).  This is the
+        honest denominator for ``completeness`` — never derive a total from
+        ``present_count``.
+        """
+        rows = self._run_query(
+            connection, MemgraphNodeCountQuery, identifiers={"label": label}
+        )
+        return rows[0].count if rows else 0
+
+    def _fetch_rel_count(self, connection: Any, rel_type: str) -> int:
+        """Return the edge count for ``rel_type`` via a property-independent count()."""
+        rows = self._run_query(
+            connection, MemgraphRelCountQuery, identifiers={"rel_type": rel_type}
+        )
+        return rows[0].count if rows else 0
+
+    def _fetch_node_value_scan(
+        self,
+        connection: Any,
+        label: str,
+        property_name: str,
+        fallback_present_count: int,
+    ) -> tuple[dict[str, int], BoundedDistribution | None, int]:
+        """Run the optional value scan for one node property.
+
+        Returns ``(observed_type_counts, value_distribution, present_count)``.
+        When the scan runs, ``present_count`` is the **authoritative** non-null
+        count (the exact sum of the per-type group counts), which supersedes the
+        Memgraph mandatory heuristic.  When the scan is skipped
+        (``value_counts_top_n`` unset) the fallback is returned unchanged with
+        ``{}`` / ``None``.
+        """
+        if not self._value_counts_top_n:
+            return {}, None, fallback_present_count
+
+        identifiers = {"label": label, "property_name": property_name}
+        type_rows: list[MemgraphTypeCountRow] = self._run_query(
+            connection, MemgraphNodeTypeCountsQuery, identifiers=identifiers
+        )
+        return self._assemble_value_scan(
+            connection,
+            MemgraphNodeValueHistogramQuery,
+            identifiers,
+            type_rows,
+            fallback_present_count,
+        )
+
+    def _fetch_rel_value_scan(
+        self,
+        connection: Any,
+        rel_type: str,
+        property_name: str,
+        fallback_present_count: int,
+    ) -> tuple[dict[str, int], BoundedDistribution | None, int]:
+        """Run the optional value scan for one relationship property.
+
+        Mirrors :meth:`_fetch_node_value_scan` for relationship properties.
+        """
+        if not self._value_counts_top_n:
+            return {}, None, fallback_present_count
+
+        identifiers = {"rel_type": rel_type, "property_name": property_name}
+        type_rows = self._run_query(
+            connection, MemgraphRelTypeCountsQuery, identifiers=identifiers
+        )
+        return self._assemble_value_scan(
+            connection,
+            MemgraphRelValueHistogramQuery,
+            identifiers,
+            type_rows,
+            fallback_present_count,
+        )
+
+    def _assemble_value_scan(
+        self,
+        connection: Any,
+        histogram_query_cls: Any,
+        identifiers: dict[str, str],
+        type_rows: list[MemgraphTypeCountRow],
+        fallback_present_count: int,
+    ) -> tuple[dict[str, int], BoundedDistribution | None, int]:
+        """Combine type counts + the scalar histogram into the scan result.
+
+        The type-count total is the authoritative ``present_count`` (every
+        non-null value has exactly one runtime type — ADR-035 §2).  The scalar
+        histogram (``toStringOrNull``, list values dropped) may total below it;
+        the remainder reconciles into ``other_count``.
+        """
+        type_counts = {r.type_name: r.type_count for r in type_rows}
+        scan_present_count = sum(type_counts.values())
+
+        # Honest degradation: the type scan classified nothing but the heuristic
+        # reported presence.  Keep the fallback presence; report no counts rather
+        # than zeroing present_count (ADR-035 §5: never silently regress presence).
+        if not type_counts and fallback_present_count > 0:
+            return {}, None, fallback_present_count
+
+        top_n = self._value_counts_top_n
+        assert top_n  # guarded by the callers' early return
+        hist_query = histogram_query_cls(identifiers=identifiers)
+        cypher, params = hist_query.build(MemgraphTopNParams(top_n=top_n))
+        raw_rows = self._run(connection, cypher, parameters_=params)
+        hist_rows: list[MemgraphValueHistogramRow] = [
+            hist_query.materialize(r) for r in raw_rows
+        ]
+        value_dist = _build_value_distribution(hist_rows, scan_present_count, top_n)
+        return type_counts, value_dist, scan_present_count
+
 
 def validate_database(
     connection: Any,
@@ -224,3 +406,54 @@ def validate_database(
     """Validate a Memgraph database against a GraphDefinition."""
     profile = MemgraphInspector().inspect(connection, graph_definition=graph_definition)
     return compare_profile_to_definition(profile, graph_definition)
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_value_distribution(
+    hist_rows: list[MemgraphValueHistogramRow],
+    present_count: int,
+    top_n: int,
+) -> BoundedDistribution | None:
+    """Build a BoundedDistribution from scalar value-histogram rows.
+
+    The DB query already applies ``LIMIT $top_n``.  Because the histogram covers
+    **scalar values only** (``toStringOrNull`` drops lists/maps), its total can
+    be below the authoritative ``present_count``; the shortfall — whether from
+    truncation or from dropped non-scalar values — folds into ``other_count``
+    (ADR-035 §4).  Returns ``None`` when there are no rows.
+
+    Known cross-backend parity deviation (ADR-009 — semantics, not identical
+    output).  Memgraph's histogram key is ``toStringOrNull`` (scalars only),
+    whereas Neo4j's APOC histogram key is ``apoc.convert.toJson`` (list/map
+    values are kept *in* the histogram).  Consequence: a property mixing scalars
+    and lists is reported ``sample_complete=False`` with the lists in
+    ``other_count`` on Memgraph, but ``sample_complete=True`` on Neo4j for the
+    same data.  ``observed_type_counts`` (the epic's primary deliverable) is
+    exact and parity-correct on both backends; only the *value histogram*'s
+    ``sample_complete``/``other_count`` differ.  Memgraph has no portable
+    list-safe scalar+list value key, so this is honest degradation, not a bug.
+    """
+    if not hist_rows or present_count == 0:
+        return None
+
+    histogram = {r.value: r.value_count for r in hist_rows}
+    top_total = sum(histogram.values())
+    sample_complete = top_total >= present_count
+
+    if sample_complete:
+        return BoundedDistribution(
+            count=present_count,
+            histogram=histogram,
+            sample_complete=True,
+        )
+    return BoundedDistribution(
+        count=present_count,
+        histogram=histogram,
+        sample_complete=False,
+        limit=top_n,
+        other_count=present_count - top_total,
+    )

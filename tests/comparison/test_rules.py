@@ -547,6 +547,184 @@ def test_property_type_mismatch_rule_satisfies_protocol():
 
 
 # ---------------------------------------------------------------------------
+# PropertyTypeMismatchRule — prevalence
+# ---------------------------------------------------------------------------
+
+
+def test_property_type_mismatch_empty_counts_byte_for_byte_today():
+    """observed_type_counts == {} → identical to legacy behaviour (regression guard)."""
+    rule = PropertyTypeMismatchRule()
+    ctx = _ctx(
+        address="Person.age",
+        left=TypeInfo(python_type=str, is_required=True),
+        right=PropertyProfile(
+            name="age",
+            present_count=2,
+            total_count=2,
+            observed_types=["Long"],
+            observed_type_counts={},
+        ),
+        extra={"label": "Person", "prop_name": "age", "entity_type": EntityType.NODE},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_TYPE_MISMATCH"
+    assert issues[0].severity == Severity.ERROR
+    assert issues[0].message == (
+        "Property 'age' on Person has observed type 'Long' (Python: int), expected str"
+    )
+    # No prevalence context when counts are absent.
+    assert "off_type_share" not in (issues[0].context or {})
+
+
+def test_property_type_mismatch_systematic_share_is_error():
+    """A systematic off-type share (>= threshold) → ERROR with prevalence in message."""
+    rule = PropertyTypeMismatchRule()
+    ctx = _ctx(
+        address="Person.age",
+        left=TypeInfo(python_type=str, is_required=True),
+        right=PropertyProfile(
+            name="age",
+            present_count=100,
+            total_count=100,
+            observed_types=["String", "Long"],
+            observed_type_counts={"String": 40, "Long": 60},
+        ),
+        extra={"label": "Person", "prop_name": "age", "entity_type": EntityType.NODE},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_TYPE_MISMATCH"
+    assert issues[0].severity == Severity.ERROR
+    # 60 of 100 are the off-type 'Long'.
+    assert "60.0%" in issues[0].message
+    assert issues[0].context["off_type_count"] == 60
+    assert issues[0].context["total_count"] == 100
+    assert issues[0].context["off_type_share"] == pytest.approx(0.6)
+
+
+def test_property_type_mismatch_negligible_share_is_warning():
+    """A negligible off-type share (< threshold) → WARNING, code unchanged."""
+    rule = PropertyTypeMismatchRule()
+    ctx = _ctx(
+        address="Person.age",
+        left=TypeInfo(python_type=str, is_required=True),
+        right=PropertyProfile(
+            name="age",
+            present_count=1000,
+            total_count=1000,
+            observed_types=["String", "Long"],
+            observed_type_counts={"String": 999, "Long": 1},
+        ),
+        extra={"label": "Person", "prop_name": "age", "entity_type": EntityType.NODE},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PROPERTY_TYPE_MISMATCH"
+    assert issues[0].severity == Severity.WARNING
+    assert "0.1%" in issues[0].message
+    assert issues[0].context["off_type_share"] == pytest.approx(0.001)
+
+
+def test_property_type_mismatch_share_at_threshold_is_error():
+    """Off-type share exactly at the threshold counts as systematic (ERROR)."""
+    rule = PropertyTypeMismatchRule(severity_threshold=0.05)
+    ctx = _ctx(
+        address="Person.age",
+        left=TypeInfo(python_type=str, is_required=True),
+        right=PropertyProfile(
+            name="age",
+            present_count=100,
+            total_count=100,
+            observed_types=["String", "Long"],
+            observed_type_counts={"String": 95, "Long": 5},
+        ),
+        extra={"label": "Person", "prop_name": "age", "entity_type": EntityType.NODE},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].severity == Severity.ERROR
+
+
+def test_property_type_mismatch_per_off_type_share_with_multiple_mismatches():
+    """Each off-type is judged on its own share (one issue per mismatching type)."""
+    rule = PropertyTypeMismatchRule(severity_threshold=0.05)
+    ctx = _ctx(
+        address="Person.age",
+        left=TypeInfo(python_type=str, is_required=True),
+        right=PropertyProfile(
+            name="age",
+            present_count=100,
+            total_count=100,
+            observed_types=["String", "Long", "Double"],
+            observed_type_counts={"String": 50, "Long": 49, "Double": 1},
+        ),
+        extra={"label": "Person", "prop_name": "age", "entity_type": EntityType.NODE},
+    )
+    issues = list(rule(ctx))
+    by_type = {i.context["observed_type"]: i for i in issues}
+    assert by_type["Long"].severity == Severity.ERROR  # 49% systematic
+    assert by_type["Double"].severity == Severity.WARNING  # 1% negligible
+
+
+def test_property_type_mismatch_off_type_absent_from_populated_counts_is_legacy_error():
+    """A populated counts map missing one off-type → legacy ERROR for that type.
+
+    By ADR-035 invariant a populated value scan should count every present
+    off-type, so this combination is not expected in practice. The rule's
+    honest escape never invents a share: an off-type absent from a populated
+    map falls back to the legacy ERROR with no prevalence claim.
+    """
+    rule = PropertyTypeMismatchRule(severity_threshold=0.05)
+    ctx = _ctx(
+        address="Person.age",
+        left=TypeInfo(python_type=str, is_required=True),
+        # 'Double' is observed as an off-type but absent from the counts map.
+        right=PropertyProfile(
+            name="age",
+            present_count=100,
+            total_count=100,
+            observed_types=["String", "Long", "Double"],
+            observed_type_counts={"String": 50, "Long": 50},
+        ),
+        extra={"label": "Person", "prop_name": "age", "entity_type": EntityType.NODE},
+    )
+    issues = list(rule(ctx))
+    by_type = {i.context["observed_type"] if i.context else None: i for i in issues}
+    # 'Long' has a share (50/100) → systematic ERROR with prevalence context.
+    assert by_type["Long"].severity == Severity.ERROR
+    assert by_type["Long"].context["off_type_share"] == pytest.approx(0.5)
+    # 'Double' is uncounted → legacy ERROR, no prevalence, empty context.
+    double = next(i for i in issues if i.context in (None, {}))
+    assert double.code == "PROPERTY_TYPE_MISMATCH"
+    assert double.severity == Severity.ERROR
+    assert "of observed values" not in double.message
+    assert "off_type_share" not in (double.context or {})
+
+
+def test_property_type_mismatch_matching_types_excluded_from_share():
+    """The off-type share is over the full present population, not just off-types."""
+    rule = PropertyTypeMismatchRule(severity_threshold=0.05)
+    ctx = _ctx(
+        address="Person.name",
+        left=TypeInfo(python_type=str, is_required=True),
+        # only 'Long' is off-type; 'String' matches and stays silent.
+        right=PropertyProfile(
+            name="name",
+            present_count=200,
+            total_count=200,
+            observed_types=["String", "Long"],
+            observed_type_counts={"String": 198, "Long": 2},
+        ),
+        extra={"label": "Person", "prop_name": "name", "entity_type": EntityType.NODE},
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1  # only the off-type 'Long'
+    assert issues[0].context["off_type_share"] == pytest.approx(0.01)  # 2/200
+    assert issues[0].severity == Severity.WARNING
+
+
+# ---------------------------------------------------------------------------
 # InvalidEndpointRule
 # ---------------------------------------------------------------------------
 

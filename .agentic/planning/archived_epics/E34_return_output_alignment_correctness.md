@@ -1,6 +1,14 @@
 # Epic E34: RETURN→Output Alignment Correctness & `materialize` Default
 
-> **STATUS UPDATE (2026-06-16): T4 REVERTED — scope reduced.**
+> **STATUS UPDATE (2026-06-24): CLOSED — code scope complete.**
+> All code-bearing tasks shipped and test-locked (98 passed, 3 xpassed).
+> T1 (`ReturnColumn`/`ReturnKind` classifier) + T2 (tiered alignment check) stand
+> and ship the PRD silent-mismatch guarantee. T3 ADR-025 amended (default-`materialize`
+> withdrawn). T4 reverted (correct end state; do not re-add). T5 notebook narrative
+> deferred (still teaches pre-T2 behaviour; awaits separate rewrite pass).
+> **No regression risk.** The code enforces the silent-mismatch guarantee via tests.
+
+> **PRIOR STATUS UPDATE (2026-06-16): T4 REVERTED — scope reduced.**
 > T1 (RETURN-column classifier `ReturnColumn`/`ReturnKind` in `parser.py`) and
 > T2 (tiered static RETURN→Output alignment check in `validation.py`) **stand and
 > ship** — they deliver the PRD silent-mismatch guarantee without executing the

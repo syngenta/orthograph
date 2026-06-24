@@ -18,7 +18,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 - [ ] E16 (Query Catalogue — unified) complete and tested
 - [ ] E8 (GQLAlchemy Query Catalogue) complete and tested
 - [ ] E9 (GQLAlchemy Client Review) complete — composition pattern enforced
-- [ ] E10 (Connection Ownership Audit) complete
+- [ ] Connection ownership (Constraint 13) enforced — inspectors via E25 (done); executor transaction ownership via E39 (ADR-028); GQLAlchemy client via E9. *(E10 retired → E25/E39/E9.)*
 - [ ] End-to-end pilot notebook exists and runs against a live database
 - [ ] An agent reading `.agentic/` can make correct decisions without asking
 
@@ -29,15 +29,15 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | Epic | Title | Priority | Status                                                                                                                                                                                                                                                                                 |
 |------|-------|----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | E1 | API Ergonomics & Developer Experience | High | planned                                                                                                                                                                                                                                                                                |
-| E2 | Code Deduplication & Internal Quality | Medium | planned                                                                                                                                                                                                                                                                                |
+| E2 | Code Deduplication & Internal Quality | Medium | **done** (2026-06-24)                                                                                                                                                                                                                                                                  |
 | E3 | Documentation & Onboarding | High | planned                                                                                                                                                                                                                                                                                |
-| E4 | Extension Robustness & Consistency | Medium | planned                                                                                                                                                                                                                                                                                |
+| E4 | Extension Robustness & Consistency | Medium | **done** (2026-06-24)                                                                                                                                                                                                                                                                  |
 | E5 | Visualization Package | High | **done** (2026-04-15)                                                                                                                                                                                                                                                                  |
 | E6 | Cypher Query Catalogue | — | **RETIRED → E16**                                                                                                                                                                                                                                                                      |
-| E7 | Pilot Readiness (gate) | High | planned                                                                                                                                                                                                                                                                                |
+| E7 | Pilot Readiness (gate) | High | **done** (2026-06-24)                                                                                                                                                                                                                                                                  |
 | E8 | GQLAlchemy Query Catalogue | High | planned (blocked by E16)                                                                                                                                                                                                                                                               |
 | E9 | GQLAlchemy Client Review | High | planned                                                                                                                                                                                                                                                                                |
-| E10 | Connection Ownership Audit | High | planned                                                                                                                                                                                                                                                                                |
+| E10 | Connection Ownership Audit | — | **RETIRED → E25 / E39 / E9** (inspectors made stateless by E25/ADR-011 D1; executor transaction ownership by E39/ADR-028; GQLAlchemy client by E9 — 2026-06-24)                                                                                |
 | E11 | Auto-Generated CRUD Operations | Medium | planned (E16 + E17 done — unblocked)                                                                                                                                                                                                                                                   |
 | E12 | Shared Catalogue Interface Extraction | — | **RETIRED → E16**                                                                                                                                                                                                                                                                      |
 | E13 | Typed Query Catalogue Contract | — | **RETIRED → E16**                                                                                                                                                                                                                                                                      |
@@ -45,7 +45,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E15 | Typed Cypher Catalogue Backend | — | **RETIRED → E16**                                                                                                                                                                                                                                                                      |
 | E16 | Query Catalogue — Typed Contract, Cypher Backend, Registry | High | **done** (2026-06-10)                                                                                                                                                                                                                                                                  |
 | E17 | CypherGenerator — Injection Hardening, Typed-Query Realignment & Inspector Alignment | High | **done** (2026-06-10)                                                                                                                                                                                                                                                                  |
-| E18 | Validation Correctness | High | planned                                                                                                                                                                                                                                                                                |
+| E18 | Validation Correctness | High | **done** (2026-06-24) — E18.3 fixed (Mermaid `<br>`→space); E18.2/E18.4/E18.5 dissolved by architecture refactor; E18.1 reassigned to E17                                                                                                                                            |
 | E19 | YAML Query Authoring — Scoping and Decision | Medium | planned (blocked by E16; needs team scoping session)                                                                                                                                                                                                                                   |
 | E20 | Technical Debt | Medium | planned (independent; cross-cutting)                                                                                                                                                                                                                                                   |
 | E21 | Technical Debt — E2E Test Activation & Configuration | — | **RETIRED → E28**                                                                                                                                                                                                                                                                      |
@@ -61,7 +61,7 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E31 | Query Contract Ergonomics — Implementation | High | in progress                                                                                                                                                                                                                                                                            |
 | E32 | Bulk Write Query | Medium | planned                                                                                                                                                                                                                                                                                |
 | E33 | Query Contract Ergonomics v2 — `row_mapper` / `materialize` alternative + write return expansion | High | planned (blocked by E31; **Q1 superseded by E34 — ADR-025, `row_mapper` rejected; the default-`materialize` alternative was also withdrawn — `materialize` stays explicit**; Q2 superseded by E35; grill via `.agentic/reviews/E33_grill_prompt.md`)                                   |
-| E34 | RETURN→Output Alignment Correctness & ~~`materialize` Default~~ | High | **partially reverted** (T1+T2 static-alignment **stand and ship**; T3 ADR-025 amended — `row_mapper` stays rejected but the **default `materialize` is withdrawn**; T4 **reverted** — auto-classifying default removed, `materialize` stays an explicit required one-liner; T5/T6 N/A) |
+| E34 | RETURN→Output Alignment Correctness & ~~`materialize` Default~~ | High | **done** (2026-06-24; T1+T2 shipped + test-locked; T3 ADR-025 amended; T4 reverted; T5 deferred) |
 | E35 | Write Query Return-Row Echo — surface `RETURN` rows from `write()` | High | planned (blocked by E34; ADR-026 gated; supersedes E33 Q2)                                                                                                                                                                                                                             |
 | E36 | CypherQuery Naming Convergence + Class-Based Query Definitions | Medium | **done** (2026-06-17)                                                                                                                                                                                                                                                                  |
 | E37 | Simple Cypher Query — Shared Validation, Catalogue Parity, and Executor | Medium | **done** (2026-06-17)                                                                                                                                                                                                                                                                  |
@@ -73,7 +73,11 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E43 | General Conditional-Cardinality Partitioning | High | **done** (2026-06-19; ADR-032; partition by both endpoints, removes `by_kind`, definition-time guard — closes the silent-wrong-validation hole; coordinate with E42 on models.py)                                                                                                      |
 | E44 | Neo4j `db.schema.*` Inspection Strategy — Reproducible Type Detection | Medium | **done** (2026-06-19; ADR-033; three-way APOC→SCHEMA→CYPHER detection; `use_apoc` deprecated in favour of `Neo4jInspectionStrategy` enum; landed before E41)                                                                                                                           |
 | E45 | GraphProfile Statistical Model & Comparison-Contract Reshape | High | **done** (2026-06-22; ADR-034; shared `BoundedDistribution`, presence-source split + `constraint_required`, bounded value distributions, full comparison matrix non-cardinality rows)                                                                                                  |
-| E46 | Populate `PropertyProfile.observed_type_counts` — Per-Type Value Counts for Prevalence-Aware Type Conformance | Medium | planned (independent; closes ADR-015 B1 TODO + the two `backends/neo4j/inspector.py` TODOs; builds on E44 three-catalogue surface + E45 statistical model — both done; needs ADR scoping session E46.0)                                                                                |
+| E46 | Populate `PropertyProfile.observed_type_counts` — Per-Type Value Counts for Prevalence-Aware Type Conformance | Medium | **done** (2026-06-24; ADR-035 + ADR-036; bounded Neo4j/Memgraph value scan populates `observed_type_counts` + `value_distribution`, prevalence-aware `PropertyTypeMismatchRule`, E46.6 pure-Cypher scalar histogram fallback; closes ADR-015 B1 TODO + both `inspector.py` TODOs; snapshot-consistency deviation tracked as E47)                                                                                |
+| E47 | Inspector Snapshot Consistency — Single Read Transaction per Property Scan | Low | planned (do not start unless reconciliation invariant observed failing in practice; structural follow-on to E46.2; see ADR-035 §2) |
+| E48 | Configuration — Thread Tunable Knobs Through the Public API | Medium | planned (**blocked by the not-yet-created new-API epic**; E48.0 ADR-036 may begin alongside the API decision; exposes E46's `severity_threshold` + inspector `value_counts_top_n`/`strategy`; no global settings/file/env layer this phase) |
+| E49 | Partitioned Cardinality — Profile Rendering & One-Sided Discriminator Extraction | Medium | planned (independent; T1 renders `*_partitioned_cardinality` in `profile_to_text`; T2 widens profiler `_extract_discriminators` for one-sided discriminators to mirror the ADR-032 enforcement path — surfaced by the 2026-06-24 MatProt pilot profiling exercise) |
+| E50 | Endpoint-Aware Relationship Identity | High | planned (independent; ADR-037; relationship identity becomes the `(source, label, target)` triple — fixes the observed-side blending of distinct shapes; breaking across declaration/profiling/comparison/Cypher + YAML format; supersedes the identity implication of ADR-014, amends ADR-015 §address-space + ADR-034 §7/§8; delegation-ready tasks Opus/Sonnet/Haiku) |
 
 ---
 
@@ -101,6 +105,11 @@ INDEPENDENT — can start immediately:
    E44  Neo4j db.schema.* Inspection Strategy (independent; ADR-033; third property-type strategy
         APOC→db.schema.*→pure-Cypher; backend-scoped to backends/neo4j/; landed before E41)
         ✓ done (2026-06-19)
+  E50  Endpoint-Aware Relationship Identity (independent; ADR-037; relationship identity becomes
+        the (source, label, target) triple — fixes the observed-side blending of distinct shapes;
+        breaking across graph_definition/ + graph_profile/ + comparison/ + cypher/ + io/yaml;
+        supersedes the identity implication of ADR-014, amends ADR-015 §address-space and
+        ADR-034 §7/§8; E50.0 writes ADR-037 first; delegation-ready Opus/Sonnet/Haiku)
 
 AFTER E40:
    E45  GraphProfile Statistical Model & Comparison-Contract Reshape (ADR-034; shared
@@ -124,15 +133,24 @@ AFTER E44 + E45 (both done):
        E44 catalogues; refines PropertyTypeMismatchRule from "a wrong type exists" to "how
        prevalent"; rides E45 bounded-sampling opt-in; E46.0 produces an ADR first)
 
+AFTER E46.2 (or when reconciliation invariant observed failing):
+  E47  Inspector Snapshot Consistency (structural follow-on to E46.2; enforces ADR-035 §2
+       reconciliation invariant by shared read transaction; low priority — start only if the
+       invariant breaks in production or deployment profile changes to write-heavy)
+
+AFTER the new-API epic (NOT YET CREATED):
+  E48  Configuration (exposes E46's PropertyTypeMismatchRule.severity_threshold + inspector
+       value_counts_top_n / Neo4j strategy through the public API; closes the
+       inspector_cls()-no-args gap at api/database.py:38; E48.0 ADR-036 first — may begin
+       alongside the API decision; the new-API epic must reserve a config-ready entry-point
+       seam; NO global settings/file/env layer this phase — ADR-035 §1 minimal-knob bias)
+
 AFTER E23:
   E24  Synthetic Graph Data Generation (profile-driven mode requires consistent GraphProfile
        statistics contract across backends)
 
 AFTER E2:
   E4   Extension Robustness
-
-AFTER E10:
-  E4   Extension Robustness (connection patterns settled)
 
 AFTER E16:
   E8   GQLAlchemy Query Catalogue (exposes describe() for uniform introspection)
@@ -149,7 +167,7 @@ DONE:
   E27  Symmetric Comparison (generalised comparison/ to compare any two operands; views.py +
        diff_rules.py; three public entry points; 2026-06-15)
 
-GATE — requires E1, E2, E3, E4, E8, E9, E10, E11, E16 substantially complete:
+GATE — requires E1, E2, E3, E4, E8, E9, E11, E16 substantially complete:
   E7   Pilot Readiness
 ```
 
@@ -161,11 +179,11 @@ E2 ──────────────────┬──────�
 E3 ─────────────────────────────────────────────────┤
                      │                               │
                      ▼                               │
-                    E4 ─────────────────────────────┤
+                     E4 ─────────────────────────────┤
                      ▲                               │
                      │                               │
-E9 [HITL] ──► E10 ──┘                               │
-                                                     │
+E2 ──────────────────┘                               │
+E9 [HITL] (GQLAlchemy client)                        │
 E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
                 ├──► E11 (CRUD auto-generation)      │
                 ├──► E14 (SQLAlchemy backend)        │
@@ -180,7 +198,7 @@ E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
 
 ### Wave 1 (start immediately, in parallel)
 - **E16** — Query Catalogue unified (critical path; unblocks E8/E11/E14 and matterforge Phase 2)
-- **E9** — GQLAlchemy Client Review (HITL — unblocks E10)
+- **E9** — GQLAlchemy Client Review (HITL — last live piece of connection-ownership cleanup)
 - **E2** — Code Deduplication (unblocks E4)
 - **E3** — Documentation (no dependencies)
 - **E1** — API Ergonomics (independent)
@@ -188,8 +206,7 @@ E16 (unified) ──┬──► E8  (GQLAlchemy catalogue)     │
 
 ### Wave 2 (after Wave 1)
 - **E8** — GQLAlchemy Query Catalogue (after E16)
-- **E10** — Connection Ownership Audit (after E9)
-- **E4** — Extension Robustness (after E2 + E10)
+- **E4** — Extension Robustness (after E2)
 - **E11** — Auto-Generated CRUD Operations (after E16 + E17 — both done)
 - **E14** — SQLAlchemy Backend Extension (after E16, only when a second project needs it)
 - **E17** — CypherGenerator Hardening — **done** (2026-06-10)
@@ -206,25 +223,22 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 
 ### Active — [`active_epics/`](active_epics/)
 - [E1 — API Ergonomics](active_epics/E1_api_ergonomics.md)
-- [E2 — Code Deduplication](active_epics/E2_code_deduplication.md)
 - [E3 — Documentation](active_epics/E3_documentation.md)
-- [E4 — Extension Robustness](active_epics/E4_extension_robustness.md)
-- [E7 — Pilot Readiness](active_epics/E7_pilot_readiness.md)
 - [E8 — GQLAlchemy Query Catalogue](active_epics/E8_gqlalchemy_query_catalogue.md)
 - [E9 — GQLAlchemy Client Review](active_epics/E9_gqlalchemy_client_review.md)
-- [E10 — Connection Ownership Audit](active_epics/E10_connection_ownership_audit.md)
+- [E9 — GQLAlchemy Client Review](active_epics/E9_gqlalchemy_client_review.md)
 - [E11 — Auto-Generated CRUD Operations](active_epics/E11_auto_generated_crud.md)
 - [E14 — SQLAlchemy Backend Extension](active_epics/E14_sqlalchemy_backend_extension.md)
-- [E18 — Validation Correctness](active_epics/E18_validation_correctness.md)
-- [E19 — YAML Query Authoring — Scoping and Decision](active_epics/E19_yaml_query_authoring.md)
 - [E20 — Technical Debt](active_epics/E20_tech_debt.md)
 - [E23 — Inspector Backend-Behaviour Injection Interface](active_epics/E23_inspector_backend_interface.md)
 - [E24 — Synthetic Graph Data Generation](active_epics/E24_synthetic_graph_data_generation.md)
-- [E34 — RETURN→Output Alignment Correctness & `materialize` Default](active_epics/E34_return_output_alignment_correctness.md)
 - [E35 — Write Query Return-Row Echo](active_epics/E35_write_query_return_rows.md)
 - [E39 — Async Query Runner](active_epics/E39_async_query_runner.md)
 - [E41 — Conditional Cardinality — Profiling & Live-DB Enforcement (Phase 2)](archived_epics/E41_conditional_cardinality_profiling.md)
-- [E46 — Populate `observed_type_counts` — Per-Type Value Counts](active_epics/E46_observed_type_counts_population.md)
+- [E47 — Inspector Snapshot Consistency — Single Read Transaction per Property Scan](active_epics/E47_inspector_snapshot_consistency.md)
+- [E48 — Configuration — Thread Tunable Knobs Through the Public API](active_epics/E48_configuration.md)
+- [E49 — Partitioned Cardinality — Profile Rendering & One-Sided Discriminator Extraction](active_epics/E49_partitioned_cardinality_rendering_and_extraction.md)
+- [E50 — Endpoint-Aware Relationship Identity](active_epics/E50_endpoint_aware_relationship_identity.md)
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 
@@ -242,6 +256,12 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E44 — Neo4j `db.schema.*` Inspection Strategy](archived_epics/E44_neo4j_db_schema_inspection_strategy.md) *(done 2026-06-19)*
 - [E42 — Unify Cardinality on UML Notation](archived_epics/E42_unify_cardinality_uml_notation.md) *(done 2026-06-19)*
 - [E45 — GraphProfile Statistical Model & Comparison-Contract Reshape](archived_epics/E45_graphprofile_statistical_model_reshape.md) *(done 2026-06-22; ADR-034; shared `BoundedDistribution`, presence-source split + `constraint_required`, bounded value distributions, full comparison matrix non-cardinality rows)*
+- [E34 — RETURN→Output Alignment Correctness](archived_epics/E34_return_output_alignment_correctness.md) *(done 2026-06-24; T1+T2 ship PRD silent-mismatch guarantee; test-locked; T4 reverted; ADR-025)*
+- [E18 — Validation Correctness](archived_epics/E18_validation_correctness.md) *(done 2026-06-24; E18.3 fixed — Mermaid pipe-label `<br>`→space; E18.2/E18.4/E18.5 dissolved by arch refactor; E18.1 reassigned to E17)*
+- [E2 — Code Deduplication & Internal Quality](archived_epics/E2_code_deduplication.md) *(done 2026-06-24)*
+- [E4 — Extension Robustness & Consistency](archived_epics/E4_extension_robustness.md) *(done 2026-06-24)*
+- [E7 — Pilot Readiness (gate)](archived_epics/E7_pilot_readiness.md) *(done 2026-06-24)*
+- [E46 — Populate `observed_type_counts` — Per-Type Value Counts](archived_epics/E46_observed_type_counts_population.md) *(done 2026-06-24; ADR-035 + ADR-036; bounded Neo4j/Memgraph value scan populates `observed_type_counts` + `value_distribution`, prevalence-aware `PropertyTypeMismatchRule`, E46.6 pure-Cypher scalar histogram fallback; snapshot-consistency deviation tracked as E47)*
 - [E6 — Cypher Query Catalogue](archived_epics/E6_query_catalogue.md)
 - [E12 — Shared Catalogue Interface](archived_epics/E12_shared_catalogue_interface.md)
 - [E13 — Typed Query Catalogue Contract](archived_epics/E13_typed_query_catalogue_contract.md)
@@ -251,6 +271,9 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E21 — Technical Debt: E2E Test Activation & Configuration](archived_epics/E21_tech_debt_e2e_test_config.md)
 - [E22 — E2E Test Coverage Audit & Shared-Contract Test Layer](archived_epics/E22_e2e_test_coverage_audit.md)
 - [E26 — CI Containerised E2E — Live-Database Tests in the Pipeline](archived_epics/E26_ci_containerized_e2e.md)
+
+**Retired (superseded by E25 + E39 + E9 — connection-ownership work re-homed):**
+- [E10 — Connection Ownership Audit](archived_epics/E10_connection_ownership_audit.md) *(retired 2026-06-24; inspectors made stateless by E25/ADR-011 D1; executor transaction ownership by E39/ADR-028; GQLAlchemy client by E9)*
 
 
 ---

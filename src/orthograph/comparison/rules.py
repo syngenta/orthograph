@@ -321,10 +321,28 @@ class PropertyIncompleteRule:
 
 @dataclass
 class PropertyTypeMismatchRule:
-    """Emits ``PROPERTY_TYPE_MISMATCH`` (ERROR) for each observed type that maps
-    to a Python type differing from the declared one."""
+    """Emits ``PROPERTY_TYPE_MISMATCH`` for each observed type that maps to a
+    Python type differing from the declared one.
+
+    Prevalence-aware.  When the profile carries
+    ``observed_type_counts`` the rule computes each off-type's **share** of the
+    present population and modulates *severity*:
+
+    - share ``>= severity_threshold`` → ERROR (systematic type drift).
+    - share ``< severity_threshold``  → WARNING (a handful of dirty rows).
+
+    The off-type share and counts are added to ``context`` and the percentage to
+    the message.  The frozen issue ``code`` (``PROPERTY_TYPE_MISMATCH``) is never
+    changed (that would need its own ADR).
+
+    When ``observed_type_counts == {}`` (a backend/strategy that supplies only
+    distinct type names) the rule is **byte-for-byte identical to its legacy
+    behaviour**: ERROR per observed off-type, no prevalence in message or
+    context.  The field is additive — this is a hard regression guard.
+    """
 
     key: str = "property.type_mismatch"
+    severity_threshold: float = 0.05
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
         from orthograph.comparison.engine import db_type_to_python
@@ -346,21 +364,61 @@ class PropertyTypeMismatchRule:
         # PropertyEnumValueRule reason about the values instead.
         if expected_type is None:
             return
+
+        counts = prop_profile.observed_type_counts
+        # Share denominator is the scan's own total (sum of the type counts), not
+        # `present_count`.  Counts are intended to partition
+        # `present_count`, but that equality is not transactionally enforced;
+        #  using the scan's own sum keeps each share
+        # internally consistent regardless of any snapshot divergence.
+        total = sum(counts.values())
+
         for obs_type in prop_profile.observed_types:
             py_type = db_type_to_python(obs_type)
-            if py_type is not None and py_type is not expected_type:
+            if py_type is None or py_type is expected_type:
+                continue
+
+            entity_id = f"{label}.{prop_name}"
+            base = (
+                f"Property '{prop_name}' on {label} "
+                f"has observed type '{obs_type}' "
+                f"(Python: {py_type.__name__}), "
+                f"expected {expected_type.__name__}"
+            )
+
+            # Honest escape: no counts (or this off-type not counted) ⇒ legacy
+            # ERROR with the legacy message, no prevalence claim.
+            off_type_count = counts.get(obs_type)
+            if total == 0 or off_type_count is None:
                 yield ValidationIssue(
                     code="PROPERTY_TYPE_MISMATCH",
                     severity=Severity.ERROR,
                     entity_type=entity_type,
-                    entity_id=f"{label}.{prop_name}",
-                    message=(
-                        f"Property '{prop_name}' on {label} "
-                        f"has observed type '{obs_type}' "
-                        f"(Python: {py_type.__name__}), "
-                        f"expected {expected_type.__name__}"
-                    ),
+                    entity_id=entity_id,
+                    message=base,
                 )
+                continue
+
+            share = off_type_count / total
+            severity = (
+                Severity.ERROR if share >= self.severity_threshold else Severity.WARNING
+            )
+            yield ValidationIssue(
+                code="PROPERTY_TYPE_MISMATCH",
+                severity=severity,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                message=(
+                    f"{base} "
+                    f"({off_type_count}/{total} = {share:.1%} of observed values)"
+                ),
+                context={
+                    "observed_type": obs_type,
+                    "off_type_count": off_type_count,
+                    "total_count": total,
+                    "off_type_share": share,
+                },
+            )
 
 
 @dataclass

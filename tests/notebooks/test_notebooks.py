@@ -40,7 +40,7 @@ ALL_NOTEBOOKS = [
     NOTEBOOKS_DIR / "03.02_cypher_query_definitions.ipynb",
     NOTEBOOKS_DIR / "03.03_cypher_query_usage.ipynb",
     NOTEBOOKS_DIR / "03.04_typed_query_contracts.ipynb",
-    NOTEBOOKS_DIR / "03.05_result_shapes_and_materialization.ipynb",
+    NOTEBOOKS_DIR / "03.05_typed_query_result_shapes_and_materialization.ipynb",
     # Module 04 -- Backend Integration
     NOTEBOOKS_DIR / "04.01_networkx_backend.ipynb",
     NOTEBOOKS_DIR / "04.02_neo4j_backend.ipynb",

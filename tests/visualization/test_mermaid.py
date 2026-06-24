@@ -324,3 +324,32 @@ def test_mermaid_constant_cardinality_unchanged():
     assert "ACTED_IN" in mermaid
     # Should render as simple min..max
     assert "0..*" in mermaid
+
+
+def test_mermaid_pipe_labels_contain_no_br_tags():
+    """Edge pipe labels must not contain <br> — Mermaid does not support HTML there."""
+    m = GraphDefinition(
+        name="BrTest",
+        node_types=[Person, Company],
+        relationship_types=[LivesIn],
+    )
+    mermaid = model_to_mermaid(m)
+    # Extract only the pipe-label sections (between | ... |) and assert no <br>
+    import re
+
+    pipe_labels = re.findall(r"\|([^|]+)\|", mermaid)
+    for label in pipe_labels:
+        assert "<br>" not in label, f"Pipe label contains <br>: {label!r}"
+
+
+def test_mermaid_edge_label_parts_joined_with_space():
+    """Multi-part edge labels (name + props + cardinality) are joined with a space."""
+    m = GraphDefinition(
+        name="SepTest",
+        node_types=[Person, Company],
+        relationship_types=[LivesIn],
+    )
+    mermaid = model_to_mermaid(m)
+    # The pipe label should contain the rel name and cardinality separated by spaces,
+    # not by <br> or any other HTML tag.
+    assert "LIVES_IN 1..1 : 0..*" in mermaid
