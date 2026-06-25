@@ -240,10 +240,8 @@ def display_relationship_profiles(profile) -> None:
         print("\nNo relationship types found in database.")
     else:
         for label, rtp in sorted(profile.rel_type_profiles.items()):
-            source_labels = rtp.source_labels if rtp.source_labels else {"<any>"}
-            target_labels = rtp.target_labels if rtp.target_labels else {"<any>"}
-            source_str = ", ".join(sorted(source_labels))
-            target_str = ", ".join(sorted(target_labels))
+            source_str = rtp.source_label if rtp.source_label else "<any>"
+            target_str = rtp.target_label if rtp.target_label else "<any>"
 
             print(f"\n{label} (count: {rtp.count} instances)")
             print(f"  Direction: ({source_str}) -[:{label}]-> ({target_str})")

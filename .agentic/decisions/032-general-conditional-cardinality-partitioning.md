@@ -163,22 +163,17 @@ mis-validation. With both-endpoint partitioning the previously-broken case is no
 (a key that exists on neither endpoint of the edge), closing the silent-pass hole
 for good.
 
-> **Implementation status of §4 — amended by ADR-039 (2026-06-25).**
+> **Implementation status of §4 — amended by ADR-039 (2026-06-25) and delivered by E54.**
 > The *enforcement-axis* guard described above (a key on neither endpoint) is covered by
 > the shipped `DiscriminatorPropertyExistsCheck` in
-> `graph_definition/cardinality_checks.py`. **However**, the *profile-side* limitation —
-> the inspectors and the profile↔definition comparison only represent **one** discriminator
-> property per endpoint (`len(keys) == 1` gates in
-> `backends/networkx/inspector.py::_discriminator_value`,
-> `graph_profile/inspection.py::_extract_discriminators`, and
-> `comparison/rules.py::_single_disc_key`) — was **never guarded**. A legal multi-property
-> rule therefore constructs fine, is silently declined by the profiler (collapsed to the
-> `null/null` partition), and surfaces only as `CARDINALITY_UNVERIFIABLE` (INFO). ADR-039 §6
-> resolves this by **capability, not prohibition**: E54 makes the producers emit
-> multi-property partition maps, eliminating the gap at its root; **no `len(keys) > 1`
-> rejection is added at construction time** in either E53 or E54. Until E54 ships, the
-> multi-property `CARDINALITY_UNVERIFIABLE` INFO is the honest "unverifiable" verdict
-> (ADR-034 §2 — never a false pass/fail).
+> `graph_definition/cardinality_checks.py`. The *profile-side* limitation —
+> the inspectors and the profile↔definition comparison representing **one** discriminator
+> property per endpoint — was **never guarded** at construction time. ADR-039 §6 resolves
+> this by **capability, not prohibition**: **E54 has delivered** multi-property partition
+> maps from the producers (Cypher N-property grouping, NetworkX multi-key reads), eliminating
+> the silent-drift hole at its root. A legal multi-property conditional rule is now **profiled
+> and checked**; no `len(keys) > 1` rejection is added at construction time (by design — ADR-039 §6).
+> The gap is closed by capability: the profilers can now measure what the validators can enforce.
 
 ### 5. Data-time semantics (amends ADR-029 §7)
 

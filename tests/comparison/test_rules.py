@@ -2491,3 +2491,204 @@ def test_cardinality_one_sided_breakdown_out_of_bounds_violation():
     assert issues[0].severity == Severity.ERROR
     assert issues[0].context["target"] == {"type": "combine"}
     assert issues[0].context["source"] == {}
+
+
+# ===========================================================================
+# E54.3 — multi-property partition matching
+#
+# A ConditionalCardinality whose rule references TWO properties per endpoint
+# (e.g. source=PropMatch({"type": "combine", "stage": "final"})) should now
+# be profiled and checked — never CARDINALITY_UNVERIFIABLE — once E54.1/E54.2
+# deliver multi-property partition rows.  These tests confirm that
+# CardinalityViolationRule already handles the general case (map equality,
+# resolve_for_pair, _matches_any_rule) without any code change.
+# ===========================================================================
+
+
+class _MultiPropOperationNode(NodeModel):
+    """Operation node carrying two discriminator properties."""
+
+    __label__ = "Operation"
+    type: str
+    stage: str
+
+
+class _MultiPropSampleNode(NodeModel):
+    """Sample node carrying two discriminator properties."""
+
+    __label__ = "Sample"
+    type: str
+    stage: str
+
+
+def _multi_prop_model() -> tuple[GraphDefinition, type[RelationshipModel]]:
+    """Operation -[HAS_RESULT]-> Sample, conditional on two properties per side.
+
+    Rule: source={type:combine, stage:final} / target={type:combine, stage:final}
+    → spec 1..3; default 0..*.
+    """
+
+    class _HasResult(RelationshipModel):
+        __label__ = "HAS_RESULT"
+        __source_label__ = "Operation"
+        __target_label__ = "Sample"
+        __source_cardinality__ = ConditionalCardinality(
+            rules=(
+                ConditionalRule(
+                    source=PropMatch({"type": "combine", "stage": "final"}),
+                    target=PropMatch({"type": "combine", "stage": "final"}),
+                    spec=CardinalitySpec(min=1, max=3),
+                ),
+            ),
+            default="0..*",
+        )
+
+    model = GraphDefinition(
+        name="e543_multi_prop",
+        node_types=[_MultiPropOperationNode, _MultiPropSampleNode],
+        relationship_types=[_HasResult],
+    )
+    return model, _HasResult
+
+
+def _multi_prop_ctx(
+    model: GraphDefinition,
+    rt_class: type[RelationshipModel],
+    source_partitioned: list[PartitionedCardinalityRow] | None,
+) -> RuleContext:
+    rtp = RelationshipTypeProfile(
+        rel_type="HAS_RESULT",
+        count=2,
+        source_label="Operation",
+        target_label="Sample",
+        cardinality_stats=CardinalityStats(count=1, min=1, max=3, mean=2.0),
+        source_partitioned_cardinality=source_partitioned,
+    )
+    return RuleContext(
+        left_graph=DefinitionView(model),
+        right_graph=ProfileView(
+            GraphProfile(
+                source="e543_multi_prop",
+                rel_type_profiles={"Operation:HAS_RESULT:Sample": rtp},
+            )
+        ),
+        address="Operation:HAS_RESULT:Sample",
+        left=rt_class,
+        right=rtp,
+    )
+
+
+def _multi_prop_row(
+    source_map: dict[str, str | None],
+    target_map: dict[str, str | None],
+    dist: BoundedDistribution,
+) -> PartitionedCardinalityRow:
+    """Build a PartitionedCardinalityRow with explicit multi-property endpoint maps."""
+    return PartitionedCardinalityRow(
+        key=PartitionKey(source=source_map, target=target_map),
+        stats=dist,
+    )
+
+
+def test_multi_property_partition_within_bounds_no_violation():
+    """Multi-property rule matched + observed degree within bounds → no violation.
+
+    E54.3: a two-property conditional rule is resolved and checked via
+    resolve_for_pair; no CARDINALITY_UNVERIFIABLE is emitted when the
+    breakdown is present.
+    """
+    model, rt_class = _multi_prop_model()
+    rule = CardinalityViolationRule()
+    source_partitioned = [
+        _multi_prop_row(
+            {"stage": "final", "type": "combine"},
+            {"stage": "final", "type": "combine"},
+            BoundedDistribution(count=1, min=2, max=2, mean=2.0),
+        )
+    ]
+    issues = list(rule(_multi_prop_ctx(model, rt_class, source_partitioned)))
+    codes = {i.code for i in issues}
+    assert "CARDINALITY_UNVERIFIABLE" not in codes
+    assert "CARDINALITY_VIOLATION" not in codes
+
+
+def test_multi_property_partition_out_of_bounds_violation():
+    """Multi-property rule matched + degree exceeds max → CARDINALITY_VIOLATION.
+
+    E54.3: declared 1..3; observed max 5 → ERROR naming the full two-property
+    source and target maps.
+    """
+    model, rt_class = _multi_prop_model()
+    rule = CardinalityViolationRule()
+    source_partitioned = [
+        _multi_prop_row(
+            {"stage": "final", "type": "combine"},
+            {"stage": "final", "type": "combine"},
+            BoundedDistribution(count=1, min=5, max=5, mean=5.0),
+        )
+    ]
+    issues = [
+        i
+        for i in rule(_multi_prop_ctx(model, rt_class, source_partitioned))
+        if i.code == "CARDINALITY_VIOLATION"
+    ]
+    assert len(issues) == 1
+    assert issues[0].severity == Severity.ERROR
+    assert issues[0].context["source"] == {"stage": "final", "type": "combine"}
+    assert issues[0].context["target"] == {"stage": "final", "type": "combine"}
+
+
+def test_multi_property_partition_no_match_yields_unmatched_kind():
+    """Multi-property partition matching no declared rule → CARDINALITY_UNMATCHED_KIND.
+
+    E54.3: the observed partition {type: split, stage: draft} matches no rule
+    (declared rule requires type=combine AND stage=final); CARDINALITY_UNMATCHED_KIND
+    INFO is emitted and the default 0..* admits the observed degree.
+
+    The DECLARED partition {type:combine, stage:final} is absent from the observed
+    breakdown (degree 0); since the spec requires min=1 it also produces a
+    CARDINALITY_VIOLATION.  The unmatched partition produces no floor violation because
+    the default 0..* admits degree 1.
+    """
+    model, rt_class = _multi_prop_model()
+    rule = CardinalityViolationRule()
+    source_partitioned = [
+        _multi_prop_row(
+            {"stage": "draft", "type": "split"},
+            {"stage": "draft", "type": "split"},
+            BoundedDistribution(count=1, min=1, max=1, mean=1.0),
+        )
+    ]
+    issues = list(rule(_multi_prop_ctx(model, rt_class, source_partitioned)))
+    unmatched = [i for i in issues if i.code == "CARDINALITY_UNMATCHED_KIND"]
+    assert len(unmatched) == 1
+    assert unmatched[0].severity == Severity.INFO
+    # Declared partition absent → degree 0 violates min=1 of the declared rule.
+    declared_absent_violations = [
+        i
+        for i in issues
+        if i.code == "CARDINALITY_VIOLATION"
+        and i.context.get("source") == {"stage": "final", "type": "combine"}
+    ]
+    assert len(declared_absent_violations) == 1
+    # Default 0..* admits degree 1 for the unmatched partition — no default-floor ERROR.
+    default_floor_violations = [
+        i
+        for i in issues
+        if i.code == "CARDINALITY_VIOLATION" and i.context.get("default") is True
+    ]
+    assert default_floor_violations == []
+
+
+def test_multi_property_absent_breakdown_still_yields_unverifiable():
+    """Multi-property conditional with no breakdown → CARDINALITY_UNVERIFIABLE.
+
+    E54.3: no regression on the absent-breakdown fallback path; the single-property
+    path preserves this behaviour and so does the multi-property path.
+    """
+    model, rt_class = _multi_prop_model()
+    rule = CardinalityViolationRule()
+    issues = list(rule(_multi_prop_ctx(model, rt_class, None)))
+    assert len(issues) == 1
+    assert issues[0].code == "CARDINALITY_UNVERIFIABLE"
+    assert issues[0].severity == Severity.INFO

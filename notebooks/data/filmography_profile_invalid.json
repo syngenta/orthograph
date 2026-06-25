@@ -1,0 +1,93 @@
+{
+  "source": "neo4j://staging:7687",
+  "timestamp": "2026-06-25T17:58:42.025942",
+  "node_type_profiles": {
+    "Person": {
+      "label": "Person",
+      "count": 50,
+      "property_profiles": {
+        "name": {
+          "name": "name",
+          "present_count": 50,
+          "total_count": 50,
+          "constraint_required": null,
+          "observed_types": [
+            "String"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": null,
+          "missing_count": 0,
+          "completeness": 1.0
+        }
+      }
+    },
+    "Movie": {
+      "label": "Movie",
+      "count": 20,
+      "property_profiles": {
+        "title": {
+          "name": "title",
+          "present_count": 20,
+          "total_count": 20,
+          "constraint_required": null,
+          "observed_types": [
+            "String"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": null,
+          "missing_count": 0,
+          "completeness": 1.0
+        }
+      }
+    },
+    "Genre": {
+      "label": "Genre",
+      "count": 5,
+      "property_profiles": {}
+    }
+  },
+  "rel_type_profiles": {
+    "Person:ACTED_IN:Movie": {
+      "rel_type": "ACTED_IN",
+      "count": 40,
+      "source_label": "Person",
+      "target_label": "Movie",
+      "property_profiles": {
+        "role": {
+          "name": "role",
+          "present_count": 40,
+          "total_count": 40,
+          "constraint_required": null,
+          "observed_types": [
+            "Long"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": null,
+          "missing_count": 0,
+          "completeness": 1.0
+        }
+      },
+      "cardinality_stats": {
+        "count": 50,
+        "min": 0.0,
+        "max": 5.0,
+        "mean": 0.8,
+        "variance": null,
+        "skewness": null,
+        "kurtosis": null,
+        "histogram": null,
+        "sample_complete": true,
+        "limit": null,
+        "other_count": 0,
+        "std": null
+      },
+      "source_partitioned_cardinality": null,
+      "target_partitioned_cardinality": null
+    }
+  },
+  "constraints": [],
+  "metadata": {}
+}

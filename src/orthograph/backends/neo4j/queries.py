@@ -37,11 +37,7 @@ from orthograph.graph_profile.queries.shared import (
     InspectCardinalityQuery,
     InspectEndpointLabelsQuery,
     InspectSourcePartitionedCardinalityQuery,
-    InspectSourcePartitionedCardinalityWildcardSourceQuery,
-    InspectSourcePartitionedCardinalityWildcardTargetQuery,
     InspectTargetPartitionedCardinalityQuery,
-    InspectTargetPartitionedCardinalityWildcardSourceQuery,
-    InspectTargetPartitionedCardinalityWildcardTargetQuery,
     coerce_types,
 )
 from orthograph.query.catalogue import QueryCatalogue
@@ -849,14 +845,8 @@ _PARTITIONED_PLACEHOLDER_IDENTIFIERS = {
     "label": "_",
     "rel_type": "_",
     "endpoint_label": "_",
-    "source_discriminator": "_",
-    "target_discriminator": "_",
-}
-_WILDCARD_PARTITIONED_PLACEHOLDER_IDENTIFIERS = {
-    "label": "_",
-    "rel_type": "_",
-    "endpoint_label": "_",
-    "discriminator": "_",
+    "source_discriminators": ["_"],
+    "target_discriminators": ["_"],
 }
 
 
@@ -866,9 +856,10 @@ def _register_partitioned_cardinality(catalogue: QueryCatalogue) -> None:
     Source and target are always registered together so every strategy catalogue
     (APOC / Cypher / SCHEMA) exposes the symmetric pair — a both-endpoint
     conditional relationship can be profiled on either side regardless of which
-    inspection strategy is active.  The four one-sided (wildcard) variants are
-    registered alongside so a one-sided discriminator (one wildcard endpoint) is
-    equally profileable on either side.
+    inspection strategy is active.  Each query is variable-width: an endpoint's
+    discriminator list may be empty (a wildcard side, no grouped column) or carry
+    1..N property names (E54), so the former four one-sided ``wildcard_*`` query
+    classes are subsumed and no longer registered.
     """
     catalogue.register_read(
         InspectSourcePartitionedCardinalityQuery(
@@ -878,26 +869,6 @@ def _register_partitioned_cardinality(catalogue: QueryCatalogue) -> None:
     catalogue.register_read(
         InspectTargetPartitionedCardinalityQuery(
             identifiers=_PARTITIONED_PLACEHOLDER_IDENTIFIERS
-        )
-    )
-    catalogue.register_read(
-        InspectSourcePartitionedCardinalityWildcardSourceQuery(
-            identifiers=_WILDCARD_PARTITIONED_PLACEHOLDER_IDENTIFIERS
-        )
-    )
-    catalogue.register_read(
-        InspectSourcePartitionedCardinalityWildcardTargetQuery(
-            identifiers=_WILDCARD_PARTITIONED_PLACEHOLDER_IDENTIFIERS
-        )
-    )
-    catalogue.register_read(
-        InspectTargetPartitionedCardinalityWildcardSourceQuery(
-            identifiers=_WILDCARD_PARTITIONED_PLACEHOLDER_IDENTIFIERS
-        )
-    )
-    catalogue.register_read(
-        InspectTargetPartitionedCardinalityWildcardTargetQuery(
-            identifiers=_WILDCARD_PARTITIONED_PLACEHOLDER_IDENTIFIERS
         )
     )
 

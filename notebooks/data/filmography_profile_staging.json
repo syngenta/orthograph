@@ -1,0 +1,88 @@
+{
+  "source": "neo4j://staging:7687",
+  "timestamp": "2026-06-25T17:58:42.025942",
+  "node_type_profiles": {
+    "Person": {
+      "label": "Person",
+      "count": 115,
+      "property_profiles": {
+        "name": {
+          "name": "name",
+          "present_count": 115,
+          "total_count": 115,
+          "constraint_required": null,
+          "observed_types": [
+            "Integer"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": null,
+          "missing_count": 0,
+          "completeness": 1.0
+        }
+      }
+    },
+    "Movie": {
+      "label": "Movie",
+      "count": 40,
+      "property_profiles": {
+        "title": {
+          "name": "title",
+          "present_count": 40,
+          "total_count": 40,
+          "constraint_required": null,
+          "observed_types": [
+            "String"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": null,
+          "missing_count": 0,
+          "completeness": 1.0
+        }
+      }
+    },
+    "Genre": {
+      "label": "Genre",
+      "count": 5,
+      "property_profiles": {}
+    }
+  },
+  "rel_type_profiles": {
+    "Person:ACTED_IN:Movie": {
+      "rel_type": "ACTED_IN",
+      "count": 248,
+      "source_label": "Person",
+      "target_label": "Movie",
+      "property_profiles": {},
+      "cardinality_stats": {
+        "count": 115,
+        "min": 2.0,
+        "max": 10.0,
+        "mean": 2.2,
+        "variance": null,
+        "skewness": null,
+        "kurtosis": null,
+        "histogram": null,
+        "sample_complete": true,
+        "limit": null,
+        "other_count": 0,
+        "std": null
+      },
+      "source_partitioned_cardinality": null,
+      "target_partitioned_cardinality": null
+    },
+    "Movie:IN_GENRE:Genre": {
+      "rel_type": "IN_GENRE",
+      "count": 40,
+      "source_label": "Movie",
+      "target_label": "Genre",
+      "property_profiles": {},
+      "cardinality_stats": null,
+      "source_partitioned_cardinality": null,
+      "target_partitioned_cardinality": null
+    }
+  },
+  "constraints": [],
+  "metadata": {}
+}

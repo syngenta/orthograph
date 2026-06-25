@@ -56,8 +56,8 @@ def _overview_tab(profile: "GraphProfile"):
         {
             "Type": rt,
             "Count": rtp.count,
-            "Sources": ", ".join(sorted(rtp.source_labels)),
-            "Targets": ", ".join(sorted(rtp.target_labels)),
+            "Source": rtp.source_label,
+            "Target": rtp.target_label,
         }
         for rt, rtp in sorted(profile.rel_type_profiles.items())
     ]
@@ -251,7 +251,7 @@ def _cardinality_tab(profile: "GraphProfile"):
         charts.append(
             html.Div(
                 [
-                    html.H5(f"{rt}  ({rtp.source_labels} → {rtp.target_labels})"),
+                    html.H5(f"{rt}  ({rtp.source_label} → {rtp.target_label})"),
                     html.P(
                         f"min={min_v}  max={max_v}  mean={mean_v}  std={std_v}  "
                         f"(nodes assessed: {cs.count})"
@@ -423,140 +423,9 @@ def create_app_from_connection(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Demo mode: build a synthetic profile and start the server locally.
-    from orthograph.graph_profile.models import (
-        CardinalityStats,
-        ConstraintInfo,
-        GraphProfile,
-        NodeTypeProfile,
-        PropertyProfile,
-        RelationshipTypeProfile,
-    )
+    # Demo mode: use the shared canonical filmography profile.
+    from profiles import FILMOGRAPHY_PROFILE
 
-    _demo_profile = GraphProfile(
-        source="demo — hardcoded synthetic profile",
-        node_type_profiles={
-            "Person": NodeTypeProfile(
-                label="Person",
-                count=120,
-                property_profiles={
-                    "name": PropertyProfile(
-                        name="name",
-                        present_count=120,
-                        total_count=120,
-                        observed_types=["String"],
-                        constraint_required=True,
-                    ),
-                    "born": PropertyProfile(
-                        name="born",
-                        present_count=90,
-                        total_count=120,
-                        observed_types=["Long"],
-                        constraint_required=False,
-                    ),
-                },
-            ),
-            "Movie": NodeTypeProfile(
-                label="Movie",
-                count=38,
-                property_profiles={
-                    "title": PropertyProfile(
-                        name="title",
-                        present_count=38,
-                        total_count=38,
-                        observed_types=["String"],
-                        constraint_required=True,
-                    ),
-                    "released": PropertyProfile(
-                        name="released",
-                        present_count=38,
-                        total_count=38,
-                        observed_types=["Long"],
-                    ),
-                },
-            ),
-            "City": NodeTypeProfile(
-                label="City",
-                count=12,
-                property_profiles={
-                    "name": PropertyProfile(
-                        name="name",
-                        present_count=12,
-                        total_count=12,
-                        observed_types=["String"],
-                    ),
-                },
-            ),
-        },
-        rel_type_profiles={
-            "ACTED_IN": RelationshipTypeProfile(
-                rel_type="ACTED_IN",
-                count=253,
-                source_labels={"Person"},
-                target_labels={"Movie"},
-                property_profiles={
-                    "role": PropertyProfile(
-                        name="role",
-                        present_count=253,
-                        total_count=253,
-                        observed_types=["String"],
-                    ),
-                },
-                cardinality_stats=CardinalityStats(
-                    count=120,
-                    min=1.0,
-                    max=8.0,
-                    mean=2.1,
-                    variance=3.5,
-                    histogram={
-                        "1": 45,
-                        "2": 30,
-                        "3": 20,
-                        "4": 15,
-                        "5": 7,
-                        "6": 2,
-                        "7": 0,
-                        "8": 1,
-                    },
-                ),
-            ),
-            "DIRECTED": RelationshipTypeProfile(
-                rel_type="DIRECTED",
-                count=38,
-                source_labels={"Person"},
-                target_labels={"Movie"},
-                cardinality_stats=CardinalityStats(
-                    count=30,
-                    min=1.0,
-                    max=3.0,
-                    mean=1.27,
-                ),
-            ),
-            "LIVES_IN": RelationshipTypeProfile(
-                rel_type="LIVES_IN",
-                count=90,
-                source_labels={"Person"},
-                target_labels={"City"},
-            ),
-        },
-        constraints=[
-            ConstraintInfo(
-                name="person_name_exists",
-                constraint_type="NODE_PROPERTY_EXISTENCE",
-                entity_type="NODE",
-                labels=["Person"],
-                properties=["name"],
-            ),
-            ConstraintInfo(
-                name="movie_title_exists",
-                constraint_type="NODE_PROPERTY_EXISTENCE",
-                entity_type="NODE",
-                labels=["Movie"],
-                properties=["title"],
-            ),
-        ],
-    )
-
-    _app = create_app(_demo_profile, title="Graph Profile Explorer — Demo")
+    _app = create_app(FILMOGRAPHY_PROFILE, title="Graph Profile Explorer — Demo")
     print("Starting demo server at http://127.0.0.1:8050/")
     _app.run(debug=True)

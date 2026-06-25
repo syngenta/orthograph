@@ -1530,3 +1530,93 @@ def test_count_changed_noop_for_property_address():
     right = PropertyProfile(name="name", present_count=4, total_count=4)
     ctx = _pctx(left=left, right=right, address="Person.name", extra=_PROP_EXTRA_NODE)
     assert list(rule(ctx)) == []
+
+
+# ===========================================================================
+# E54.3 — multi-property partition diff (profile ↔ profile)
+#
+# PartitionedCardinalityChangedRule matches partitions by PartitionKey map
+# equality.  Two partitions differing in one property value (e.g.
+# {"type": "combine", "stage": "final"} vs {"type": "combine", "stage": "draft"})
+# must be treated as distinct — one left_only + one right_only delta.
+# ===========================================================================
+
+
+def test_partitioned_cardinality_multi_property_same_partition_no_delta():
+    """Identical two-property partition keys on both sides → no delta."""
+    rule = PartitionedCardinalityChangedRule()
+    key = PartitionKey(source={}, target={"type": "combine", "stage": "final"})
+    stats = BoundedDistribution(count=4, min=1, max=3)
+    rtp = _rtp_with_partitions(
+        target_rows=[PartitionedCardinalityRow(key=key, stats=stats)]
+    )
+    ctx = _pctx(
+        left=rtp, right=rtp, address="IS_INPUT", extra={"address_type": "rel_type"}
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_partitioned_cardinality_multi_property_differing_value_are_distinct():
+    """Two partitions sharing one property but differing in another are distinct.
+
+    E54.3: left has {type:combine, stage:final}; right has {type:combine, stage:draft}.
+    They must surface as left_only + right_only — NOT as a matched-stats delta.
+    """
+    rule = PartitionedCardinalityChangedRule()
+    left = _rtp_with_partitions(
+        target_rows=[
+            PartitionedCardinalityRow(
+                key=PartitionKey(
+                    source={}, target={"type": "combine", "stage": "final"}
+                ),
+                stats=BoundedDistribution(count=4, min=1, max=3),
+            )
+        ]
+    )
+    right = _rtp_with_partitions(
+        target_rows=[
+            PartitionedCardinalityRow(
+                key=PartitionKey(
+                    source={}, target={"type": "combine", "stage": "draft"}
+                ),
+                stats=BoundedDistribution(count=4, min=1, max=3),
+            )
+        ]
+    )
+    ctx = _pctx(
+        left=left, right=right, address="IS_INPUT", extra={"address_type": "rel_type"}
+    )
+    issues = list(rule(ctx))
+    changes = {i.context["change"] for i in issues}
+    assert len(issues) == 2
+    assert changes == {"left_only", "right_only"}
+    assert all(i.severity == Severity.INFO for i in issues)
+
+
+def test_partitioned_cardinality_multi_property_differing_stats():
+    """Same two-property key on both sides, differing degree stats → stats delta."""
+    rule = PartitionedCardinalityChangedRule()
+    key = PartitionKey(source={}, target={"type": "combine", "stage": "final"})
+    left = _rtp_with_partitions(
+        target_rows=[
+            PartitionedCardinalityRow(
+                key=key, stats=BoundedDistribution(count=4, min=1, max=3)
+            )
+        ]
+    )
+    right = _rtp_with_partitions(
+        target_rows=[
+            PartitionedCardinalityRow(
+                key=key, stats=BoundedDistribution(count=4, min=1, max=5)
+            )
+        ]
+    )
+    ctx = _pctx(
+        left=left, right=right, address="IS_INPUT", extra={"address_type": "rel_type"}
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PARTITIONED_CARDINALITY_CHANGED"
+    assert issues[0].context["change"] == "stats"
+    assert issues[0].context["right_max"] == 5
+    assert issues[0].severity == Severity.INFO

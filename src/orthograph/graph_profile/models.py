@@ -24,7 +24,6 @@ __all__ = [
     "BareRelTypeIdentifiers",
     "CardinalityIdentifiers",
     "PartitionedCardinalityIdentifiers",
-    "WildcardPartitionedCardinalityIdentifiers",
     "EndpointLabelsRow",
     "PartitionedCardinalityRow",
 ]
@@ -378,11 +377,16 @@ class CardinalityIdentifiers(BaseModel):
 class PartitionedCardinalityIdentifiers(BaseModel):
     """Identifier group for the grouped (per-pair) cardinality query.
 
-    ``source_discriminator`` and ``target_discriminator`` are **property names**
-    (e.g. ``"kind"``); like every spliced identifier they pass through
-    ``validate_identifier`` (validate-and-reject) — never f-stringed.  This is the
-    **both-present** group (a discriminator on each endpoint); the one-sided case
-    uses :class:`WildcardPartitionedCardinalityIdentifiers`.
+    ``source_discriminators`` / ``target_discriminators`` are **lists** of
+    property names (e.g. ``["kind", "tier"]``) — one per endpoint, of any width
+    (E54: a multi-property ``PropMatch`` discriminates on N properties).  Each
+    name is spliced via the ``<<...>>`` mechanism through ``validate_identifier``
+    (validate-and-reject) — never f-stringed or string-joined into the template.
+
+    An **empty** list means that endpoint is a wildcard: it projects no grouped
+    column (no read of a non-existent property) and reconstructs to the empty
+    map ``{}`` (ADR-032's absolute convention).  This subsumes the former
+    separate ``WildcardPartitionedCardinalityIdentifiers`` group.
 
     Endpoint-aware: ``endpoint_label`` filters the *other* endpoint of
     the relationship to the discovered shape (the anchored side is ``label``), so
@@ -393,27 +397,8 @@ class PartitionedCardinalityIdentifiers(BaseModel):
     label: str
     rel_type: str  # kind = "relationship type"
     endpoint_label: str  # the non-anchored endpoint label (kind = "label")
-    source_discriminator: str  # property name (kind = "label" grammar)
-    target_discriminator: str  # property name (kind = "label" grammar)
-
-
-class WildcardPartitionedCardinalityIdentifiers(BaseModel):
-    """Identifier group for the **one-sided** partitioned-cardinality queries.
-
-    Exactly one endpoint carries a discriminator; the other is a **wildcard**
-    that the query renders as a constant ``null`` (no grouping key on that side),
-    mirroring ADR-032's absolute convention and the
-    ``PartitionKey(... =None)`` representation.  Only the present endpoint's
-    property name is spliced via ``<<discriminator>>`` — there is no slot for the
-    wildcard side, so no read of a non-existent property is ever issued.  Which
-    endpoint is the wildcard is fixed by the query class
-    (``WildcardSource`` / ``WildcardTarget``), not carried here.
-    """
-
-    label: str
-    rel_type: str  # kind = "relationship type"
-    endpoint_label: str  # the non-anchored endpoint label (kind = "label")
-    discriminator: str  # the present endpoint's property name (kind = "label")
+    source_discriminators: list[str]  # source property names (may be empty)
+    target_discriminators: list[str]  # target property names (may be empty)
 
 
 # ---------------------------------------------------------------------------

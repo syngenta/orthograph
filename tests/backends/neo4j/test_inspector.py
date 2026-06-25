@@ -1039,9 +1039,14 @@ def _partitioned_row(
     avg_degree: float,
     sample_size: int,
 ) -> dict[str, Any]:
+    """A single-property both-sides grouped row (one ``sk0`` + one ``tk0`` column).
+
+    E54.2: the grouped columns are now variable-width (``sk0..skN`` / ``tk0..tkN``);
+    this helper covers the single-property-per-side case (``["kind"]`` on each).
+    """
     return {
-        "sk": sk,
-        "tk": tk,
+        "sk0": sk,
+        "tk0": tk,
         "min_degree": min_degree,
         "max_degree": max_degree,
         "avg_degree": avg_degree,
@@ -1181,6 +1186,160 @@ def test_neo4j_partitioned_cardinality_assembles_expected_partitions() -> None:
     assert by_key[str(sub_nothing)].min == 1
     assert by_key[str(sub_nothing)].max == 1
     assert by_key[str(sub_nothing)].count == 1
+
+
+def test_neo4j_partitioned_cardinality_multi_property_source() -> None:
+    """E54.2: a two-property source discriminator assembles a two-entry map.
+
+    A mocked grouped row with two source columns (sk0, sk1) and one target column
+    (tk0) must reconstruct ``key.source = {"kind": .., "tier": ..}`` (names from
+    the sorted discriminator list) — parity with the NetworkX reference (E54.1
+    ``test_inspect_partitioned_cardinality_multi_property_mixed_endpoints``).
+    """
+
+    class Producer(NodeModel):
+        __label__ = "Producer"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+        tier: str
+
+    class Artifact(NodeModel):
+        __label__ = "Artifact"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+
+    class Produces(RelationshipModel):
+        __label__ = "PRODUCES"
+        __source_label__ = "Producer"
+        __target_label__ = "Artifact"
+        __source_cardinality__ = ConditionalCardinality(
+            rules=(
+                ConditionalRule(
+                    source=PropMatch({"kind": "heavy", "tier": "1"}),
+                    target=PropMatch({"kind": "final"}),
+                    spec=CardinalitySpec(min=1, max=3),
+                ),
+            ),
+            default="0..*",
+        )
+
+    gd = GraphDefinition(
+        name="ProducerArtifact",
+        node_types=[Producer, Artifact],
+        relationship_types=[Produces],
+    )
+
+    driver = MagicMock()
+    call_count = 0
+    responses = [
+        mock_execute_query([{"cnt": 3}], ["cnt"]),  # APOC present
+        mock_execute_query([{"label": "Artifact"}, {"label": "Producer"}], ["label"]),
+        mock_execute_query([{"relationshipType": "PRODUCES"}], ["relationshipType"]),
+        mock_execute_query([], []),  # ApocRelTypesQuery (no rel props)
+        mock_execute_query([], []),  # constraints
+        # Artifact props
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "kind",
+                    "propertyTypes": ["String"],
+                    "mandatory": True,
+                    "propertyObservations": 1,
+                    "totalObservations": 1,
+                }
+            ]
+        ),
+        # Producer props
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "kind",
+                    "propertyTypes": ["String"],
+                    "mandatory": True,
+                    "propertyObservations": 1,
+                    "totalObservations": 1,
+                }
+            ]
+        ),
+        # endpoint_labels for PRODUCES
+        mock_execute_query(
+            [{"source_labels": ["Producer"], "target_labels": ["Artifact"]}]
+        ),
+        # CypherRelPropertiesQuery
+        mock_execute_query([], []),
+        # aggregate cardinality
+        mock_execute_query(
+            [{"min_degree": 2, "max_degree": 2, "avg_degree": 2.0, "sample_size": 1}]
+        ),
+        # source-side multi-property grouped row: sk0=kind, sk1=tier, tk0=kind.
+        mock_execute_query(
+            [
+                {
+                    "sk0": "heavy",
+                    "sk1": "1",
+                    "tk0": "final",
+                    "min_degree": 2,
+                    "max_degree": 2,
+                    "avg_degree": 2.0,
+                    "sample_size": 1,
+                }
+            ]
+        ),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector().inspect(driver, graph_definition=gd)
+    produces = profile.rel_type_profiles["Producer:PRODUCES:Artifact"]
+    partitions = produces.source_partitioned_cardinality
+    assert partitions is not None
+
+    multi = PartitionKey(
+        source={"kind": "heavy", "tier": "1"}, target={"kind": "final"}
+    )
+    by_key = _by_key(partitions)
+    assert set(by_key) == {str(multi)}
+    assert by_key[str(multi)].min == 2
+    assert by_key[str(multi)].max == 2
+    assert by_key[str(multi)].count == 1
+
+
+def test_neo4j_partitioned_cardinality_multi_property_injection_rejected() -> None:
+    """E54.2: an unsafe discriminator name in an N-property side is rejected.
+
+    The query must raise ``CypherIdentifierError`` before any Cypher is built —
+    the property names are spliced via ``validate_identifier``, never f-stringed.
+    """
+    from orthograph.cypher.bindings import NoParams
+    from orthograph.cypher.exceptions import CypherIdentifierError
+    from orthograph.graph_profile.queries.shared import (
+        InspectSourcePartitionedCardinalityQuery,
+    )
+
+    q = InspectSourcePartitionedCardinalityQuery(
+        identifiers={
+            "label": "Producer",
+            "rel_type": "PRODUCES",
+            "endpoint_label": "Artifact",
+            "source_discriminators": ["kind", "tier`) DETACH DELETE (n) //"],
+            "target_discriminators": ["kind"],
+        }
+    )
+    with pytest.raises(CypherIdentifierError):
+        q.build(NoParams())
 
 
 def test_neo4j_partitioned_cardinality_zero_degree_rows_suppressed() -> None:
@@ -1812,13 +1971,13 @@ def test_neo4j_validate_database_forwards_graph_definition() -> None:
 
 
 def test_neo4j_unprocessable_first_side_falls_through_to_processable_second() -> None:
-    """Unprocessable first conditional side does not prevent second side from running.
+    """Both conditional sides are profiled; iteration does not stop after the first.
 
-    Regression for the bug where break fired after any ConditionalCardinality,
-    even when _extract_discriminators returned None (multi-property discriminator).
-    The first side (source) uses two discriminator properties — unprocessable.
-    The second side (target) uses one property — processable.  The partitioned
-    query must still be issued for the target side.
+    Regression for the bug where ``break`` fired after any
+    ``ConditionalCardinality``.  Post-E54 the source side is *also* processable
+    (multi-property discriminators are now profiled, not declined), so both the
+    multi-property source breakdown and the single-property target breakdown must
+    be populated — proving the loop iterates over both sides.
     """
     # Build a definition where source cardinality uses multi-property conditions
     # and target cardinality uses a single-property condition.
@@ -1840,7 +1999,7 @@ def test_neo4j_unprocessable_first_side_falls_through_to_processable_second() ->
         __label__ = "PRODUCES"
         __source_label__ = "Producer"
         __target_label__ = "Artifact"
-        # Source side: multi-property discriminator → _extract_discriminators → None
+        # Source side: multi-property discriminator → now profiled (E54).
         __source_cardinality__ = ConditionalCardinality(
             rules=(
                 ConditionalRule(
@@ -1910,7 +2069,22 @@ def test_neo4j_unprocessable_first_side_falls_through_to_processable_second() ->
         mock_execute_query(
             [{"min_degree": 2, "max_degree": 2, "avg_degree": 2.0, "sample_size": 1}]
         ),
-        # Partitioned query for the target side (must be issued).
+        # Partitioned query for the SOURCE side (multi-property: sk0=kind, sk1=tier,
+        # tk0=kind on the target endpoint).
+        mock_execute_query(
+            [
+                {
+                    "sk0": "heavy",
+                    "sk1": "1",
+                    "tk0": "final",
+                    "min_degree": 1,
+                    "max_degree": 3,
+                    "avg_degree": 2.0,
+                    "sample_size": 1,
+                }
+            ]
+        ),
+        # Partitioned query for the TARGET side (single-property each side).
         mock_execute_query([_partitioned_row("heavy", "final", 2, 2, 2.0, 1)]),
     ]
 
@@ -1935,28 +2109,35 @@ def test_neo4j_unprocessable_first_side_falls_through_to_processable_second() ->
     # E50.5: rel_type_profiles are keyed by identity triple (ADR-037).
     produces = profile.rel_type_profiles["Producer:PRODUCES:Artifact"]
 
-    # The target-side partitioned query must have been issued (11 calls total).
-    # E50.5: +1 for ApocRelTypesQuery, +1 for CypherRelPropertiesQuery per pair.
-    assert call_count == 11, (
-        f"Expected 11 driver calls (target-side partitioned query included), "
-        f"got {call_count}.  The unprocessable source side likely blocked iteration."
+    # Both partitioned queries were issued (12 calls total): one per conditional
+    # side, confirming the loop iterated over both sides without a premature break.
+    assert call_count == 12, (
+        f"Expected 12 driver calls (both per-side partitioned queries included), "
+        f"got {call_count}.  A side likely blocked iteration."
     )
-    assert produces.target_partitioned_cardinality is not None, (
-        "target_partitioned_cardinality must be populated from the "
-        "processable target side."
+    # The multi-property source side is now profiled (E54), not declined.
+    assert produces.source_partitioned_cardinality is not None, (
+        "source_partitioned_cardinality must be populated from the multi-property "
+        "source side (E54 lifts the former single-property decline)."
     )
-    # The unprocessable multi-property source side leaves source breakdown None.
-    assert produces.source_partitioned_cardinality is None
+    src_by_key = _by_key(produces.source_partitioned_cardinality)
+    multi = PartitionKey(
+        source={"kind": "heavy", "tier": "1"}, target={"kind": "final"}
+    )
+    assert set(src_by_key) == {str(multi)}
+    # The single-property target side is also populated.
+    assert produces.target_partitioned_cardinality is not None
 
 
 def test_neo4j_partitioned_cardinality_one_sided_renders_null_and_populates() -> None:
-    """One-sided (target-keyed, source-wildcard) discriminator: E49 T2.
+    """One-sided (target-keyed, source-wildcard) discriminator.
 
     IS_INPUT: only the (target) Operation endpoint is keyed on ``type``; the
-    source Sample endpoint is a wildcard.  The profiler must (a) issue the
-    target-side wildcard-source query whose Cypher renders ``null AS sk`` rather
-    than a read of a non-existent Sample property, and (b) populate
-    ``target_partitioned_cardinality`` keyed ``source={} target={"type": <type>}``.
+    source Sample endpoint is a wildcard.  The profiler must (a) issue a
+    target-side query whose Cypher reads no source (Sample) property at all — the
+    wildcard side projects no grouped column (E54.2's generalisation of the
+    former ``null AS sk``) — and (b) populate ``target_partitioned_cardinality``
+    keyed ``source={} target={"type": <type>}``.
     """
 
     class Sample(NodeModel):
@@ -2026,8 +2207,19 @@ def test_neo4j_partitioned_cardinality_one_sided_renders_null_and_populates() ->
         mock_execute_query(
             [{"min_degree": 1, "max_degree": 1, "avg_degree": 1.0, "sample_size": 1}]
         ),
-        # target-side wildcard-source partitioned query
-        mock_execute_query([_partitioned_row(None, "combine", 2, 2, 2.0, 1)]),
+        # target-side query: only the target (tk0) column is grouped; the
+        # wildcard source projects no column.
+        mock_execute_query(
+            [
+                {
+                    "tk0": "combine",
+                    "min_degree": 2,
+                    "max_degree": 2,
+                    "avg_degree": 2.0,
+                    "sample_size": 1,
+                }
+            ]
+        ),
     ]
 
     def side_effect(*args: Any, **kwargs: Any) -> Any:
@@ -2057,15 +2249,18 @@ def test_neo4j_partitioned_cardinality_one_sided_renders_null_and_populates() ->
     assert by_key[str(combine)].min == 2
     assert by_key[str(combine)].max == 4 or by_key[str(combine)].max == 2
 
-    # The wildcard side rendered a constant null, never a property read of a
-    # non-existent Sample discriminator.
+    # The wildcard side projected no grouped column and read no Sample property:
+    # only the target (m) discriminator and a single tk0 column appear.
     partition_queries = [
-        c for c in issued_cypher if " AS sk," in c and "RETURN sk" in c
+        c for c in issued_cypher if "tk0" in c and "AS sample_size" in c
     ]
     assert partition_queries, "no partitioned-cardinality query was issued"
-    assert any("null AS sk" in c for c in partition_queries), (
-        "the wildcard source side must render 'null AS sk', not a property read"
-    )
+    target_query = partition_queries[0]
+    assert "m.`type` AS tk0" in target_query
+    # The wildcard source side must read no source-node property and project no
+    # sk column at all.
+    assert " AS sk0" not in target_query
+    assert "n.`" not in target_query
 
 
 # ---------------------------------------------------------------------------

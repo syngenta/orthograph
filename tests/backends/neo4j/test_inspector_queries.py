@@ -716,11 +716,6 @@ def test_apoc_catalogue_registered_names() -> None:
     assert "inspect.endpoint_labels" in names
     assert "inspect.partitioned_cardinality.source" in names
     assert "inspect.partitioned_cardinality.target" in names
-    # E49 T2: one-sided (wildcard) partitioned-cardinality variants.
-    assert "inspect.partitioned_cardinality.source.wildcard_source" in names
-    assert "inspect.partitioned_cardinality.source.wildcard_target" in names
-    assert "inspect.partitioned_cardinality.target.wildcard_source" in names
-    assert "inspect.partitioned_cardinality.target.wildcard_target" in names
     # E46.1/E46.2 value scan: APOC type counts + APOC histograms (node + rel).
     assert "neo4j.inspect.apoc.node_type_counts" in names
     assert "neo4j.inspect.apoc.rel_type_counts" in names
@@ -729,7 +724,7 @@ def test_apoc_catalogue_registered_names() -> None:
     # ADR-036: property-independent present-count queries (APOC count correction).
     assert "neo4j.inspect.node_present_count" in names
     assert "neo4j.inspect.rel_present_count" in names
-    assert len(names) == 22
+    assert len(names) == 18
 
 
 def test_cypher_catalogue_registered_names() -> None:
@@ -742,11 +737,6 @@ def test_cypher_catalogue_registered_names() -> None:
     assert "inspect.endpoint_labels" in names
     assert "inspect.partitioned_cardinality.source" in names
     assert "inspect.partitioned_cardinality.target" in names
-    # E49 T2: one-sided (wildcard) partitioned-cardinality variants.
-    assert "inspect.partitioned_cardinality.source.wildcard_source" in names
-    assert "inspect.partitioned_cardinality.source.wildcard_target" in names
-    assert "inspect.partitioned_cardinality.target.wildcard_source" in names
-    assert "inspect.partitioned_cardinality.target.wildcard_target" in names
     # APOC-keyed value-scan queries are NOT
     # registered on pure-Cypher.  Type counts need apoc.meta.cypher.type and the
     # APOC histogram needs apoc.convert.toJson (keeps lists in the histogram).
@@ -763,7 +753,7 @@ def test_cypher_catalogue_registered_names() -> None:
     # (used by the inspector only on the APOC strategy).
     assert "neo4j.inspect.node_present_count" in names
     assert "neo4j.inspect.rel_present_count" in names
-    assert len(names) == 19
+    assert len(names) == 15
 
 
 def test_schema_catalogue_registered_names() -> None:
@@ -785,11 +775,6 @@ def test_schema_catalogue_registered_names() -> None:
     assert "inspect.endpoint_labels" in names
     assert "inspect.partitioned_cardinality.source" in names
     assert "inspect.partitioned_cardinality.target" in names
-    # E49 T2: one-sided (wildcard) partitioned-cardinality variants.
-    assert "inspect.partitioned_cardinality.source.wildcard_source" in names
-    assert "inspect.partitioned_cardinality.source.wildcard_target" in names
-    assert "inspect.partitioned_cardinality.target.wildcard_source" in names
-    assert "inspect.partitioned_cardinality.target.wildcard_target" in names
     # SCHEMA may use the APOC type function when APOC is present;
     # the inspector gates at runtime.  Histograms are value-only.
     assert "neo4j.inspect.apoc.node_type_counts" in names
@@ -804,7 +789,7 @@ def test_schema_catalogue_registered_names() -> None:
     # ADR-036: present-count queries registered for parity.
     assert "neo4j.inspect.node_present_count" in names
     assert "neo4j.inspect.rel_present_count" in names
-    assert len(names) == 25
+    assert len(names) == 21
 
 
 def test_catalogue_all_reads_have_output_schema() -> None:

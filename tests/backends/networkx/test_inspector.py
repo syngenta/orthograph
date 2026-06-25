@@ -933,8 +933,19 @@ def test_inspect_partitioned_cardinality_one_sided_target_keyed():
     assert by_key[str(split)].max == 1
 
 
-def test_inspect_partitioned_cardinality_multi_property_declines():
-    """A multi-property-per-endpoint discriminator declines (no partial breakdown)."""
+# --- E54.1: multi-property discriminator maps ---
+# The old test_inspect_partitioned_cardinality_multi_property_declines is
+# superseded by these two tests: E54.1 lifts the len(keys) != 1 restriction so
+# multi-property endpoints produce a real breakdown instead of collapsing to {}.
+
+
+def test_inspect_partitioned_cardinality_multi_property_source():
+    """E54.1: a two-property source discriminator produces a real breakdown.
+
+    source=PropMatch({"kind": "heavy", "tier": "1"}) must yield a partition key
+    with source={"kind": "heavy", "tier": "1"} (sorted) — not the former empty-map
+    collapse — and correct min/max/count.
+    """
 
     class Producer(NodeModel):
         __label__ = "Producer"
@@ -972,18 +983,167 @@ def test_inspect_partitioned_cardinality_multi_property_declines():
     )
     g = _make_graph()
     g.add_node("p1", __label__="Producer", uid="p1", kind="heavy", tier="1")
+    g.add_node("p2", __label__="Producer", uid="p2", kind="light", tier="2")
     g.add_node("a1", __label__="Artifact", uid="a1")
+    g.add_node("a2", __label__="Artifact", uid="a2")
+    g.add_node("a3", __label__="Artifact", uid="a3")
+    # p1 (heavy, tier=1) → 2 artifacts; p2 (light, tier=2) → 1 artifact.
     g.add_edge("p1", "a1", __label__="PRODUCES")
+    g.add_edge("p1", "a2", __label__="PRODUCES")
+    g.add_edge("p2", "a3", __label__="PRODUCES")
 
-    # Must not crash; the multi-key endpoint declines to an empty map (no per-value
-    # split) — _discriminator_map returns {} for len(keys) != 1.  Value unchanged
-    # from before; only the shape is now a {} map instead of a None scalar.
     profile = NetworkxInspector().inspect(g, graph_definition=gd)
     produces = str(
         RelTypeKey(source_label="Producer", label="PRODUCES", target_label="Artifact")
     )
     rtp = profile.rel_type_profiles[produces]
-    # The breakdown collapses to a single empty-map partition (no per-value split).
-    empty = PartitionKey(source={}, target={})
-    assert rtp.source_partitioned_cardinality is not None
-    assert [row.key for row in rtp.source_partitioned_cardinality] == [empty]
+    partitions = rtp.source_partitioned_cardinality
+
+    # Breakdown must be produced — not None, not a single empty-map row.
+    assert partitions is not None
+    # Keys are sorted: "kind" < "tier".
+    heavy_1 = PartitionKey(source={"kind": "heavy", "tier": "1"}, target={})
+    light_2 = PartitionKey(source={"kind": "light", "tier": "2"}, target={})
+    by_key = _by_key(partitions)
+    assert set(by_key) == {str(heavy_1), str(light_2)}
+
+    # p1 has degree 2 in its partition; p2 has degree 1.
+    assert by_key[str(heavy_1)].min == 2
+    assert by_key[str(heavy_1)].max == 2
+    assert by_key[str(heavy_1)].count == 1
+
+    assert by_key[str(light_2)].min == 1
+    assert by_key[str(light_2)].max == 1
+    assert by_key[str(light_2)].count == 1
+
+
+def test_inspect_partitioned_cardinality_multi_property_mixed_endpoints():
+    """E54.1: two source-discriminator properties + one target property.
+
+    source=PropMatch({"type": "combine", "stage": "final"}) (2 props, sorted:
+    stage < type) and target=PropMatch({"kind": "output"}) (1 prop).  Both maps
+    must be populated correctly and the source key must use sorted property order.
+    """
+
+    class Operation(NodeModel):
+        __label__ = "Operation"
+        __uid_field__ = "uid"
+        uid: str
+        type: str
+        stage: str
+
+    class Sample(NodeModel):
+        __label__ = "Sample"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"type": "combine", "stage": "final"}),
+                target=PropMatch({"kind": "output"}),
+                spec=CardinalitySpec(min=1, max=2),
+            ),
+        ),
+        default="0..*",
+    )
+
+    class HasOutput(RelationshipModel):
+        __label__ = "HAS_OUTPUT"
+        __source_label__ = "Operation"
+        __target_label__ = "Sample"
+        __source_cardinality__ = card
+
+    gd = GraphDefinition(
+        name="MixedProps",
+        node_types=[Operation, Sample],
+        relationship_types=[HasOutput],
+    )
+    g = _make_graph()
+    g.add_node("op1", __label__="Operation", uid="op1", type="combine", stage="final")
+    g.add_node("s1", __label__="Sample", uid="s1", kind="output")
+    g.add_node("s2", __label__="Sample", uid="s2", kind="output")
+    g.add_edge("op1", "s1", __label__="HAS_OUTPUT")
+    g.add_edge("op1", "s2", __label__="HAS_OUTPUT")
+
+    profile = NetworkxInspector().inspect(g, graph_definition=gd)
+    has_output = str(
+        RelTypeKey(source_label="Operation", label="HAS_OUTPUT", target_label="Sample")
+    )
+    rtp = profile.rel_type_profiles[has_output]
+    partitions = rtp.source_partitioned_cardinality
+
+    assert partitions is not None
+    # Source map: sorted keys → "stage" before "type".
+    expected_key = PartitionKey(
+        source={"stage": "final", "type": "combine"},
+        target={"kind": "output"},
+    )
+    by_key = _by_key(partitions)
+    assert set(by_key) == {str(expected_key)}
+    # op1 has outgoing degree 2 in this partition.
+    assert by_key[str(expected_key)].min == 2
+    assert by_key[str(expected_key)].max == 2
+    assert by_key[str(expected_key)].count == 1
+
+
+def test_inspect_partitioned_cardinality_multi_property_null_value_preserved():
+    """E54.1: a missing/None property on a multi-key endpoint is {k: None}, not dropped.
+
+    An endpoint with kind=None (explicit null) must produce {kind: None} for that
+    key — the key is present in the map, value is None.
+    """
+
+    class Producer(NodeModel):
+        __label__ = "Producer"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+        tier: str
+
+    class Artifact(NodeModel):
+        __label__ = "Artifact"
+        __uid_field__ = "uid"
+        uid: str
+
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "heavy", "tier": "1"}),
+                target=PropMatch(),
+                spec=CardinalitySpec(min=1, max=3),
+            ),
+        ),
+        default="0..*",
+    )
+
+    class Produces(RelationshipModel):
+        __label__ = "PRODUCES"
+        __source_label__ = "Producer"
+        __target_label__ = "Artifact"
+        __source_cardinality__ = card
+
+    gd = GraphDefinition(
+        name="MultiPropNull",
+        node_types=[Producer, Artifact],
+        relationship_types=[Produces],
+    )
+    g = _make_graph()
+    # p1 has kind=None (missing); tier="1" → key.source = {"kind": None, "tier": "1"}
+    g.add_node("p1", __label__="Producer", uid="p1", tier="1")
+    g.add_node("a1", __label__="Artifact", uid="a1")
+    g.add_edge("p1", "a1", __label__="PRODUCES")
+
+    profile = NetworkxInspector().inspect(g, graph_definition=gd)
+    produces = str(
+        RelTypeKey(source_label="Producer", label="PRODUCES", target_label="Artifact")
+    )
+    rtp = profile.rel_type_profiles[produces]
+    partitions = rtp.source_partitioned_cardinality
+
+    assert partitions is not None
+    assert len(partitions) == 1
+    # kind is absent → None value preserved in the map.
+    assert partitions[0].key.source == {"kind": None, "tier": "1"}
+    assert partitions[0].key.target == {}

@@ -1,0 +1,249 @@
+{
+  "source": "demo — synthetic filmography profile",
+  "timestamp": "2026-06-25T18:25:39.334929",
+  "node_type_profiles": {
+    "Person": {
+      "label": "Person",
+      "count": 120,
+      "property_profiles": {
+        "name": {
+          "name": "name",
+          "present_count": 120,
+          "total_count": 120,
+          "constraint_required": true,
+          "observed_types": [
+            "String"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": null,
+          "missing_count": 0,
+          "completeness": 1.0
+        },
+        "born": {
+          "name": "born",
+          "present_count": 90,
+          "total_count": 120,
+          "constraint_required": false,
+          "observed_types": [
+            "Long"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": null,
+          "missing_count": 30,
+          "completeness": 0.75
+        }
+      }
+    },
+    "Movie": {
+      "label": "Movie",
+      "count": 38,
+      "property_profiles": {
+        "title": {
+          "name": "title",
+          "present_count": 38,
+          "total_count": 38,
+          "constraint_required": true,
+          "observed_types": [
+            "String"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": {
+            "count": 38,
+            "min": null,
+            "max": null,
+            "mean": null,
+            "variance": null,
+            "skewness": null,
+            "kurtosis": null,
+            "histogram": {
+              "The Matrix": 1,
+              "Inception": 1,
+              "Avatar": 1,
+              "Dune": 1
+            },
+            "sample_complete": false,
+            "limit": 4,
+            "other_count": 34,
+            "std": null
+          },
+          "missing_count": 0,
+          "completeness": 1.0
+        },
+        "released": {
+          "name": "released",
+          "present_count": 38,
+          "total_count": 38,
+          "constraint_required": false,
+          "observed_types": [
+            "Long"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": null,
+          "missing_count": 0,
+          "completeness": 1.0
+        }
+      }
+    },
+    "City": {
+      "label": "City",
+      "count": 12,
+      "property_profiles": {
+        "name": {
+          "name": "name",
+          "present_count": 12,
+          "total_count": 12,
+          "constraint_required": true,
+          "observed_types": [
+            "String"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": null,
+          "missing_count": 0,
+          "completeness": 1.0
+        }
+      }
+    }
+  },
+  "rel_type_profiles": {
+    "Person:ACTED_IN:Movie": {
+      "rel_type": "ACTED_IN",
+      "count": 253,
+      "source_label": "Person",
+      "target_label": "Movie",
+      "property_profiles": {
+        "role": {
+          "name": "role",
+          "present_count": 253,
+          "total_count": 253,
+          "constraint_required": true,
+          "observed_types": [
+            "String"
+          ],
+          "observed_type_counts": {},
+          "distinct_count": null,
+          "value_distribution": null,
+          "missing_count": 0,
+          "completeness": 1.0
+        }
+      },
+      "cardinality_stats": {
+        "count": 120,
+        "min": 1.0,
+        "max": 8.0,
+        "mean": 2.1,
+        "variance": 3.5,
+        "skewness": null,
+        "kurtosis": null,
+        "histogram": {
+          "1": 45,
+          "2": 30,
+          "3": 20,
+          "4": 15,
+          "5": 7,
+          "6": 2,
+          "7": 0,
+          "8": 1
+        },
+        "sample_complete": true,
+        "limit": null,
+        "other_count": 0,
+        "std": 1.8708286933869707
+      },
+      "source_partitioned_cardinality": null,
+      "target_partitioned_cardinality": null
+    },
+    "Person:DIRECTED:Movie": {
+      "rel_type": "DIRECTED",
+      "count": 38,
+      "source_label": "Person",
+      "target_label": "Movie",
+      "property_profiles": {},
+      "cardinality_stats": {
+        "count": 30,
+        "min": 1.0,
+        "max": 3.0,
+        "mean": 1.27,
+        "variance": null,
+        "skewness": null,
+        "kurtosis": null,
+        "histogram": {
+          "1": 22,
+          "2": 6,
+          "3": 2
+        },
+        "sample_complete": true,
+        "limit": null,
+        "other_count": 0,
+        "std": null
+      },
+      "source_partitioned_cardinality": null,
+      "target_partitioned_cardinality": null
+    },
+    "Person:LIVES_IN:City": {
+      "rel_type": "LIVES_IN",
+      "count": 90,
+      "source_label": "Person",
+      "target_label": "City",
+      "property_profiles": {},
+      "cardinality_stats": null,
+      "source_partitioned_cardinality": null,
+      "target_partitioned_cardinality": null
+    }
+  },
+  "constraints": [
+    {
+      "name": "person_name_exists",
+      "constraint_type": "NODE_PROPERTY_EXISTENCE",
+      "entity_type": "NODE",
+      "labels": [
+        "Person"
+      ],
+      "properties": [
+        "name"
+      ],
+      "property_type": null
+    },
+    {
+      "name": "movie_title_exists",
+      "constraint_type": "NODE_PROPERTY_EXISTENCE",
+      "entity_type": "NODE",
+      "labels": [
+        "Movie"
+      ],
+      "properties": [
+        "title"
+      ],
+      "property_type": null
+    },
+    {
+      "name": "city_name_exists",
+      "constraint_type": "NODE_PROPERTY_EXISTENCE",
+      "entity_type": "NODE",
+      "labels": [
+        "City"
+      ],
+      "properties": [
+        "name"
+      ],
+      "property_type": null
+    },
+    {
+      "name": "acted_in_role_exists",
+      "constraint_type": "RELATIONSHIP_PROPERTY_EXISTENCE",
+      "entity_type": "RELATIONSHIP",
+      "labels": [
+        "ACTED_IN"
+      ],
+      "properties": [
+        "role"
+      ],
+      "property_type": null
+    }
+  ],
+  "metadata": {}
+}

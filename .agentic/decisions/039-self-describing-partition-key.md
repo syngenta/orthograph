@@ -162,18 +162,14 @@ extend the producer later" split (ADR-032 §2 realised on the profile side).
 Per the project owner's direction, the changes ship **one after the other** and we do
 **not** add a `len(keys) > 1` rejection at `GraphDefinition` construction:
 
-- **E53** reshapes the model/serialization/comparison/diff/visualization for the
+- **E53** (delivered) reshapes the model/serialization/comparison/diff/visualization for the
   **single-property** case — and **delivers value immediately**: the MatProt pilot's
   `Operation.type` breakdown becomes self-describing and fully name-aware in both comparison
   paths.
-- **E54** makes the producers emit multi-property maps (Cypher N-property grouping +
+- **E54** (delivered) makes the producers emit multi-property maps (Cypher N-property grouping +
   NetworkX multi-key reads), at which point the silent-drift hole is closed at the root: a
   multi-property conditional rule is *profiled and checked*, not declined. No guard is
   needed because the capability gap that motivated it is gone.
-
-Between E53 and E54 a multi-property conditional rule still yields
-`CARDINALITY_UNVERIFIABLE` (INFO) — unchanged from today, honest per ADR-034 §2, **never a
-false verdict**.
 
 ---
 

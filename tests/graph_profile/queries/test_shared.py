@@ -10,7 +10,6 @@ import pytest
 from orthograph.cypher.bindings import NoParams
 from orthograph.cypher.exceptions import CypherIdentifierError
 from orthograph.graph_profile.models import (
-    BoundedDistribution,
     CardinalityStats,
     EndpointLabelsRow,
     PartitionedCardinalityRow,
@@ -110,56 +109,58 @@ def test_endpoint_labels_injected_rel_type_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Partitioned cardinality queries
+# Partitioned cardinality queries (E54.2: variable-width per-side name lists)
+#
+# Each query carries two *lists* of discriminator property names (one per
+# spliceable side).  A list of length k projects k grouped columns for that
+# side; an empty list means that endpoint is a wildcard (no grouped column, no
+# read of a non-existent property) and reconstructs to the empty map ``{}``.
+# This subsumes the former 6-class source/target × {both, wildcard_source,
+# wildcard_target} layout into the two source/target classes.
 # ---------------------------------------------------------------------------
 
 
-def _partitioned_query() -> InspectSourcePartitionedCardinalityQuery:
+def _partitioned_query(
+    source: list[str] | None = None,
+    target: list[str] | None = None,
+) -> InspectSourcePartitionedCardinalityQuery:
     return InspectSourcePartitionedCardinalityQuery(
         identifiers={
             "label": "Operation",
             "rel_type": "PRODUCES",
             "endpoint_label": "Sample",
-            "source_discriminator": "kind",
-            "target_discriminator": "kind",
+            "source_discriminators": ["kind"] if source is None else source,
+            "target_discriminators": ["kind"] if target is None else target,
         }
     )
 
 
-def _target_partitioned_query() -> InspectTargetPartitionedCardinalityQuery:
+def _target_partitioned_query(
+    source: list[str] | None = None,
+    target: list[str] | None = None,
+) -> InspectTargetPartitionedCardinalityQuery:
     return InspectTargetPartitionedCardinalityQuery(
         identifiers={
             "label": "Sample",
             "rel_type": "PRODUCES",
             "endpoint_label": "Operation",
-            "source_discriminator": "kind",
-            "target_discriminator": "kind",
+            "source_discriminators": ["kind"] if source is None else source,
+            "target_discriminators": ["kind"] if target is None else target,
         }
     )
 
 
-def test_partitioned_build_splices_all_four_identifiers() -> None:
+def test_partitioned_build_splices_single_property_each_side() -> None:
     cypher, params = _partitioned_query().build(_no_params())
     assert "`Operation`" in cypher
     assert "`PRODUCES`" in cypher
-    # both discriminator property names spliced
-    assert "n.`kind`" in cypher
-    assert "m.`kind`" in cypher
-    # grouped aggregation columns present
-    assert "sk" in cypher
-    assert "tk" in cypher
+    # both discriminator property names spliced (one column per side)
+    assert "n.`kind` AS sk0" in cypher
+    assert "m.`kind` AS tk0" in cypher
     assert "min_degree" in cypher
     assert "max_degree" in cypher
     assert "sample_size" in cypher
     assert params == {}
-
-
-def test_partitioned_template_contains_all_four_slots() -> None:
-    template = InspectSourcePartitionedCardinalityQuery.cypher_template
-    assert "<<label>>" in template
-    assert "<<rel_type>>" in template
-    assert "<<source_discriminator>>" in template
-    assert "<<target_discriminator>>" in template
 
 
 def test_source_query_anchors_on_source_outgoing_degree() -> None:
@@ -181,66 +182,132 @@ def test_target_query_anchors_on_target_incoming_degree() -> None:
     assert "count(m) AS sample_size" in cypher
     assert "count(n)" not in cypher
     # absolute discriminator convention is preserved (sk from n, tk from m)
-    assert "n.`kind` AS sk" in cypher
-    assert "m.`kind` AS tk" in cypher
+    assert "n.`kind` AS sk0" in cypher
+    assert "m.`kind` AS tk0" in cypher
 
 
-def test_partitioned_template_contains_all_four_slots_target() -> None:
-    template = InspectTargetPartitionedCardinalityQuery.cypher_template
-    assert "<<label>>" in template
-    assert "<<rel_type>>" in template
-    assert "<<source_discriminator>>" in template
-    assert "<<target_discriminator>>" in template
+# --- variable-width: multiple properties per side ---
 
 
-def test_partitioned_materialize_maps_row() -> None:
-    row = _partitioned_query().materialize(
+def test_partitioned_build_projects_one_column_per_source_property() -> None:
+    """Two source properties → two grouped sk columns spliced safely."""
+    cypher, _ = _partitioned_query(source=["kind", "tier"]).build(_no_params())
+    assert "n.`kind` AS sk0" in cypher
+    assert "n.`tier` AS sk1" in cypher
+    # the lone target property keeps its single tk column
+    assert "m.`kind` AS tk0" in cypher
+
+
+def test_partitioned_materialize_two_source_properties() -> None:
+    """A two-source-property grouped row → a two-entry source map."""
+    row = _partitioned_query(source=["kind", "tier"]).materialize(
         {
-            "sk": "subsampling",
-            "tk": "Sample",
-            "min_degree": 1,
-            "max_degree": 3,
+            "sk0": "heavy",
+            "sk1": "1",
+            "tk0": "Sample",
+            "min_degree": 2,
+            "max_degree": 2,
             "avg_degree": 2.0,
-            "sample_size": 10,
+            "sample_size": 1,
         }
     )
     assert isinstance(row, PartitionedCardinalityRow)
-    # Names threaded from the query's identifiers (source/target discriminator "kind").
-    assert row.key.source == {"kind": "subsampling"}
+    assert row.key.source == {"kind": "heavy", "tier": "1"}
     assert row.key.target == {"kind": "Sample"}
-    assert isinstance(row.stats, BoundedDistribution)
-    # constructed as BoundedDistribution directly, not the CardinalityStats marker
-    assert type(row.stats) is BoundedDistribution
-    assert row.stats.min == 1
-    assert row.stats.max == 3
-    assert row.stats.mean == 2.0
-    assert row.stats.count == 10
+    assert row.stats.min == 2
+    assert row.stats.count == 1
 
 
-def test_target_partitioned_materialize_maps_row() -> None:
-    """The target query shares the source query's row mapping."""
-    row = _target_partitioned_query().materialize(
+def test_partitioned_materialize_three_source_properties() -> None:
+    """N-property path: three source columns reconstruct a three-entry map."""
+    row = _partitioned_query(source=["a", "b", "c"], target=[]).materialize(
         {
-            "sk": "assembler",
-            "tk": "final",
+            "sk0": "x",
+            "sk1": "y",
+            "sk2": "z",
             "min_degree": 1,
             "max_degree": 1,
             "avg_degree": 1.0,
-            "sample_size": 2,
+            "sample_size": 5,
         }
     )
-    assert isinstance(row, PartitionedCardinalityRow)
-    assert row.key.source == {"kind": "assembler"}
-    assert row.key.target == {"kind": "final"}
-    assert type(row.stats) is BoundedDistribution
-    assert row.stats.count == 2
+    assert row.key.source == {"a": "x", "b": "y", "c": "z"}
+    assert row.key.target == {}
 
 
-def test_partitioned_materialize_null_target_maps_to_none() -> None:
-    row = _partitioned_query().materialize(
+def test_partitioned_materialize_mixed_endpoints() -> None:
+    """Two source properties + one target property → both maps populated."""
+    row = _partitioned_query(source=["stage", "type"], target=["kind"]).materialize(
         {
-            "sk": "subsampling",
-            "tk": None,
+            "sk0": "final",
+            "sk1": "combine",
+            "tk0": "output",
+            "min_degree": 2,
+            "max_degree": 2,
+            "avg_degree": 2.0,
+            "sample_size": 1,
+        }
+    )
+    assert row.key.source == {"stage": "final", "type": "combine"}
+    assert row.key.target == {"kind": "output"}
+
+
+# --- wildcard side: empty property list → empty map, no grouped column ---
+
+
+def test_partitioned_wildcard_source_projects_no_source_column() -> None:
+    """An empty source list projects no sk column (the former WildcardSource)."""
+    cypher, _ = _partitioned_query(source=[], target=["kind"]).build(_no_params())
+    assert " AS sk0" not in cypher
+    assert "n.`" not in cypher  # no source property read at all
+    assert "m.`kind` AS tk0" in cypher
+
+
+def test_partitioned_wildcard_source_materializes_empty_source_map() -> None:
+    row = _partitioned_query(source=[], target=["kind"]).materialize(
+        {
+            "tk0": "Sample",
+            "min_degree": 1,
+            "max_degree": 1,
+            "avg_degree": 1.0,
+            "sample_size": 3,
+        }
+    )
+    assert row.key.source == {}
+    assert row.key.target == {"kind": "Sample"}
+
+
+def test_partitioned_wildcard_target_projects_no_target_column() -> None:
+    """An empty target list projects no tk column (the former WildcardTarget)."""
+    cypher, _ = _partitioned_query(source=["kind"], target=[]).build(_no_params())
+    assert "n.`kind` AS sk0" in cypher
+    assert " AS tk0" not in cypher
+    assert "m.`" not in cypher  # no target property read at all
+
+
+def test_partitioned_wildcard_target_materializes_empty_target_map() -> None:
+    row = _partitioned_query(source=["kind"], target=[]).materialize(
+        {
+            "sk0": "subsampling",
+            "min_degree": 1,
+            "max_degree": 1,
+            "avg_degree": 1.0,
+            "sample_size": 3,
+        }
+    )
+    assert row.key.source == {"kind": "subsampling"}
+    assert row.key.target == {}
+
+
+# --- None value preservation ---
+
+
+def test_partitioned_materialize_null_value_maps_to_none() -> None:
+    """A null observed value is ``{name: None}`` — present key, null value."""
+    row = _partitioned_query(source=["kind"], target=["kind"]).materialize(
+        {
+            "sk0": "subsampling",
+            "tk0": None,
             "min_degree": 0,
             "max_degree": 0,
             "avg_degree": 0.0,
@@ -248,49 +315,27 @@ def test_partitioned_materialize_null_target_maps_to_none() -> None:
         }
     )
     assert row.key.source == {"kind": "subsampling"}
-    # Discriminator present, observed value null → {name: None}, not the string "null".
     assert row.key.target == {"kind": None}
 
 
-def test_partitioned_materialize_null_source_maps_to_none() -> None:
-    row = _partitioned_query().materialize(
-        {
-            "sk": None,
-            "tk": "Sample",
-            "min_degree": 0,
-            "max_degree": 1,
-            "avg_degree": 0.5,
-            "sample_size": 2,
-        }
-    )
-    assert row.key.source == {"kind": None}
-    assert row.key.target == {"kind": "Sample"}
+# --- injection safety (1-prop and N-prop paths) ---
 
 
 def test_partitioned_injected_source_discriminator_raises() -> None:
-    q = InspectSourcePartitionedCardinalityQuery(
-        identifiers={
-            "label": "Operation",
-            "rel_type": "PRODUCES",
-            "endpoint_label": "Sample",
-            "source_discriminator": "kind` ) DETACH DELETE (n) //",
-            "target_discriminator": "kind",
-        }
-    )
+    q = _partitioned_query(source=["kind` ) DETACH DELETE (n) //"], target=["kind"])
     with pytest.raises(CypherIdentifierError):
         q.build(_no_params())
 
 
 def test_partitioned_injected_target_discriminator_raises() -> None:
-    q = InspectSourcePartitionedCardinalityQuery(
-        identifiers={
-            "label": "Operation",
-            "rel_type": "PRODUCES",
-            "endpoint_label": "Sample",
-            "source_discriminator": "kind",
-            "target_discriminator": "kind` ) DELETE m //",
-        }
-    )
+    q = _partitioned_query(source=["kind"], target=["kind` ) DELETE m //"])
+    with pytest.raises(CypherIdentifierError):
+        q.build(_no_params())
+
+
+def test_partitioned_injected_discriminator_in_n_prop_list_raises() -> None:
+    """An unsafe name anywhere in a multi-property list is rejected, not spliced."""
+    q = _partitioned_query(source=["kind", "tier`) DELETE n //", "ok"], target=[])
     with pytest.raises(CypherIdentifierError):
         q.build(_no_params())
 
@@ -301,8 +346,8 @@ def test_partitioned_injected_label_raises() -> None:
             "label": "Operation) DETACH DELETE (n //",
             "rel_type": "PRODUCES",
             "endpoint_label": "Sample",
-            "source_discriminator": "kind",
-            "target_discriminator": "kind",
+            "source_discriminators": ["kind"],
+            "target_discriminators": ["kind"],
         }
     )
     with pytest.raises(CypherIdentifierError, match="label"):
@@ -315,8 +360,8 @@ def test_partitioned_injected_rel_type_raises() -> None:
             "label": "Operation",
             "rel_type": "PRODUCES} DELETE ALL //",
             "endpoint_label": "Sample",
-            "source_discriminator": "kind",
-            "target_discriminator": "kind",
+            "source_discriminators": ["kind"],
+            "target_discriminators": ["kind"],
         }
     )
     with pytest.raises(CypherIdentifierError, match="relationship type"):
@@ -325,14 +370,6 @@ def test_partitioned_injected_rel_type_raises() -> None:
 
 def test_target_partitioned_injected_discriminator_raises() -> None:
     """Identifier safety holds for the target query too."""
-    q = InspectTargetPartitionedCardinalityQuery(
-        identifiers={
-            "label": "Sample",
-            "rel_type": "PRODUCES",
-            "endpoint_label": "Operation",
-            "source_discriminator": "kind",
-            "target_discriminator": "kind` ) DELETE m //",
-        }
-    )
+    q = _target_partitioned_query(source=["kind"], target=["kind` ) DELETE m //"])
     with pytest.raises(CypherIdentifierError):
         q.build(_no_params())

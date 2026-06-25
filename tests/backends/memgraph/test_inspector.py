@@ -702,9 +702,14 @@ def _partitioned_row(
     avg_degree: float,
     sample_size: int,
 ) -> dict[str, Any]:
+    """A single-property both-sides grouped row (one ``sk0`` + one ``tk0`` column).
+
+    E54.2: grouped columns are now variable-width (``sk0..skN`` / ``tk0..tkN``);
+    this helper covers the single-property-per-side case.
+    """
     return {
-        "sk": sk,
-        "tk": tk,
+        "sk0": sk,
+        "tk0": tk,
         "min_degree": min_degree,
         "max_degree": max_degree,
         "avg_degree": avg_degree,
@@ -796,6 +801,117 @@ def test_memgraph_partitioned_cardinality_assembles_expected_partitions() -> Non
     assert by_key[str(sub_nothing)].min == 1
     assert by_key[str(sub_nothing)].max == 1
     assert by_key[str(sub_nothing)].count == 1
+
+
+def test_memgraph_partitioned_cardinality_multi_property_source() -> None:
+    """E54.2: a two-property source discriminator assembles a two-entry map.
+
+    A mocked grouped row with two source columns (sk0, sk1) and one target column
+    (tk0) reconstructs ``key.source = {"kind": .., "tier": ..}`` (names from the
+    sorted discriminator list) — parity with the NetworkX reference (E54.1).
+    """
+
+    class Producer(NodeModel):
+        __label__ = "Producer"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+        tier: str
+
+    class Artifact(NodeModel):
+        __label__ = "Artifact"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+
+    class Produces(RelationshipModel):
+        __label__ = "PRODUCES"
+        __source_label__ = "Producer"
+        __target_label__ = "Artifact"
+        __source_cardinality__ = ConditionalCardinality(
+            rules=(
+                ConditionalRule(
+                    source=PropMatch({"kind": "heavy", "tier": "1"}),
+                    target=PropMatch({"kind": "final"}),
+                    spec=CardinalitySpec(min=1, max=3),
+                ),
+            ),
+            default="0..*",
+        )
+
+    gd = GraphDefinition(
+        name="ProducerArtifact",
+        node_types=[Producer, Artifact],
+        relationship_types=[Produces],
+    )
+
+    driver = MagicMock()
+    responses = [
+        mock_execute_query([], []),  # constraints
+        mock_execute_query(
+            [
+                {
+                    "nodeType": ":`Artifact`",
+                    "nodeLabels": ["Artifact"],
+                    "mandatory": True,
+                    "propertyName": "kind",
+                    "propertyTypes": ["String"],
+                },
+                {
+                    "nodeType": ":`Producer`",
+                    "nodeLabels": ["Producer"],
+                    "mandatory": True,
+                    "propertyName": "kind",
+                    "propertyTypes": ["String"],
+                },
+            ]
+        ),
+        mock_execute_query(
+            [
+                {
+                    "relType": ":`PRODUCES`",
+                    "mandatory": False,
+                    "propertyName": None,
+                    "propertyTypes": [],
+                }
+            ]
+        ),
+        mock_execute_query(
+            [{"source_labels": ["Producer"], "target_labels": ["Artifact"]}]
+        ),
+        mock_execute_query(
+            [{"min_degree": 2, "max_degree": 2, "avg_degree": 2.0, "sample_size": 1}]
+        ),
+        # source-side multi-property grouped row: sk0=kind, sk1=tier, tk0=kind.
+        mock_execute_query(
+            [
+                {
+                    "sk0": "heavy",
+                    "sk1": "1",
+                    "tk0": "final",
+                    "min_degree": 2,
+                    "max_degree": 2,
+                    "avg_degree": 2.0,
+                    "sample_size": 1,
+                }
+            ]
+        ),
+    ]
+
+    driver.execute_query.side_effect = ordered_side_effect_with_counts(responses)
+
+    profile = MemgraphInspector().inspect(driver, graph_definition=gd)
+    produces = profile.rel_type_profiles["Producer:PRODUCES:Artifact"]
+    partitions = produces.source_partitioned_cardinality
+    assert partitions is not None
+
+    multi = PartitionKey(
+        source={"kind": "heavy", "tier": "1"}, target={"kind": "final"}
+    )
+    by_key = _by_key(partitions)
+    assert set(by_key) == {str(multi)}
+    assert by_key[str(multi)].min == 2
+    assert by_key[str(multi)].count == 1
 
 
 def test_memgraph_partitioned_cardinality_zero_degree_rows_suppressed() -> None:
@@ -1143,10 +1259,12 @@ def test_memgraph_validate_database_forwards_graph_definition() -> None:
 def test_memgraph_unprocessable_first_side_falls_through_to_processable_second() -> (
     None
 ):
-    """Unprocessable first conditional side does not prevent second side from running.
+    """Both conditional sides are profiled; iteration does not stop after the first.
 
-    Regression for the bug where break fired after any ConditionalCardinality,
-    even when _extract_discriminators returned None (multi-property discriminator).
+    Regression for the bug where ``break`` fired after any
+    ``ConditionalCardinality``.  Post-E54 the multi-property source side is also
+    profiled (no longer declined), so both per-side breakdowns are populated —
+    proving the loop iterates over both sides.
     """
 
     class Producer(NodeModel):
@@ -1166,7 +1284,7 @@ def test_memgraph_unprocessable_first_side_falls_through_to_processable_second()
         __label__ = "PRODUCES"
         __source_label__ = "Producer"
         __target_label__ = "Artifact"
-        # Source side: multi-property → _extract_discriminators → None (unprocessable)
+        # Source side: multi-property → now profiled (E54).
         __source_cardinality__ = ConditionalCardinality(
             rules=(
                 ConditionalRule(
@@ -1232,24 +1350,43 @@ def test_memgraph_unprocessable_first_side_falls_through_to_processable_second()
         mock_execute_query(
             [{"min_degree": 2, "max_degree": 2, "avg_degree": 2.0, "sample_size": 1}]
         ),
-        # Partitioned query for the target side (must be issued).
+        # Source-side partitioned query (multi-property: sk0=kind, sk1=tier,
+        # tk0=kind) — issued first, before the target side.
+        mock_execute_query(
+            [
+                {
+                    "sk0": "heavy",
+                    "sk1": "1",
+                    "tk0": "final",
+                    "min_degree": 1,
+                    "max_degree": 3,
+                    "avg_degree": 2.0,
+                    "sample_size": 1,
+                }
+            ]
+        ),
+        # Target-side partitioned query (single-property each side).
         mock_execute_query([_partitioned_row("heavy", "final", 2, 2, 2.0, 1)]),
     ]
 
-    # Count() queries served out of band (E46.3); the target-side partitioned
-    # read remains the last ordered response.
+    # Count() queries served out of band (E46.3); the per-side partitioned
+    # reads remain the last ordered responses.
     driver.execute_query.side_effect = ordered_side_effect_with_counts(responses)
 
     profile = MemgraphInspector().inspect(driver, graph_definition=gd)
     produces = profile.rel_type_profiles["Producer:PRODUCES:Artifact"]
 
-    # The processable target side must have produced its breakdown; the
-    # unprocessable source side must not have blocked iteration.
-    assert produces.target_partitioned_cardinality is not None, (
-        "target_partitioned_cardinality must be populated from the "
-        "processable target side."
+    # Both sides profiled — the loop iterated over both without a premature break.
+    assert produces.source_partitioned_cardinality is not None, (
+        "source_partitioned_cardinality must be populated from the multi-property "
+        "source side (E54 lifts the former single-property decline)."
     )
-    assert produces.source_partitioned_cardinality is None
+    src_by_key = _by_key(produces.source_partitioned_cardinality)
+    multi = PartitionKey(
+        source={"kind": "heavy", "tier": "1"}, target={"kind": "final"}
+    )
+    assert set(src_by_key) == {str(multi)}
+    assert produces.target_partitioned_cardinality is not None
 
 
 def _both_sides_definition() -> GraphDefinition:

@@ -48,11 +48,7 @@ from orthograph.graph_profile.queries.shared import (
     InspectCardinalityQuery,
     InspectEndpointLabelsQuery,
     InspectSourcePartitionedCardinalityQuery,
-    InspectSourcePartitionedCardinalityWildcardSourceQuery,
-    InspectSourcePartitionedCardinalityWildcardTargetQuery,
     InspectTargetPartitionedCardinalityQuery,
-    InspectTargetPartitionedCardinalityWildcardSourceQuery,
-    InspectTargetPartitionedCardinalityWildcardTargetQuery,
 )
 
 
@@ -503,32 +499,16 @@ class Neo4jInspector(CypherInspector):
                 source_label, rel_type, target_label
             )
             if rel_model is not None:
-                for card_attr, side, side_variants in (
+                for card_attr, side, side_query in (
                     (
                         "__source_cardinality__",
                         "source",
-                        {
-                            "both": InspectSourcePartitionedCardinalityQuery,
-                            "wildcard_source": (
-                                InspectSourcePartitionedCardinalityWildcardSourceQuery
-                            ),
-                            "wildcard_target": (
-                                InspectSourcePartitionedCardinalityWildcardTargetQuery
-                            ),
-                        },
+                        InspectSourcePartitionedCardinalityQuery,
                     ),
                     (
                         "__target_cardinality__",
                         "target",
-                        {
-                            "both": InspectTargetPartitionedCardinalityQuery,
-                            "wildcard_source": (
-                                InspectTargetPartitionedCardinalityWildcardSourceQuery
-                            ),
-                            "wildcard_target": (
-                                InspectTargetPartitionedCardinalityWildcardTargetQuery
-                            ),
-                        },
+                        InspectTargetPartitionedCardinalityQuery,
                     ),
                 ):
                     card = getattr(rel_model, card_attr, None)
@@ -539,7 +519,7 @@ class Neo4jInspector(CypherInspector):
                             enriched = self._enrich_with_partitioned_cardinality(
                                 connection,
                                 enriched,
-                                side_variants,
+                                side_query,
                                 src_disc,
                                 tgt_disc,
                                 side,

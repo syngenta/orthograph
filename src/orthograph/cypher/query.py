@@ -298,6 +298,26 @@ class CypherQuery(BaseModel):
                 f"Declared on Params: {sorted(known)}"
             )
 
+    def validate_query(
+        self,
+        definition: Any,  # GraphDefinition | None — avoid circular import
+    ) -> Any:  # ValidationResult
+        """Validate this query against *definition*.
+
+        Convenience wrapper around the free function
+        :func:`orthograph.cypher.validation.validate_query`.  Runs the same
+        syntactic + semantic checks as the typed path: ``$param`` alignment,
+        parse, unknown labels/rel-types, properties, and endpoints.
+
+        Pass ``None`` to perform a syntactic-only check (param alignment +
+        parse) without domain validation.
+        """
+        from orthograph.cypher.validation import (  # noqa: PLC0415 — lazy to avoid circular import
+            validate_query as _validate_query,
+        )
+
+        return _validate_query(self, definition)
+
     def __repr__(self) -> str:
         id_name = (
             self.Identifiers.__name__

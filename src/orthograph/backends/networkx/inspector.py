@@ -341,21 +341,20 @@ def _discriminator_keys(matches: tuple[Any, ...]) -> frozenset[str]:
 def _discriminator_map(
     attrs: dict[str, Any], keys: frozenset[str]
 ) -> dict[str, str | None]:
-    """Read the single discriminator as a ``{name: value}`` map from *attrs*.
+    """Read discriminator properties as a ``{name: value}`` map from *attrs*.
 
-    The single-property first cut discriminates on one property per endpoint:
+    - any number of keys → ``{k: str(attrs[k]) or None for k in sorted(keys)}``
+      (a missing/``None`` attribute yields ``{k: None}`` — key present, value null);
+    - no keys → ``{}`` (this endpoint carries no discriminator).
 
-    - exactly one key → ``{the_key: str(value) or None}`` (a missing/``None``
-      attribute yields ``{the_key: None}`` — discriminator present, value null);
-    - no keys → ``{}`` (this endpoint carries no discriminator);
-    - more than one key → ``{}`` (declined — multi-property profiling is the
-      E54 follow-on tracked in the epic Out-of-Scope).
+    Keys are sorted for deterministic ordering so rows are comparable across
+    backends.
     """
-    if len(keys) != 1:
+    if not keys:
         return {}
-    key = next(iter(keys))
-    value = attrs.get(key)
-    return {key: None if value is None else str(value)}
+    return {
+        k: (None if attrs.get(k) is None else str(attrs.get(k))) for k in sorted(keys)
+    }
 
 
 def _partition_degrees(

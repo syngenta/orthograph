@@ -653,8 +653,16 @@ def test_inspect_cardinality_query_emits_identifier_injection_issue(
 def test_inspect_partitioned_cardinality_query_emits_identifier_injection_issue(
     graph_definition: GraphDefinition,
 ) -> None:
-    """Both partitioned cardinality queries (four <<...>> slots, two of which are
-    property-name discriminators) emit QUERY_USES_IDENTIFIER_INJECTION."""
+    """E54.2: the partitioned-cardinality queries are now imperative.
+
+    The grouped projection is variable-width (1..N discriminator columns per
+    side), so the queries build their Cypher in ``build()`` rather than from a
+    static ``cypher_template``.  The catalogue validator therefore reports them
+    as ``QUERY_UNVERIFIABLE`` (like the other imperative queries) — not
+    ``QUERY_USES_IDENTIFIER_INJECTION`` (which only fires for ``<<...>>`` slots in
+    a declarative template).  Identifier-splice safety is still enforced at
+    ``build()`` via ``validate_identifier`` (covered in ``test_shared.py``).
+    """
     from orthograph.graph_profile.queries.shared import (
         InspectSourcePartitionedCardinalityQuery,
         InspectTargetPartitionedCardinalityQuery,
@@ -667,8 +675,8 @@ def test_inspect_partitioned_cardinality_query_emits_identifier_injection_issue(
                 "label": "Movie",
                 "rel_type": "LIKES",
                 "endpoint_label": "Movie",
-                "source_discriminator": "kind",
-                "target_discriminator": "kind",
+                "source_discriminators": ["kind"],
+                "target_discriminators": ["kind"],
             }
         )
     )
@@ -678,27 +686,28 @@ def test_inspect_partitioned_cardinality_query_emits_identifier_injection_issue(
                 "label": "Movie",
                 "rel_type": "LIKES",
                 "endpoint_label": "Movie",
-                "source_discriminator": "kind",
-                "target_discriminator": "kind",
+                "source_discriminators": ["kind"],
+                "target_discriminators": ["kind"],
             }
         )
     )
 
     result = validate_query_catalogue(catalogue, graph_definition)
 
+    unverifiable = [i for i in result.issues if i.code == "QUERY_UNVERIFIABLE"]
+    assert any(
+        "inspect.partitioned_cardinality.source" in i.message for i in unverifiable
+    )
+    assert any(
+        "inspect.partitioned_cardinality.target" in i.message for i in unverifiable
+    )
+    # No false injection issue is raised: there are no <<...>> slots to flag (the
+    # variable-width projection is built imperatively).
     injection_issues = [
         i for i in result.issues if i.code == "QUERY_USES_IDENTIFIER_INJECTION"
     ]
-    assert len(injection_issues) >= 1, (
-        "The partitioned cardinality queries splice <<label>>, <<rel_type>>, "
-        "<<source_discriminator>> and <<target_discriminator>>, so they should "
-        "emit at least one QUERY_USES_IDENTIFIER_INJECTION INFO issue"
-    )
-    assert any(
-        "inspect.partitioned_cardinality.source" in i.message for i in injection_issues
-    )
-    assert any(
-        "inspect.partitioned_cardinality.target" in i.message for i in injection_issues
+    assert not any(
+        "inspect.partitioned_cardinality" in i.message for i in injection_issues
     )
 
 

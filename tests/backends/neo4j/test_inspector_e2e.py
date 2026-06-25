@@ -721,6 +721,146 @@ def test_both_sides_compare_passes_when_in_bounds(
 
 
 # ---------------------------------------------------------------------------
+# E54.2 — multi-property partitioned cardinality (variable-width grouping)
+#
+# A source side discriminated on TWO properties must produce a two-entry
+# partition map, live, and agree with the NetworkX reference (ADR-009 parity).
+# ---------------------------------------------------------------------------
+
+
+class _MultiProducer(NodeModel):
+    __label__ = "Producer"
+    __uid_field__ = "uid"
+    uid: str
+    kind: str
+    tier: str
+
+
+class _MultiArtifact(NodeModel):
+    __label__ = "Artifact"
+    __uid_field__ = "uid"
+    uid: str
+    kind: str
+
+
+class _MultiProduces(RelationshipModel):
+    __label__ = "PRODUCES"
+    __source_label__ = "Producer"
+    __target_label__ = "Artifact"
+    __source_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "heavy", "tier": "1"}),
+                target=PropMatch({"kind": "final"}),
+                spec=CardinalitySpec(min=1, max=3),
+            ),
+        ),
+        default="0..*",
+    )
+
+
+_MULTI_MODEL = GraphDefinition(
+    name="MultiProp",
+    node_types=[_MultiProducer, _MultiArtifact],
+    relationship_types=[_MultiProduces],
+)
+
+
+def _seed_multi_property(driver: Any) -> None:
+    """Seed two source partitions discriminated on (kind, tier).
+
+    p1 (heavy, tier=1) → 2 artifacts (final); p2 (light, tier=2) → 1 artifact.
+    Source-side breakdown: {kind:heavy, tier:1}/{kind:final} → degree 2 (1 node);
+    {kind:light, tier:2}/{kind:final} → degree 1 (1 node).
+    """
+    driver.execute_query(
+        "MERGE (p1:Producer {uid: 'p1', kind: 'heavy', tier: '1'})"
+        " MERGE (p2:Producer {uid: 'p2', kind: 'light', tier: '2'})"
+        " MERGE (a1:Artifact {uid: 'a1', kind: 'final'})"
+        " MERGE (a2:Artifact {uid: 'a2', kind: 'final'})"
+        " MERGE (a3:Artifact {uid: 'a3', kind: 'final'})"
+        " MERGE (p1)-[:PRODUCES]->(a1)"
+        " MERGE (p1)-[:PRODUCES]->(a2)"
+        " MERGE (p2)-[:PRODUCES]->(a3)"
+    )
+
+
+@pytest.mark.neo4j
+def test_multi_property_source_breakdown_live(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """A two-property source discriminator yields two-entry partition maps, live."""
+    _seed_multi_property(neo4j_driver)
+    profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver, graph_definition=_MULTI_MODEL
+    )
+    src = profile.rel_type_profiles[
+        "Producer:PRODUCES:Artifact"
+    ].source_partitioned_cardinality
+    assert src is not None
+    by_key = _by_key(src)
+
+    heavy_1 = str(
+        PartitionKey(source={"kind": "heavy", "tier": "1"}, target={"kind": "final"})
+    )
+    light_2 = str(
+        PartitionKey(source={"kind": "light", "tier": "2"}, target={"kind": "final"})
+    )
+    assert set(by_key) == {heavy_1, light_2}
+    assert by_key[heavy_1].min == 2
+    assert by_key[heavy_1].max == 2
+    assert by_key[heavy_1].count == 1
+    assert by_key[light_2].min == 1
+    assert by_key[light_2].count == 1
+
+
+@pytest.mark.neo4j
+def test_multi_property_parity_with_networkx(
+    neo4j_driver: Any, neo4j_clean: None
+) -> None:
+    """The live multi-property breakdown matches the NetworkX reference (ADR-009).
+
+    Parity is on the partition maps and the degree min/max/count per partition —
+    NetworkX is the oracle (E54.1).
+    """
+    import networkx as nx
+
+    from orthograph.backends.networkx.inspector import NetworkxInspector
+
+    _seed_multi_property(neo4j_driver)
+
+    g: nx.MultiDiGraph[str] = nx.MultiDiGraph()
+    g.add_node("p1", __label__="Producer", uid="p1", kind="heavy", tier="1")
+    g.add_node("p2", __label__="Producer", uid="p2", kind="light", tier="2")
+    g.add_node("a1", __label__="Artifact", uid="a1", kind="final")
+    g.add_node("a2", __label__="Artifact", uid="a2", kind="final")
+    g.add_node("a3", __label__="Artifact", uid="a3", kind="final")
+    g.add_edge("p1", "a1", __label__="PRODUCES")
+    g.add_edge("p1", "a2", __label__="PRODUCES")
+    g.add_edge("p2", "a3", __label__="PRODUCES")
+    nx_profile = NetworkxInspector().inspect(g, graph_definition=_MULTI_MODEL)
+
+    n4_profile = Neo4jInspector(strategy=Neo4jInspectionStrategy.CYPHER).inspect(
+        neo4j_driver, graph_definition=_MULTI_MODEL
+    )
+
+    key = "Producer:PRODUCES:Artifact"
+    nx_by_key = _by_key(
+        nx_profile.rel_type_profiles[key].source_partitioned_cardinality
+    )
+    n4_by_key = _by_key(
+        n4_profile.rel_type_profiles[key].source_partitioned_cardinality
+    )
+
+    # Same partitions (same self-describing maps), same per-partition bounds.
+    assert set(n4_by_key) == set(nx_by_key)
+    for partition in nx_by_key:
+        assert n4_by_key[partition].min == nx_by_key[partition].min, partition
+        assert n4_by_key[partition].max == nx_by_key[partition].max, partition
+        assert n4_by_key[partition].count == nx_by_key[partition].count, partition
+
+
+# ---------------------------------------------------------------------------
 # Value-scan queries — type counts + histogram (E46.1, ADR-035)
 #
 # These exercise the new queries directly against a live instance (inspector
