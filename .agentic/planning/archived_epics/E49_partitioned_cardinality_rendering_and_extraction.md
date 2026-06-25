@@ -3,7 +3,7 @@
 > **Priority:** Medium (correctness + ergonomics; surfaced by the matterforge/MatProt pilot
 > profiling exercise, the same domain ADR-029/ADR-032 were written for)
 > **Phase:** v0.1.0 — Pilot Readiness
-> **Status:** planned
+> **Status:** done (T1 + T2 implemented; verified against the live MatProt graph)
 > **Blocked by:** none (both tasks are additive; build on E41 + E43 + E45, all done)
 > **Decisions:** ADR-032 (§1a absolute predicate convention, §1 both-endpoint partitioning —
 > the enforcement model T2 must mirror), ADR-030 / ADR-034 (per-pair observed statistics as
@@ -37,7 +37,7 @@ observable effect**. Investigation surfaced two independent gaps.
 
 **Type:** ergonomics (text visualisation)
 **Files:** `src/orthograph/visualization/text.py`, tests under `tests/visualization/`
-**Status:** planned
+**Status:** done
 
 ### The gap
 
@@ -95,7 +95,7 @@ capability into `profile_to_text` so every caller (and `api.visualization`) bene
 `src/orthograph/backends/networkx/inspector.py` (the parity reference),
 `src/orthograph/graph_profile/queries/shared.py` (the partitioned-cardinality queries),
 tests under `tests/backends/`
-**Status:** planned — **this is why the definition profile showed no partitions**
+**Status:** done — **this was why the definition profile showed no partitions; now fixed**
 
 ### The gap
 
@@ -159,6 +159,18 @@ T2's tests must therefore use a **fixture where the discriminator property is ac
 dump, to prove the partitions are produced. Whether the example dump / `full_graph_definition`
 should be reconciled (add `type`, or re-key the discriminator onto an existing property) is an
 **example-maintenance decision**, tracked separately from this library epic — see Coordination.
+
+> **Implementation note (2026-06-25):** the live MatProt graph loaded for this work **does**
+> carry `Operation.type` (`subsampling`, `chromatography`, `combine`, `remove_volatiles`, …) —
+> the earlier "no `type` property" observation was against a different/earlier dump. With T2
+> shipped, a read-only `inspect(driver, graph_definition=schema)` against the live DB now
+> produces real per-type breakdowns:
+> `Sample:IS_INPUT:Operation` → `target_partitioned_cardinality` keyed `src=null|tgt=combine`
+> (degree 2..3 over 9 ops), `src=null|tgt=subsampling`, etc.; `Operation:HAS_OUTPUT:Sample` →
+> `source_partitioned_cardinality` keyed `src=<type>|tgt=null`. The wildcard `Sample` endpoint
+> renders `null` exactly as designed. T2's *synthetic* tests still use a fixture with the
+> discriminator present (per the requirement above); the live run is an additional end-to-end
+> confirmation, not a substitute.
 
 ### Acceptance criteria
 

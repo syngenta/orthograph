@@ -310,11 +310,16 @@ def test_memgraph_catalogue_registered_names() -> None:
     assert "memgraph.inspect.endpoint_labels" in names
     assert "memgraph.inspect.partitioned_cardinality.source" in names
     assert "memgraph.inspect.partitioned_cardinality.target" in names
+    # E49 T2: one-sided (wildcard) partitioned-cardinality variants.
+    assert "memgraph.inspect.partitioned_cardinality.source.wildcard_source" in names
+    assert "memgraph.inspect.partitioned_cardinality.source.wildcard_target" in names
+    assert "memgraph.inspect.partitioned_cardinality.target.wildcard_source" in names
+    assert "memgraph.inspect.partitioned_cardinality.target.wildcard_target" in names
     assert "memgraph.inspect.node_type_counts" in names
     assert "memgraph.inspect.rel_type_counts" in names
     assert "memgraph.inspect.node_value_histogram" in names
     assert "memgraph.inspect.rel_value_histogram" in names
-    assert len(names) == 13
+    assert len(names) == 17
 
 
 def test_memgraph_catalogue_all_reads_have_output_schema() -> None:

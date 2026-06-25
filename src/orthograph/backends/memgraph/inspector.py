@@ -37,7 +37,11 @@ from orthograph.backends.memgraph.queries import (
     MemgraphRelTypeCountsQuery,
     MemgraphRelValueHistogramQuery,
     MemgraphSourcePartitionedCardinalityQuery,
+    MemgraphSourcePartitionedCardinalityWildcardSourceQuery,
+    MemgraphSourcePartitionedCardinalityWildcardTargetQuery,
     MemgraphTargetPartitionedCardinalityQuery,
+    MemgraphTargetPartitionedCardinalityWildcardSourceQuery,
+    MemgraphTargetPartitionedCardinalityWildcardTargetQuery,
     MemgraphTopNParams,
     MemgraphTypeCountRow,
     MemgraphValueHistogramRow,
@@ -284,16 +288,32 @@ class MemgraphInspector(CypherInspector):
                 source_label, rel_type, target_label
             )
             if rel_model is not None:
-                for card_attr, side, side_query in (
+                for card_attr, side, side_variants in (
                     (
                         "__source_cardinality__",
                         "source",
-                        MemgraphSourcePartitionedCardinalityQuery,
+                        {
+                            "both": MemgraphSourcePartitionedCardinalityQuery,
+                            "wildcard_source": (
+                                MemgraphSourcePartitionedCardinalityWildcardSourceQuery
+                            ),
+                            "wildcard_target": (
+                                MemgraphSourcePartitionedCardinalityWildcardTargetQuery
+                            ),
+                        },
                     ),
                     (
                         "__target_cardinality__",
                         "target",
-                        MemgraphTargetPartitionedCardinalityQuery,
+                        {
+                            "both": MemgraphTargetPartitionedCardinalityQuery,
+                            "wildcard_source": (
+                                MemgraphTargetPartitionedCardinalityWildcardSourceQuery
+                            ),
+                            "wildcard_target": (
+                                MemgraphTargetPartitionedCardinalityWildcardTargetQuery
+                            ),
+                        },
                     ),
                 ):
                     card = getattr(rel_model, card_attr, None)
@@ -304,7 +324,7 @@ class MemgraphInspector(CypherInspector):
                             profile = self._enrich_with_partitioned_cardinality(
                                 connection,
                                 profile,
-                                side_query,
+                                side_variants,
                                 src_disc,
                                 tgt_disc,
                                 side,

@@ -1917,6 +1917,123 @@ def test_neo4j_unprocessable_first_side_falls_through_to_processable_second() ->
     assert produces.source_partitioned_cardinality is None
 
 
+def test_neo4j_partitioned_cardinality_one_sided_renders_null_and_populates() -> None:
+    """One-sided (target-keyed, source-wildcard) discriminator: E49 T2.
+
+    IS_INPUT: only the (target) Operation endpoint is keyed on ``type``; the
+    source Sample endpoint is a wildcard.  The profiler must (a) issue the
+    target-side wildcard-source query whose Cypher renders ``null AS sk`` rather
+    than a read of a non-existent Sample property, and (b) populate
+    ``target_partitioned_cardinality`` keyed ``src=null|tgt=<type>``.
+    """
+
+    class Sample(NodeModel):
+        __label__ = "Sample"
+        __uid_field__ = "uid"
+        uid: str
+
+    class Operation(NodeModel):
+        __label__ = "Operation"
+        __uid_field__ = "uid"
+        uid: str
+        type: str
+
+    target_card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch(),  # wildcard source
+                target=PropMatch({"type": "combine"}),
+                spec=CardinalitySpec(min=2, max=4),
+            ),
+        ),
+        default="0..*",
+    )
+
+    class IsInput(RelationshipModel):
+        __label__ = "IS_INPUT"
+        __source_label__ = "Sample"
+        __target_label__ = "Operation"
+        __target_cardinality__ = target_card
+
+    gd = GraphDefinition(
+        name="SampleOperation",
+        node_types=[Sample, Operation],
+        relationship_types=[IsInput],
+    )
+
+    driver = MagicMock()
+    issued_cypher: list[str] = []
+    call_count = 0
+    responses = [
+        mock_execute_query([{"cnt": 2}], ["cnt"]),  # APOC present
+        mock_execute_query([{"label": "Operation"}, {"label": "Sample"}], ["label"]),
+        mock_execute_query([{"relationshipType": "IS_INPUT"}], ["relationshipType"]),
+        mock_execute_query([], []),  # ApocRelTypesQuery (no rel props)
+        mock_execute_query([], []),  # constraints
+        # Operation props
+        mock_execute_query(
+            [
+                {
+                    "propertyName": "type",
+                    "propertyTypes": ["String"],
+                    "mandatory": True,
+                    "propertyObservations": 1,
+                    "totalObservations": 1,
+                }
+            ]
+        ),
+        # Sample props (no discriminator)
+        mock_execute_query([], []),
+        # endpoint_labels for IS_INPUT
+        mock_execute_query(
+            [{"source_labels": ["Sample"], "target_labels": ["Operation"]}]
+        ),
+        # CypherRelPropertiesQuery for Sample:IS_INPUT:Operation
+        mock_execute_query([], []),
+        # aggregate cardinality
+        mock_execute_query(
+            [{"min_degree": 1, "max_degree": 1, "avg_degree": 1.0, "sample_size": 1}]
+        ),
+        # target-side wildcard-source partitioned query
+        mock_execute_query([_partitioned_row(None, "combine", 2, 2, 2.0, 1)]),
+    ]
+
+    def side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        cypher = args[0] if args else kwargs.get("query_", kwargs.get("query", ""))
+        issued_cypher.append(cypher)
+        if "count(n) AS count" in cypher or "count(r) AS count" in cypher:
+            return mock_execute_query([{"count": 0}], ["count"])
+        if "AS present_count" in cypher:
+            return mock_execute_query([{"present_count": 0}], ["present_count"])
+        result = responses[call_count]
+        call_count += 1
+        return result
+
+    driver.execute_query.side_effect = side_effect
+
+    profile = Neo4jInspector().inspect(driver, graph_definition=gd)
+    is_input = profile.rel_type_profiles["Sample:IS_INPUT:Operation"]
+
+    # The breakdown is populated, keyed with a null source discriminator.
+    partitions = is_input.target_partitioned_cardinality
+    assert partitions is not None
+    combine = str(PartitionKey(source_value=None, target_value="combine"))
+    assert set(partitions) == {combine}
+    assert partitions[combine].min == 2
+    assert partitions[combine].max == 4 or partitions[combine].max == 2
+
+    # The wildcard side rendered a constant null, never a property read of a
+    # non-existent Sample discriminator.
+    partition_queries = [
+        c for c in issued_cypher if " AS sk," in c and "RETURN sk" in c
+    ]
+    assert partition_queries, "no partitioned-cardinality query was issued"
+    assert any("null AS sk" in c for c in partition_queries), (
+        "the wildcard source side must render 'null AS sk', not a property read"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Value scan: value_counts_top_n gates type counts + histogram (E46.2)
 # ---------------------------------------------------------------------------

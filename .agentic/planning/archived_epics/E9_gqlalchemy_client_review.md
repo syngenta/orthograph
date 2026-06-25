@@ -1,5 +1,14 @@
 # Epic E9: GQLAlchemy Client Review
 
+> **RETIRED 2026-06-25 → consolidated into [E52 — GQLAlchemy Backend, Complete
+> Delivery & Bug Sweep](E52_gqlalchemy_complete_delivery_and_bug_sweep.md).**
+> Do not pick up work from this file. Its tasks are now **E52 Workstream C**
+> (remove persistence ownership; enforce Constraint 13). The content below is
+> retained for historical context only.
+
+---
+
+
 > **Priority:** High
 > **Phase:** v0.1.0 — Pilot Readiness
 > **Goal:** Align the GQLAlchemy extension with the validated composition pattern — Orthograph generates and validates, consuming projects persist

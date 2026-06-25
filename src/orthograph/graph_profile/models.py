@@ -24,6 +24,7 @@ __all__ = [
     "BareRelTypeIdentifiers",
     "CardinalityIdentifiers",
     "PartitionedCardinalityIdentifiers",
+    "WildcardPartitionedCardinalityIdentifiers",
     "EndpointLabelsRow",
     "PartitionedCardinalityRow",
 ]
@@ -343,7 +344,9 @@ class PartitionedCardinalityIdentifiers(BaseModel):
 
     ``source_discriminator`` and ``target_discriminator`` are **property names**
     (e.g. ``"kind"``); like every spliced identifier they pass through
-    ``validate_identifier`` (validate-and-reject) — never f-stringed.
+    ``validate_identifier`` (validate-and-reject) — never f-stringed.  This is the
+    **both-present** group (a discriminator on each endpoint); the one-sided case
+    uses :class:`WildcardPartitionedCardinalityIdentifiers`.
 
     Endpoint-aware: ``endpoint_label`` filters the *other* endpoint of
     the relationship to the discovered shape (the anchored side is ``label``), so
@@ -356,6 +359,25 @@ class PartitionedCardinalityIdentifiers(BaseModel):
     endpoint_label: str  # the non-anchored endpoint label (kind = "label")
     source_discriminator: str  # property name (kind = "label" grammar)
     target_discriminator: str  # property name (kind = "label" grammar)
+
+
+class WildcardPartitionedCardinalityIdentifiers(BaseModel):
+    """Identifier group for the **one-sided** partitioned-cardinality queries.
+
+    Exactly one endpoint carries a discriminator; the other is a **wildcard**
+    that the query renders as a constant ``null`` (no grouping key on that side),
+    mirroring ADR-032's absolute convention and the
+    ``PartitionKey(... =None)`` representation.  Only the present endpoint's
+    property name is spliced via ``<<discriminator>>`` — there is no slot for the
+    wildcard side, so no read of a non-existent property is ever issued.  Which
+    endpoint is the wildcard is fixed by the query class
+    (``WildcardSource`` / ``WildcardTarget``), not carried here.
+    """
+
+    label: str
+    rel_type: str  # kind = "relationship type"
+    endpoint_label: str  # the non-anchored endpoint label (kind = "label")
+    discriminator: str  # the present endpoint's property name (kind = "label")
 
 
 # ---------------------------------------------------------------------------

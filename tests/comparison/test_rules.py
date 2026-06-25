@@ -2326,3 +2326,105 @@ def test_cardinality_both_sides_target_absent_is_unverifiable_for_that_side():
     assert len(unverifiable) == 1
     assert unverifiable[0].severity == Severity.INFO
     assert "CARDINALITY_VIOLATION" not in {i.code for i in issues}
+
+
+# ===========================================================================
+# E49 T2: one-sided (wildcard) discriminator mirror.
+# A target-keyed, source-wildcard conditional now produces a breakdown on the
+# observed side, so the rule resolves the per-partition bound instead of
+# falling back to CARDINALITY_UNVERIFIABLE — the declared/observed mirror is
+# restored for one-sided discriminators.
+# ===========================================================================
+
+
+class _IsInputOneSided(RelationshipModel):
+    """IS_INPUT keyed only on the target (Operation) endpoint; source wildcard."""
+
+    __label__ = "IS_INPUT"
+    __source_label__ = "Sample"
+    __target_label__ = "Operation"
+    __target_cardinality__ = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch(),  # wildcard source endpoint
+                target=PropMatch({"type": "combine"}),
+                spec=CardinalitySpec(min=2, max=4),
+            ),
+        ),
+        default="0..*",
+    )
+
+
+class _OperationTypedNode(NodeModel):
+    """Operation node carrying the ``type`` discriminator (E49 T2 fixture)."""
+
+    __label__ = "Operation"
+    type: str
+
+
+_ONE_SIDED_MODEL = GraphDefinition(
+    name="one_sided_test",
+    node_types=[_SampleNode, _OperationTypedNode],
+    relationship_types=[_IsInputOneSided],
+)
+
+
+def _one_sided_ctx(
+    target_partitioned: dict[str, BoundedDistribution] | None,
+) -> RuleContext:
+    rtp = RelationshipTypeProfile(
+        rel_type="IS_INPUT",
+        count=2,
+        source_label="Sample",
+        target_label="Operation",
+        cardinality_stats=CardinalityStats(count=1, min=2, max=2, mean=2.0),
+        target_partitioned_cardinality=target_partitioned,
+    )
+    profile = GraphProfile(
+        source="one_sided_test",
+        node_type_profiles={
+            "Operation": NodeTypeProfile(label="Operation", count=1),
+            "Sample": NodeTypeProfile(label="Sample", count=2),
+        },
+        rel_type_profiles={"Sample:IS_INPUT:Operation": rtp},
+    )
+    return RuleContext(
+        left_graph=DefinitionView(_ONE_SIDED_MODEL),
+        right_graph=ProfileView(profile),
+        address="Sample:IS_INPUT:Operation",
+        left=_IsInputOneSided,
+        right=rtp,
+    )
+
+
+def test_cardinality_one_sided_breakdown_resolves_not_unverifiable():
+    """One-sided breakdown present → bound resolved, no CARDINALITY_UNVERIFIABLE."""
+    rule = CardinalityViolationRule()
+    # combine declared 2..4; observed degree 2 is within bounds (null source).
+    target = {
+        _partition(None, "combine"): BoundedDistribution(
+            count=1, min=2, max=2, mean=2.0
+        )
+    }
+    issues = list(rule(_one_sided_ctx(target)))
+    codes = {i.code for i in issues}
+    assert "CARDINALITY_UNVERIFIABLE" not in codes
+    assert "CARDINALITY_VIOLATION" not in codes
+
+
+def test_cardinality_one_sided_breakdown_out_of_bounds_violation():
+    """One-sided partition out of bounds → CARDINALITY_VIOLATION (mirror restored)."""
+    rule = CardinalityViolationRule()
+    # combine declared 2..4; observed degree 5 exceeds the bound.
+    target = {
+        _partition(None, "combine"): BoundedDistribution(
+            count=1, min=5, max=5, mean=5.0
+        )
+    }
+    issues = [
+        i for i in rule(_one_sided_ctx(target)) if i.code == "CARDINALITY_VIOLATION"
+    ]
+    assert len(issues) == 1
+    assert issues[0].severity == Severity.ERROR
+    assert issues[0].context["target_value"] == "combine"
+    assert issues[0].context["source_value"] is None

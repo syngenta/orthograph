@@ -19,7 +19,11 @@ from orthograph.graph_profile.queries.shared import (
     InspectCardinalityQuery,
     InspectEndpointLabelsQuery,
     InspectSourcePartitionedCardinalityQuery,
+    InspectSourcePartitionedCardinalityWildcardSourceQuery,
+    InspectSourcePartitionedCardinalityWildcardTargetQuery,
     InspectTargetPartitionedCardinalityQuery,
+    InspectTargetPartitionedCardinalityWildcardSourceQuery,
+    InspectTargetPartitionedCardinalityWildcardTargetQuery,
     coerce_types,
 )
 from orthograph.query.catalogue import QueryCatalogue
@@ -479,12 +483,44 @@ class MemgraphSourcePartitionedCardinalityQuery(
     name = "memgraph.inspect.partitioned_cardinality.source"
 
 
+class MemgraphSourcePartitionedCardinalityWildcardSourceQuery(
+    InspectSourcePartitionedCardinalityWildcardSourceQuery
+):
+    """Source side, source-wildcard partitioned cardinality (Memgraph name)."""
+
+    name = "memgraph.inspect.partitioned_cardinality.source.wildcard_source"
+
+
+class MemgraphSourcePartitionedCardinalityWildcardTargetQuery(
+    InspectSourcePartitionedCardinalityWildcardTargetQuery
+):
+    """Source side, target-wildcard partitioned cardinality (Memgraph name)."""
+
+    name = "memgraph.inspect.partitioned_cardinality.source.wildcard_target"
+
+
 class MemgraphTargetPartitionedCardinalityQuery(
     InspectTargetPartitionedCardinalityQuery
 ):
     """Target-side partitioned cardinality under the Memgraph catalogue name."""
 
     name = "memgraph.inspect.partitioned_cardinality.target"
+
+
+class MemgraphTargetPartitionedCardinalityWildcardSourceQuery(
+    InspectTargetPartitionedCardinalityWildcardSourceQuery
+):
+    """Target side, source-wildcard partitioned cardinality (Memgraph name)."""
+
+    name = "memgraph.inspect.partitioned_cardinality.target.wildcard_source"
+
+
+class MemgraphTargetPartitionedCardinalityWildcardTargetQuery(
+    InspectTargetPartitionedCardinalityWildcardTargetQuery
+):
+    """Target side, target-wildcard partitioned cardinality (Memgraph name)."""
+
+    name = "memgraph.inspect.partitioned_cardinality.target.wildcard_target"
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +542,12 @@ _PARTITIONED_PLACEHOLDER = {
     "endpoint_label": "_",
     "source_discriminator": "_",
     "target_discriminator": "_",
+}
+_WILDCARD_PARTITIONED_PLACEHOLDER = {
+    "label": "_",
+    "rel_type": "_",
+    "endpoint_label": "_",
+    "discriminator": "_",
 }
 
 
@@ -532,6 +574,26 @@ def build_memgraph_catalogue() -> QueryCatalogue:
     )
     query_catalogue.register_read(
         MemgraphTargetPartitionedCardinalityQuery(identifiers=_PARTITIONED_PLACEHOLDER)
+    )
+    query_catalogue.register_read(
+        MemgraphSourcePartitionedCardinalityWildcardSourceQuery(
+            identifiers=_WILDCARD_PARTITIONED_PLACEHOLDER
+        )
+    )
+    query_catalogue.register_read(
+        MemgraphSourcePartitionedCardinalityWildcardTargetQuery(
+            identifiers=_WILDCARD_PARTITIONED_PLACEHOLDER
+        )
+    )
+    query_catalogue.register_read(
+        MemgraphTargetPartitionedCardinalityWildcardSourceQuery(
+            identifiers=_WILDCARD_PARTITIONED_PLACEHOLDER
+        )
+    )
+    query_catalogue.register_read(
+        MemgraphTargetPartitionedCardinalityWildcardTargetQuery(
+            identifiers=_WILDCARD_PARTITIONED_PLACEHOLDER
+        )
     )
     # Value scan: type counts (valueType) + scalar histogram
     # (toStringOrNull).  Both functions are built-in, so the scan is always

@@ -14,24 +14,40 @@ from orthograph.graph_profile.models import (
 )
 
 
-def _extract_discriminators(card: Any) -> tuple[str, str] | None:
-    """Return ``(source_prop, target_prop)`` for a single-property discriminator.
+def _extract_discriminators(card: Any) -> tuple[str | None, str | None] | None:
+    """Return ``(source_prop, target_prop)`` for a per-endpoint discriminator.
 
     Reads the union of property names used as conditions across all rules on
-    each endpoint.  Returns ``None`` when the discriminator is multi-property
-    or when no conditions exist.
+    each endpoint.  Each endpoint may carry **zero or one** property:
 
-    Mirrors the single-``kind`` constraint of :func:`_discriminator_value` in
-    the NetworkX reference inspector.
+    * **one** property → that property name is the discriminator for the side;
+    * **zero** properties (a wildcard ``PropMatch()``) → ``None``, meaning the
+      side has no grouping key and resolves to a constant ``null`` partition
+      value — mirroring ADR-032's absolute convention and the
+      ``PartitionKey(source_value=None | target_value=None)`` representation.
+
+    Returns ``None`` (declines) only when **either** endpoint carries more than
+    one condition property, since the single-property-per-endpoint restriction
+    still holds and the definition-time guard (ADR-032 §4) is the authority on
+    enforceability — the profiler must not attempt a breakdown the enforcement
+    path rejects.  At least one side must be non-wildcard; a fully-wildcard rule
+    set (both empty) also declines (nothing to partition on).
+
+    Mirrors :func:`_discriminator_value` in the NetworkX reference inspector,
+    where a zero-key endpoint likewise maps to the ``null`` partition component.
     """
     src_keys: set[str] = set()
     tgt_keys: set[str] = set()
     for rule in card.rules:
         src_keys.update(rule.source.conditions)
         tgt_keys.update(rule.target.conditions)
-    if len(src_keys) != 1 or len(tgt_keys) != 1:
+    if len(src_keys) > 1 or len(tgt_keys) > 1:
         return None
-    return next(iter(src_keys)), next(iter(tgt_keys))
+    if not src_keys and not tgt_keys:
+        return None
+    src = next(iter(src_keys)) if src_keys else None
+    tgt = next(iter(tgt_keys)) if tgt_keys else None
+    return src, tgt
 
 
 class GraphInspector(ABC):
@@ -145,9 +161,9 @@ class CypherInspector(GraphInspector):
         self,
         connection: Any,
         profile: RelationshipTypeProfile,
-        partitioned_query: Any,
-        source_discriminator: str,
-        target_discriminator: str,
+        query_variants: dict[str, Any],
+        source_discriminator: str | None,
+        target_discriminator: str | None,
         side: str,
         **execute_kwargs: Any,
     ) -> RelationshipTypeProfile:
@@ -163,6 +179,21 @@ class CypherInspector(GraphInspector):
         keyed by ``str(PartitionKey)`` and attached to
         ``{side}_partitioned_cardinality``.
 
+        ``query_variants`` maps ``"both"`` / ``"wildcard_source"`` /
+        ``"wildcard_target"`` to the query class for that discriminator shape.
+        Exactly one is selected from the ``(source_discriminator,
+        target_discriminator)`` ``None``-pattern:
+
+        * both present  → ``"both"`` (splice both property names);
+        * source ``None`` → ``"wildcard_source"`` (source renders constant
+          ``null``, only the target property is spliced);
+        * target ``None`` → ``"wildcard_target"`` (target renders constant
+          ``null``, only the source property is spliced).
+
+        A wildcard endpoint mirrors ADR-032's absolute convention and the
+        NetworkX reference, where a zero-key endpoint maps to the ``null``
+        partition component — it is never a read of a non-existent property.
+
         Zero-degree rows (emitted by ``OPTIONAL MATCH`` for anchor nodes that have
         no matching edge) are suppressed so the result matches the NetworkX
         reference, which only emits partitions for observed edges.  When the query
@@ -176,17 +207,35 @@ class CypherInspector(GraphInspector):
             anchor_label = profile.target_label
             endpoint_label = profile.source_label
 
+        base_identifiers: dict[str, str] = {
+            "label": anchor_label,
+            "rel_type": rel_type,
+            "endpoint_label": endpoint_label,
+        }
+        identifiers: dict[str, str]
+        if source_discriminator is not None and target_discriminator is not None:
+            query = query_variants["both"]
+            identifiers = {
+                **base_identifiers,
+                "source_discriminator": source_discriminator,
+                "target_discriminator": target_discriminator,
+            }
+        elif source_discriminator is None:
+            # Source is the wildcard → constant null; the present (target)
+            # property is the single spliced discriminator.  ``_extract_discriminators``
+            # guarantees the non-wildcard side is non-None.
+            assert target_discriminator is not None
+            query = query_variants["wildcard_source"]
+            identifiers = {**base_identifiers, "discriminator": target_discriminator}
+        else:
+            query = query_variants["wildcard_target"]
+            identifiers = {**base_identifiers, "discriminator": source_discriminator}
+
         partitioned: dict[str, BoundedDistribution] = {}
         rows: list[PartitionedCardinalityRow] = self._run_query(
             connection,
-            partitioned_query,
-            identifiers={
-                "label": anchor_label,
-                "rel_type": rel_type,
-                "endpoint_label": endpoint_label,
-                "source_discriminator": source_discriminator,
-                "target_discriminator": target_discriminator,
-            },
+            query,
+            identifiers=identifiers,
             **execute_kwargs,
         )
         for row in rows:

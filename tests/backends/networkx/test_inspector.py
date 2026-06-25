@@ -817,3 +817,139 @@ def test_inspect_partitioned_cardinality_both_sides():
     assert rtp.target_partitioned_cardinality[pair].min == 1
     assert rtp.target_partitioned_cardinality[pair].max == 1
     assert rtp.target_partitioned_cardinality[pair].count == 2
+
+
+# --- E49 T2: one-sided (wildcard) discriminator ---
+
+
+def test_inspect_partitioned_cardinality_one_sided_target_keyed():
+    """IS_INPUT: target keyed on Operation.type, source Sample is a wildcard.
+
+    The one-sided shape ADR-032 made enforceable: only the (target) Operation
+    endpoint carries the ``type`` discriminator; the source Sample endpoint is a
+    wildcard ``PropMatch()``.  The breakdown must be produced (not None), keyed by
+    ``src=null|tgt=<type>`` per the absolute convention, with the wildcard source
+    rendered as ``null``.
+    """
+
+    class Sample(NodeModel):
+        __label__ = "Sample"
+        __uid_field__ = "uid"
+        uid: str
+
+    class Operation(NodeModel):
+        __label__ = "Operation"
+        __uid_field__ = "uid"
+        uid: str
+        type: str
+
+    target_card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch(),  # wildcard source endpoint
+                target=PropMatch({"type": "combine"}),
+                spec=CardinalitySpec(min=2, max=4),
+            ),
+            ConditionalRule(
+                source=PropMatch(),
+                target=PropMatch({"type": "split"}),
+                spec=CardinalitySpec(min=1, max=1),
+            ),
+        ),
+        default="0..*",
+    )
+
+    class IsInput(RelationshipModel):
+        __label__ = "IS_INPUT"
+        __source_label__ = "Sample"
+        __target_label__ = "Operation"
+        __target_cardinality__ = target_card
+
+    gd = GraphDefinition(
+        name="SampleOperation",
+        node_types=[Sample, Operation],
+        relationship_types=[IsInput],
+    )
+    g = _make_graph()
+    # combine op receives 2 inputs; split op receives 1 input.
+    g.add_node("c", __label__="Operation", uid="c", type="combine")
+    g.add_node("sp", __label__="Operation", uid="sp", type="split")
+    g.add_node("s1", __label__="Sample", uid="s1")
+    g.add_node("s2", __label__="Sample", uid="s2")
+    g.add_node("s3", __label__="Sample", uid="s3")
+    g.add_edge("s1", "c", __label__="IS_INPUT")
+    g.add_edge("s2", "c", __label__="IS_INPUT")
+    g.add_edge("s3", "sp", __label__="IS_INPUT")
+
+    profile = NetworkxInspector().inspect(g, graph_definition=gd)
+    is_input = str(
+        RelTypeKey(source_label="Sample", label="IS_INPUT", target_label="Operation")
+    )
+    rtp = profile.rel_type_profiles[is_input]
+    partitions = rtp.target_partitioned_cardinality
+
+    assert partitions is not None
+    assert rtp.source_partitioned_cardinality is None
+    combine = str(PartitionKey(source_value=None, target_value="combine"))
+    split = str(PartitionKey(source_value=None, target_value="split"))
+    assert set(partitions) == {combine, split}
+    # combine op has incoming degree 2; split op has incoming degree 1.
+    assert partitions[combine].min == 2
+    assert partitions[combine].max == 2
+    assert partitions[split].min == 1
+    assert partitions[split].max == 1
+
+
+def test_inspect_partitioned_cardinality_multi_property_declines():
+    """A multi-property-per-endpoint discriminator declines (no partial breakdown)."""
+
+    class Producer(NodeModel):
+        __label__ = "Producer"
+        __uid_field__ = "uid"
+        uid: str
+        kind: str
+        tier: str
+
+    class Artifact(NodeModel):
+        __label__ = "Artifact"
+        __uid_field__ = "uid"
+        uid: str
+
+    card = ConditionalCardinality(
+        rules=(
+            ConditionalRule(
+                source=PropMatch({"kind": "heavy", "tier": "1"}),  # 2 props
+                target=PropMatch(),
+                spec=CardinalitySpec(min=1, max=3),
+            ),
+        ),
+        default="0..*",
+    )
+
+    class Produces(RelationshipModel):
+        __label__ = "PRODUCES"
+        __source_label__ = "Producer"
+        __target_label__ = "Artifact"
+        __source_cardinality__ = card
+
+    gd = GraphDefinition(
+        name="MultiProp",
+        node_types=[Producer, Artifact],
+        relationship_types=[Produces],
+    )
+    g = _make_graph()
+    g.add_node("p1", __label__="Producer", uid="p1", kind="heavy", tier="1")
+    g.add_node("a1", __label__="Artifact", uid="a1")
+    g.add_edge("p1", "a1", __label__="PRODUCES")
+
+    # Must not crash; the multi-key endpoint maps to the null partition component
+    # (NetworkX _discriminator_value returns None for len(keys) != 1).
+    profile = NetworkxInspector().inspect(g, graph_definition=gd)
+    produces = str(
+        RelTypeKey(source_label="Producer", label="PRODUCES", target_label="Artifact")
+    )
+    rtp = profile.rel_type_profiles[produces]
+    # The breakdown collapses to a single all-null partition (no per-value split).
+    null_null = str(PartitionKey(source_value=None, target_value=None))
+    assert rtp.source_partitioned_cardinality is not None
+    assert set(rtp.source_partitioned_cardinality) == {null_null}

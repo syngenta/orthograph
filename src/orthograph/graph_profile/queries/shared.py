@@ -16,6 +16,7 @@ from orthograph.graph_profile.models import (
     EndpointLabelsRow,
     PartitionedCardinalityIdentifiers,
     PartitionedCardinalityRow,
+    WildcardPartitionedCardinalityIdentifiers,
 )
 
 
@@ -117,7 +118,13 @@ class InspectSourcePartitionedCardinalityQuery(
     All five identifiers (``label``, ``rel_type``, ``endpoint_label``, and the two
     **property-name** discriminators) are spliced via the ``<<...>>`` mechanism,
     which validates each through ``validate_identifier`` before substitution — an
-    unsafe identifier is rejected, never injected.
+    unsafe identifier is rejected, never injected.  This both-present variant is
+    used when each endpoint carries a discriminator; the **one-sided** case (one
+    endpoint a wildcard) uses
+    :class:`InspectSourcePartitionedCardinalityWildcardSourceQuery` /
+    :class:`InspectSourcePartitionedCardinalityWildcardTargetQuery`, which render
+    the wildcard side as a constant ``null`` rather than a read of a non-existent
+    property.
 
     The symmetric counterpart is :class:`InspectTargetPartitionedCardinalityQuery`.
     """
@@ -131,6 +138,62 @@ class InspectSourcePartitionedCardinalityQuery(
         " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->(m:`<<endpoint_label>>`)"
         " WITH n, n.`<<source_discriminator>>` AS sk,"
         " m.`<<target_discriminator>>` AS tk, count(r) AS degree"
+        " RETURN sk, tk, min(degree) AS min_degree, max(degree) AS max_degree,"
+        " avg(degree) AS avg_degree, count(n) AS sample_size"
+    )
+
+    def materialize(self, raw: Any) -> PartitionedCardinalityRow:
+        return _materialize_partitioned_row(raw)
+
+
+class InspectSourcePartitionedCardinalityWildcardSourceQuery(
+    CypherReadQuery[NoParams, PartitionedCardinalityRow]
+):
+    """Source side, **source** endpoint a wildcard: ``sk`` is constant ``null``.
+
+    Identical to :class:`InspectSourcePartitionedCardinalityQuery` except the
+    source discriminator is the literal ``null`` (no grouping key on that side),
+    so only ``<<target_discriminator>>`` is spliced.  Used when a one-sided
+    discriminator keys only the target endpoint.
+    """
+
+    Params = NoParams
+    Output = PartitionedCardinalityRow
+    name = "inspect.partitioned_cardinality.source.wildcard_source"
+    Identifiers = WildcardPartitionedCardinalityIdentifiers
+    cypher_template = (
+        "MATCH (n:`<<label>>`)"
+        " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->(m:`<<endpoint_label>>`)"
+        " WITH n, null AS sk,"
+        " m.`<<discriminator>>` AS tk, count(r) AS degree"
+        " RETURN sk, tk, min(degree) AS min_degree, max(degree) AS max_degree,"
+        " avg(degree) AS avg_degree, count(n) AS sample_size"
+    )
+
+    def materialize(self, raw: Any) -> PartitionedCardinalityRow:
+        return _materialize_partitioned_row(raw)
+
+
+class InspectSourcePartitionedCardinalityWildcardTargetQuery(
+    CypherReadQuery[NoParams, PartitionedCardinalityRow]
+):
+    """Source side, **target** endpoint a wildcard: ``tk`` is constant ``null``.
+
+    The natural shape for ``HAS_OUTPUT`` profiled on its source side: the counted
+    (source) ``Operation`` endpoint carries the discriminator, the target
+    ``Sample`` endpoint is a wildcard.  Only ``<<discriminator>>`` (the source
+    property) is spliced.
+    """
+
+    Params = NoParams
+    Output = PartitionedCardinalityRow
+    name = "inspect.partitioned_cardinality.source.wildcard_target"
+    Identifiers = WildcardPartitionedCardinalityIdentifiers
+    cypher_template = (
+        "MATCH (n:`<<label>>`)"
+        " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->(m:`<<endpoint_label>>`)"
+        " WITH n, n.`<<discriminator>>` AS sk,"
+        " null AS tk, count(r) AS degree"
         " RETURN sk, tk, min(degree) AS min_degree, max(degree) AS max_degree,"
         " avg(degree) AS avg_degree, count(n) AS sample_size"
     )
@@ -154,7 +217,8 @@ class InspectTargetPartitionedCardinalityQuery(
     target breakdown and diverge from the NetworkX/in-memory verdict.
 
     Identifier safety and zero-degree suppression are identical to the source
-    query; only the anchor (``MATCH (m:..)`` / ``count(m)``) differs.
+    query; only the anchor (``MATCH (m:..)`` / ``count(m)``) differs.  The
+    **one-sided** case uses the ``WildcardSource`` / ``WildcardTarget`` variants.
     """
 
     Params = NoParams
@@ -166,6 +230,61 @@ class InspectTargetPartitionedCardinalityQuery(
         " OPTIONAL MATCH (n:`<<endpoint_label>>`)-[r:`<<rel_type>>`]->(m)"
         " WITH m, n.`<<source_discriminator>>` AS sk,"
         " m.`<<target_discriminator>>` AS tk, count(r) AS degree"
+        " RETURN sk, tk, min(degree) AS min_degree, max(degree) AS max_degree,"
+        " avg(degree) AS avg_degree, count(m) AS sample_size"
+    )
+
+    def materialize(self, raw: Any) -> PartitionedCardinalityRow:
+        return _materialize_partitioned_row(raw)
+
+
+class InspectTargetPartitionedCardinalityWildcardSourceQuery(
+    CypherReadQuery[NoParams, PartitionedCardinalityRow]
+):
+    """Target side, **source** endpoint a wildcard: ``sk`` is constant ``null``.
+
+    The natural shape for ``IS_INPUT`` profiled on its target side: the counted
+    (target) ``Operation`` endpoint carries the discriminator, the source
+    ``Sample`` endpoint is a wildcard.  Only ``<<discriminator>>`` (the target
+    property) is spliced.
+    """
+
+    Params = NoParams
+    Output = PartitionedCardinalityRow
+    name = "inspect.partitioned_cardinality.target.wildcard_source"
+    Identifiers = WildcardPartitionedCardinalityIdentifiers
+    cypher_template = (
+        "MATCH (m:`<<label>>`)"
+        " OPTIONAL MATCH (n:`<<endpoint_label>>`)-[r:`<<rel_type>>`]->(m)"
+        " WITH m, null AS sk,"
+        " m.`<<discriminator>>` AS tk, count(r) AS degree"
+        " RETURN sk, tk, min(degree) AS min_degree, max(degree) AS max_degree,"
+        " avg(degree) AS avg_degree, count(m) AS sample_size"
+    )
+
+    def materialize(self, raw: Any) -> PartitionedCardinalityRow:
+        return _materialize_partitioned_row(raw)
+
+
+class InspectTargetPartitionedCardinalityWildcardTargetQuery(
+    CypherReadQuery[NoParams, PartitionedCardinalityRow]
+):
+    """Target side, **target** endpoint a wildcard: ``tk`` is constant ``null``.
+
+    The counted target endpoint is the wildcard and the source endpoint carries
+    the discriminator.  Only ``<<discriminator>>`` (the source property) is
+    spliced.
+    """
+
+    Params = NoParams
+    Output = PartitionedCardinalityRow
+    name = "inspect.partitioned_cardinality.target.wildcard_target"
+    Identifiers = WildcardPartitionedCardinalityIdentifiers
+    cypher_template = (
+        "MATCH (m:`<<label>>`)"
+        " OPTIONAL MATCH (n:`<<endpoint_label>>`)-[r:`<<rel_type>>`]->(m)"
+        " WITH m, n.`<<discriminator>>` AS sk,"
+        " null AS tk, count(r) AS degree"
         " RETURN sk, tk, min(degree) AS min_degree, max(degree) AS max_degree,"
         " avg(degree) AS avg_degree, count(m) AS sample_size"
     )
