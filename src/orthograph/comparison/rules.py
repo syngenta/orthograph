@@ -13,13 +13,32 @@ Extend the rule set by passing a custom list to
 :func:`~orthograph.comparison.engine.compare_profile_to_definition`.
 """
 
-from collections.abc import Iterable
+import enum
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from orthograph.comparison.type_mapping import db_type_to_python
 from orthograph.comparison.views import GraphView
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue
+from orthograph.graph_definition.models import (
+    ConditionalCardinality,
+    RelationshipModel,
+    representative_spec,
+)
+from orthograph.graph_definition.property_spec import TypeInfo
+from orthograph.graph_profile.models import (
+    BoundedDistribution,
+    PartitionKey,
+    PropertyProfile,
+    RelationshipTypeProfile,
+)
+
+
+# One partition and its observed degree distribution (``None`` = declared but
+# unobserved → degree 0, the missing-partition convention).
+_PartitionDist = tuple[PartitionKey, BoundedDistribution | None]
 
 
 @dataclass(frozen=True)
@@ -94,8 +113,6 @@ def _expected_storage_type(python_type: type) -> type | None:
     type (no single storage type), signalling the structural type check to
     stand down.
     """
-    import enum
-
     if isinstance(python_type, type) and issubclass(python_type, enum.Enum):
         value_types = {type(member.value) for member in python_type}
         if len(value_types) == 1:
@@ -228,8 +245,6 @@ class MissingPropertyRule:
     key: str = "property.missing"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        from orthograph.graph_definition.property_spec import TypeInfo
-
         type_info: TypeInfo | None = context.left
         if type_info is None or context.right is not None:
             return  # no declaration or property was observed — not applicable
@@ -265,8 +280,6 @@ class UnexpectedPropertyRule:
             return  # no observation either — nothing to report
         if "prop_name" not in context.extra:
             return  # not a property address
-        from orthograph.graph_profile.models import PropertyProfile
-
         if not isinstance(context.right, PropertyProfile):
             return  # not a property observation
         label: str = context.extra["label"]
@@ -291,9 +304,6 @@ class PropertyIncompleteRule:
     key: str = "property.incomplete"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        from orthograph.graph_definition.property_spec import TypeInfo
-        from orthograph.graph_profile.models import PropertyProfile
-
         type_info: TypeInfo | None = context.left
         prop_profile: PropertyProfile | None = context.right
         if not isinstance(type_info, TypeInfo) or not isinstance(
@@ -349,10 +359,6 @@ class PropertyTypeMismatchRule:
     severity_threshold: float = 0.05
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        from orthograph.comparison.engine import db_type_to_python
-        from orthograph.graph_definition.property_spec import TypeInfo
-        from orthograph.graph_profile.models import PropertyProfile
-
         type_info: TypeInfo | None = context.left
         prop_profile: PropertyProfile | None = context.right
         if not isinstance(type_info, TypeInfo) or not isinstance(
@@ -450,9 +456,6 @@ class PropertyConstraintPresenceRule:
     key: str = "property.constraint_presence"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        from orthograph.graph_definition.property_spec import TypeInfo
-        from orthograph.graph_profile.models import PropertyProfile
-
         type_info: TypeInfo | None = context.left
         prop_profile: PropertyProfile | None = context.right
         if not isinstance(type_info, TypeInfo) or not isinstance(
@@ -531,11 +534,6 @@ class PropertyEnumValueRule:
     key: str = "property.enum_value"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        import enum
-
-        from orthograph.graph_definition.property_spec import TypeInfo
-        from orthograph.graph_profile.models import PropertyProfile
-
         type_info: TypeInfo | None = context.left
         prop_profile: PropertyProfile | None = context.right
         if not isinstance(type_info, TypeInfo) or not isinstance(
@@ -635,7 +633,7 @@ class PropertyEnumValueRule:
 
 def _conditional_sides(
     rt_class: Any,
-) -> "list[tuple[Any, str]]":
+) -> list[tuple[ConditionalCardinality, str]]:
     """Return ``(conditional_card, side)`` for **every** conditional directed side.
 
     Mirrors the inspector's ``_conditional_sides`` (NetworkX reference): source
@@ -644,11 +642,9 @@ def _conditional_sides(
     enforced against its own per-side observed breakdown.  Returns an
     empty list when no side is conditional.
     """
-    from orthograph.graph_definition.models import ConditionalCardinality
-
     if not rt_class.__directed__:
         return []
-    sides: list[tuple[Any, str]] = []
+    sides: list[tuple[ConditionalCardinality, str]] = []
     src_card = rt_class.__source_cardinality__
     if isinstance(src_card, ConditionalCardinality):
         sides.append((src_card, "source"))
@@ -658,34 +654,19 @@ def _conditional_sides(
     return sides
 
 
-def _single_disc_key(matches: "Iterable[Any]") -> str | None:
-    """Return the single discriminator property name across rule predicates.
+def _declared_endpoint_map(match: Any) -> dict[str, str | None]:
+    """Stringified condition map for one endpoint of a declared rule.
 
-    The single-``kind`` first cut discriminates on one property per
-    endpoint; more (or zero) keys yield ``None`` (the null-partition component),
-    matching the inspector's ``_discriminator_value`` convention.
+    Mirrors the observed :class:`PartitionKey` endpoint maps the producers emit:
+    a wildcard ``PropMatch()`` (no conditions) yields ``{}``; otherwise each
+    condition value is stringified the same way the inspector stringifies the
+    observed discriminator value, so a declared map compares equal to its
+    observed counterpart.
     """
-    keys: set[str] = set()
-    for match in matches:
-        keys.update(match.conditions)
-    return next(iter(keys)) if len(keys) == 1 else None
+    return {k: str(v) for k, v in match.conditions.items()}
 
 
-def _partition_props(disc_key: str | None, value: str | None) -> dict[str, object]:
-    """Reconstruct an endpoint's discriminator props from a partition value.
-
-    The observed partition carries only the stringified discriminator *value*;
-    pairing it with the conditional's referenced property name yields the prop
-    map that :meth:`ConditionalCardinality.resolve_for_pair` matches against.
-    A null value (no discriminator / absent edge) yields an empty map, so no
-    predicate keyed on that property matches — the default bound then applies.
-    """
-    if disc_key is None or value is None:
-        return {}
-    return {disc_key: value}
-
-
-def _degree_bounds(dist: Any) -> "tuple[int, int | None]":
+def _degree_bounds(dist: Any) -> tuple[int, int | None]:
     """Return ``(min, max)`` degree from a partition distribution.
 
     An absent partition (``dist is None``) — a declared pair never observed —
@@ -734,9 +715,6 @@ class CardinalityViolationRule:
     key: str = "rel.cardinality"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        from orthograph.graph_definition.models import RelationshipModel
-        from orthograph.graph_profile.models import RelationshipTypeProfile
-
         rt_class = context.left
         rel_profile = context.right
         if not (
@@ -760,8 +738,6 @@ class CardinalityViolationRule:
         self, label: str, rt_class: Any, rel_profile: Any
     ) -> Iterable[ValidationIssue]:
         """Check the observed aggregate distribution against the declared bound."""
-        from orthograph.graph_definition.models import representative_spec
-
         stats = rel_profile.cardinality_stats
         # E40.3: collapse a possibly-conditional value to a concrete spec
         # (E40.7 tracks per-endpoint resolution).
@@ -806,7 +782,7 @@ class CardinalityViolationRule:
             )
 
     def _compare_conditional(
-        self, label: str, rel_profile: Any, card: Any, side: str
+        self, label: str, rel_profile: Any, card: ConditionalCardinality, side: str
     ) -> Iterable[ValidationIssue]:
         """Enforce per-pair bounds for one conditional declared side (E41.5/E41.7).
 
@@ -815,8 +791,6 @@ class CardinalityViolationRule:
         so a both-endpoint-conditional type is enforced independently per side,
         matching the in-memory per-side verdict.
         """
-        from orthograph.graph_profile.models import PartitionKey
-
         partitioned = (
             rel_profile.source_partitioned_cardinality
             if side == "source"
@@ -836,44 +810,36 @@ class CardinalityViolationRule:
             )
             return
 
-        src_key = _single_disc_key(r.source for r in card.rules)
-        tgt_key = _single_disc_key(r.target for r in card.rules)
-
-        # Build {partition: distribution} once.  Observed partitions carry their
-        # BoundedDistribution (decoded with the stored value alongside the key, so
-        # the key is never re-derived lossily — finding 2); declared-but-unobserved
-        # partitions map to ``None`` (degree 0, the missing-partition convention).
-        observed: dict[Any, Any] = {
-            self._decode_partition(encoded): dist
-            for encoded, dist in partitioned.items()
-        }
-        declared = {
-            PartitionKey(
-                source_value=self._rule_value(rule.source, src_key),
-                target_value=self._rule_value(rule.target, tgt_key),
+        # Build {partition: distribution} once.  Observed rows carry their
+        # name-bearing PartitionKey directly (no string parse — the key is
+        # self-describing); declared-but-unobserved partitions map to ``None``
+        # (degree 0, the missing-partition convention).  An observed partition
+        # overrides its declared counterpart by PartitionKey (map) equality.
+        partitions: dict[PartitionKey, BoundedDistribution | None] = {}
+        for rule in card.rules:
+            declared_key = PartitionKey(
+                source=_declared_endpoint_map(rule.source),
+                target=_declared_endpoint_map(rule.target),
             )
-            for rule in card.rules
-        }
-        partitions = {p: observed.get(p) for p in declared | set(observed)}
+            partitions.setdefault(declared_key, None)
+        for row in partitioned:
+            partitions[row.key] = row.stats
 
         # Matched partitions: each is checked against its own resolved bound.
-        # Unmatched partitions are grouped by the counted-side discriminator value
+        # Unmatched partitions are grouped by the counted-side discriminator map
         # so the default floor is enforced once against that node-group's *total*
-        # side degree (parity with the in-memory per-node floor — finding 1).
-        unmatched_by_value: dict[str | None, list[Any]] = {}
+        # side degree (parity with the in-memory per-node floor — finding 1).  The
+        # counted map keys the group via its (hashable) frozenset of items.
+        unmatched_by_value: dict[
+            frozenset[tuple[str, str | None]], list[_PartitionDist]
+        ] = {}
         for partition, dist in partitions.items():
-            counted_value = (
-                partition.source_value if side == "source" else partition.target_value
-            )
-            counted_key = src_key if side == "source" else tgt_key
-            if self._matches_any_rule(card, side, counted_key, counted_value):
-                yield from self._check_matched(
-                    label, card, side, src_key, tgt_key, partition, dist
-                )
+            counted_map = partition.source if side == "source" else partition.target
+            if self._matches_any_rule(card, side, counted_map):
+                yield from self._check_matched(label, card, partition, dist)
             else:
-                unmatched_by_value.setdefault(counted_value, []).append(
-                    (partition, dist)
-                )
+                group_key = frozenset(counted_map.items())
+                unmatched_by_value.setdefault(group_key, []).append((partition, dist))
 
         for group in unmatched_by_value.values():
             yield from self._check_unmatched(label, card, group)
@@ -881,18 +847,15 @@ class CardinalityViolationRule:
     def _check_matched(
         self,
         label: str,
-        card: Any,
-        side: str,
-        src_key: str | None,
-        tgt_key: str | None,
-        partition: Any,
-        dist: Any,
+        card: ConditionalCardinality,
+        partition: PartitionKey,
+        dist: BoundedDistribution | None,
     ) -> Iterable[ValidationIssue]:
         """Check one rule-matched partition against its resolved per-pair bound."""
         observed_min, observed_max = _degree_bounds(dist)
-        src_props = _partition_props(src_key, partition.source_value)
-        tgt_props = _partition_props(tgt_key, partition.target_value)
-        spec = card.resolve_for_pair(src_props, tgt_props)
+        # The partition's name-bearing maps ARE the endpoint props; feed them to
+        # resolve_for_pair directly (no name re-derivation, no value-only round-trip).
+        spec = card.resolve_for_pair(partition.source, partition.target)
         if not spec.contains(observed_min) or (
             observed_max is not None and not spec.contains(observed_max)
         ):
@@ -903,13 +866,13 @@ class CardinalityViolationRule:
                 entity_id=label,
                 message=(
                     f"Relationship '{label}' partition "
-                    f"(source={partition.source_value!r}, "
-                    f"target={partition.target_value!r}) has observed degrees "
+                    f"(source={partition.source!r}, "
+                    f"target={partition.target!r}) has observed degrees "
                     f"{observed_min}..{observed_max}, expected {spec.notation}"
                 ),
                 context={
-                    "source_value": partition.source_value,
-                    "target_value": partition.target_value,
+                    "source": partition.source,
+                    "target": partition.target,
                     "observed_min": observed_min,
                     "observed_max": observed_max,
                     "expected_min": spec.min,
@@ -918,7 +881,7 @@ class CardinalityViolationRule:
             )
 
     def _check_unmatched(
-        self, label: str, card: Any, group: list[Any]
+        self, label: str, card: ConditionalCardinality, group: list[_PartitionDist]
     ) -> Iterable[ValidationIssue]:
         """Emit drift + default-floor for one unmatched counted-side value group.
 
@@ -930,7 +893,7 @@ class CardinalityViolationRule:
         parity).  A single ``CARDINALITY_UNMATCHED_KIND`` INFO is emitted per
         value (drift granularity matching the in-memory once-per-node emission).
         """
-        # group is a list of (partition, dist); they share one counted-side value.
+        # group is a list of (partition, dist); they share one counted-side map.
         sample_partition = group[0][0]
         total_min = 0
         total_max: int | None = 0
@@ -949,13 +912,13 @@ class CardinalityViolationRule:
             entity_id=label,
             message=(
                 f"Relationship '{label}' partition "
-                f"(source={sample_partition.source_value!r}, "
-                f"target={sample_partition.target_value!r}) "
+                f"(source={sample_partition.source!r}, "
+                f"target={sample_partition.target!r}) "
                 "matches no declared cardinality rule; the default bound applies"
             ),
             context={
-                "source_value": sample_partition.source_value,
-                "target_value": sample_partition.target_value,
+                "source": sample_partition.source,
+                "target": sample_partition.target,
             },
         )
         default = card.default
@@ -969,14 +932,14 @@ class CardinalityViolationRule:
                 entity_id=label,
                 message=(
                     f"Relationship '{label}' partition "
-                    f"(source={sample_partition.source_value!r}, "
-                    f"target={sample_partition.target_value!r}) matches no rule and "
+                    f"(source={sample_partition.source!r}, "
+                    f"target={sample_partition.target!r}) matches no rule and "
                     f"has total observed degrees {total_min}..{total_max}, violating "
                     f"the default bound {default.notation}"
                 ),
                 context={
-                    "source_value": sample_partition.source_value,
-                    "target_value": sample_partition.target_value,
+                    "source": sample_partition.source,
+                    "target": sample_partition.target,
                     "observed_min": total_min,
                     "observed_max": total_max,
                     "expected_min": default.min,
@@ -986,43 +949,18 @@ class CardinalityViolationRule:
             )
 
     @staticmethod
-    def _rule_value(match: Any, disc_key: str | None) -> str | None:
-        """Stringified value a rule predicate pins for *disc_key* (or None)."""
-        if disc_key is None or disc_key not in match.conditions:
-            return None
-        return str(match.conditions[disc_key])
-
-    @staticmethod
-    def _decode_partition(encoded: str) -> Any:
-        """Reconstruct a :class:`PartitionKey` from an observed dict key.
-
-        The observed key is ``str(PartitionKey)`` — ``"src=<v>|tgt=<v>"`` with
-        ``None`` encoded as the literal ``"null"`` (PartitionKey.__str__).  The
-        single-``kind`` first cut (E41) uses simple string discriminator values
-        with no ``|``/``=`` separators, so splitting on those delimiters recovers
-        the original values; richer values are a guarded follow-on (the stored
-        distribution is carried alongside the key by the caller, so the key is
-        never used to re-look-up the value — finding 2).
-        """
-        from orthograph.graph_profile.models import PartitionKey
-
-        src_part, _, tgt_part = encoded.partition("|")
-        src_raw = src_part.removeprefix("src=")
-        tgt_raw = tgt_part.removeprefix("tgt=")
-        return PartitionKey(
-            source_value=None if src_raw == "null" else src_raw,
-            target_value=None if tgt_raw == "null" else tgt_raw,
-        )
-
-    @staticmethod
     def _matches_any_rule(
-        card: Any, side: str, counted_key: str | None, counted_value: str | None
+        card: ConditionalCardinality, side: str, counted_map: Mapping[str, str | None]
     ) -> bool:
-        """True when some rule's counted-endpoint predicate matches this value."""
-        props = _partition_props(counted_key, counted_value)
+        """True when some rule's counted-endpoint predicate matches this map.
+
+        The observed name-bearing endpoint map *is* the props, so it is fed to
+        :meth:`PropMatch.matches` directly — no name re-derivation, no value-only
+        round-trip.
+        """
         for rule in card.rules:
             own = rule.source if side == "source" else rule.target
-            if own.matches(props):
+            if own.matches(counted_map):
                 return True
         return False
 
@@ -1065,8 +1003,6 @@ class PropertyDistinctCountRule:
     key: str = "property.distinct_count"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        from orthograph.graph_profile.models import PropertyProfile
-
         prop_profile = context.right
         max_distinct: int | None = context.extra.get("max_distinct_count")
         if not isinstance(prop_profile, PropertyProfile):

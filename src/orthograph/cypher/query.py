@@ -36,9 +36,11 @@ Design goals
   :mod:`orthograph.cypher.bindings`).  Identifier *values* are **not** stored on
   the query — they are passed to :meth:`build` at call time, symmetric with
   ``Params``.
-* **Full shared validation.** :meth:`validate_query` accepts a
-  :class:`~orthograph.graph_definition.graph_definition.GraphDefinition` and
-  runs the **same syntactic + semantic checks as the typed path** via the shared
+* **Full shared validation.** Use :func:`~orthograph.cypher.validation.validate_query`
+  (a free function in :mod:`orthograph.cypher.validation`) to validate a
+  ``CypherQuery`` against a
+  :class:`~orthograph.graph_definition.graph_definition.GraphDefinition`.
+  It runs the **same syntactic + semantic checks as the typed path** via the shared
   :func:`~orthograph.cypher.validation.validate_cypher_spec` core — parse,
   ``$param`` ↔ declared-arg alignment, labels, relationship types, property
   accesses, and endpoints.  Passing ``None`` performs a syntactic-only check
@@ -50,13 +52,14 @@ Design goals
   before a consuming project is ready to declare typed ``Output`` models.
 * **Catalogue citizen.** Carries ``backend = Backend.CYPHER`` (metadata only) and is
 registerable in ``QueryCatalogue`` via ``register_cypher_query``.
-* **Validation timing.** Validation (``validate_query``) runs at call time, not
-  class-definition time like the typed path.  The shared field name
+* **Validation timing.** Validation (:func:`~orthograph.cypher.validation.validate_query`)
+  runs at call time, not class-definition time like the typed path.  The shared field name
   ``cypher_template`` does **not** imply the typed-path definition-time contract.
 
 Usage — Python (simple path)::
 
      from orthograph.cypher.bindings import NoParams, NoIdentifiers
+     from orthograph.cypher.validation import validate_query
 
      query = CypherQuery(
          name="find_movie",
@@ -64,7 +67,7 @@ Usage — Python (simple path)::
          Params=FindMovieParams,
          Identifiers=NoIdentifiers,
      )
-     result = query.validate_query(my_graph_definition)   # static, no DB
+     result = validate_query(query, my_graph_definition)   # static, no DB
      query_data = query.build(movie_id="M-001")
      await session.run(query_data.cypher, query_data.params)
 
@@ -121,7 +124,6 @@ from orthograph.cypher.bindings import (
 )
 from orthograph.cypher.exceptions import CypherQueryError
 from orthograph.cypher.schema_codec import model_from_json_schema, model_to_json_schema
-from orthograph.diagnostics.result import ValidationResult
 from orthograph.query.base_models import Backend
 
 
@@ -275,47 +277,6 @@ class CypherQuery(BaseModel):
         cypher = render_with_identifiers(cypher, bound)
 
         return CypherQueryData(cypher, params)
-
-    def validate_query(
-        self,
-        definition: Any | None,  # GraphDefinition | None — typed as Any to avoid
-        # circular import concerns; real type is GraphDefinition
-    ) -> ValidationResult:
-        """Validate this query's Cypher string against ``definition``.
-
-        Runs the same syntactic + semantic checks as the typed path via the
-        shared :func:`~orthograph.cypher.validation.validate_cypher_spec` core:
-
-        * ``$param`` ↔ declared arg alignment → ``QUERY_PARAM_ALIGNMENT_ERROR``
-        * Cypher dialect parse (syntax) → ``QUERY_PARSE_ERROR``
-        * Unknown node labels   → ``QUERY_UNKNOWN_NODE_LABEL`` (ERROR)
-        * Unknown rel types     → ``QUERY_UNKNOWN_REL_TYPE`` (ERROR)
-        * Unknown properties    → ``QUERY_UNKNOWN_PROPERTY`` (ERROR)
-        * Invalid endpoints     → ``QUERY_INVALID_ENDPOINT`` (ERROR)
-
-        Parameters
-        ----------
-        definition:
-            A :class:`~orthograph.graph_definition.graph_definition.GraphDefinition`
-            to validate the query against. Pass ``None`` to perform a
-            syntactic-only check (param alignment + parse); in that case domain
-            validation is skipped.
-        """
-        from orthograph.cypher.validation import validate_cypher_spec
-
-        params_fields: set[str] = set(self.Params.model_fields)
-        identifier_fields: set[str] = set(
-            (self.Identifiers or NoIdentifiers).model_fields
-        )
-
-        return validate_cypher_spec(
-            cypher=self.cypher_template,
-            params_fields=params_fields,
-            query_name=self.name,
-            identifier_fields=identifier_fields,
-            graph_definition=definition,
-            output_model=None,
-        )
 
     def _validate_call_kwargs(self, kwargs: dict[str, Any]) -> None:
         """Check that all required args are present and no unknown args supplied."""

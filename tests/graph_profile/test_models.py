@@ -9,6 +9,7 @@ from orthograph.graph_profile.models import (
     ConstraintInfo,
     GraphProfile,
     NodeTypeProfile,
+    PartitionedCardinalityRow,
     PartitionKey,
     PropertyProfile,
     RelationshipTypeProfile,
@@ -335,7 +336,6 @@ def test_relationship_type_profile_scalar_endpoints_describe_one_shape():
         source_label="Person",
         target_label="Company",
     )
-    # The set fields of the blended-identity era are gone (ADR-037 §5).
     assert not hasattr(r, "source_labels")
     assert not hasattr(r, "target_labels")
     assert isinstance(r.source_label, str)
@@ -684,53 +684,39 @@ def test_full_profile_round_trip_equality():
 # ---------------------------------------------------------------------------
 
 
-# --- PartitionKey ---
+# --- PartitionKey (map-shaped, name-aware) ---
 
 
-def test_partition_key_str_both_values():
-    """__str__ encodes both non-None values deterministically."""
-    k = PartitionKey(source_value="subsampling", target_value="Sample")
-    s = str(k)
-    assert "subsampling" in s
-    assert "Sample" in s
+def test_partition_key_constructs_with_maps():
+    """PartitionKey carries {name: value} maps per endpoint."""
+    k = PartitionKey(source={}, target={"type": "combine"})
+    assert k.source == {}
+    assert k.target == {"type": "combine"}
 
 
-def test_partition_key_str_null_source():
-    """None source_value is represented as the literal 'null' in __str__."""
-    k = PartitionKey(source_value=None, target_value="Sample")
-    s = str(k)
-    assert "null" in s
-    assert "Sample" in s
+def test_partition_key_equal_by_value():
+    """Two keys with equal maps are equal."""
+    k1 = PartitionKey(source={}, target={"type": "combine"})
+    k2 = PartitionKey(source={}, target={"type": "combine"})
+    assert k1 == k2
 
 
-def test_partition_key_str_null_target():
-    """None target_value is represented as the literal 'null' in __str__."""
-    k = PartitionKey(source_value="Operation", target_value=None)
-    s = str(k)
-    assert "Operation" in s
-    assert "null" in s
+def test_partition_key_distinct_names_not_equal():
+    """Same value under different property names are distinct keys.
+
+    This is the name-blindness defect that this change fixes:
+    ``{"type": "combine"}`` and ``{"stage": "combine"}`` no longer collide.
+    """
+    k1 = PartitionKey(source={}, target={"type": "combine"})
+    k2 = PartitionKey(source={}, target={"stage": "combine"})
+    assert k1 != k2
 
 
-def test_partition_key_str_both_null():
-    """Both None values produce a stable, recognisable string."""
-    k = PartitionKey(source_value=None, target_value=None)
-    s = str(k)
-    assert s  # non-empty
-    assert "null" in s
-
-
-def test_partition_key_str_deterministic():
-    """Same inputs always produce the same __str__ output."""
-    k1 = PartitionKey(source_value="A", target_value="B")
-    k2 = PartitionKey(source_value="A", target_value="B")
-    assert str(k1) == str(k2)
-
-
-def test_partition_key_str_different_values_differ():
-    """Different (src, tgt) pairs produce different strings."""
-    k1 = PartitionKey(source_value="A", target_value="B")
-    k2 = PartitionKey(source_value="B", target_value="A")
-    assert str(k1) != str(k2)
+def test_partition_key_empty_vs_null_value_distinct():
+    """{} (no discriminator) is distinct from {"k": None} (present-but-null)."""
+    no_disc = PartitionKey(source={}, target={})
+    null_val = PartitionKey(source={}, target={"type": None})
+    assert no_disc != null_val
 
 
 def test_partition_key_frozen():
@@ -738,17 +724,102 @@ def test_partition_key_frozen():
     import pytest
     from pydantic import ValidationError
 
-    k = PartitionKey(source_value="x", target_value="y")
+    k = PartitionKey(source={}, target={"type": "combine"})
     with pytest.raises(ValidationError):
-        k.source_value = "z"  # type: ignore[misc]
+        k.target = {"type": "other"}  # type: ignore[misc]
 
 
-def test_partition_key_round_trips_as_dict_key():
-    """str(PartitionKey) can be used as a dict key and recovered."""
-    k = PartitionKey(source_value="subsampling", target_value="Sample")
-    key_str = str(k)
-    d = {key_str: CardinalityStats(count=10, min=1.0, max=3.0)}
-    assert key_str in d
+def test_partition_key_hashable_consistent_with_equality():
+    """PartitionKey is usable as a dict key / set member, hash == for equal keys.
+
+    Despite carrying ``dict`` fields, the key hashes its sorted map items so it
+    can index the partition merges in the producer and comparison paths.
+    """
+    a = PartitionKey(source={}, target={"type": "combine"})
+    b = PartitionKey(source={}, target={"type": "combine"})
+    c = PartitionKey(source={}, target={"stage": "combine"})
+    assert a == b and hash(a) == hash(b)
+    assert a != c and hash(a) != hash(c)
+    assert {a: 1, c: 2}[b] == 1  # b matches a as a dict key
+    assert len({a, b, c}) == 2  # a and b dedupe; c distinct
+
+
+def test_partition_key_str_is_deterministic_display_form():
+    """__str__ is a deterministic, sorted-key display form."""
+    k1 = PartitionKey(source={}, target={"type": "combine", "stage": "x"})
+    k2 = PartitionKey(source={}, target={"stage": "x", "type": "combine"})
+    # Sorted-key form is insensitive to insertion order.
+    assert str(k1) == str(k2)
+    s = str(k1)
+    assert "type" in s
+    assert "combine" in s
+    assert "stage" in s
+
+
+def test_partition_key_str_shows_names_and_values():
+    """The display form shows discriminator names alongside values."""
+    k = PartitionKey(source={}, target={"type": "combine"})
+    s = str(k)
+    assert "type" in s
+    assert "combine" in s
+
+
+def test_partition_key_round_trips():
+    """PartitionKey round-trips through model_dump/model_validate."""
+    k = PartitionKey(source={"role": "in"}, target={"type": None})
+    assert PartitionKey.model_validate(k.model_dump()) == k
+
+
+# --- PartitionedCardinalityRow ({key, stats}) ---
+
+
+def test_partitioned_cardinality_row_constructs():
+    """A row pairs a PartitionKey with a BoundedDistribution."""
+    row = PartitionedCardinalityRow(
+        key=PartitionKey(source={}, target={"type": "combine"}),
+        stats=BoundedDistribution(count=9, min=2.0, max=3.0),
+    )
+    assert row.key.target == {"type": "combine"}
+    assert row.stats.max == 3.0
+
+
+def test_partitioned_cardinality_row_round_trips():
+    """A row round-trips through model_dump/model_validate."""
+    row = PartitionedCardinalityRow(
+        key=PartitionKey(source={}, target={"type": "combine"}),
+        stats=BoundedDistribution(count=9, min=2.0, max=3.0),
+    )
+    assert PartitionedCardinalityRow.model_validate(row.model_dump()) == row
+
+
+def test_partitioned_cardinality_row_value_with_pipe_and_equals_round_trips():
+    """Regression of the old string-key bug: values containing ``|`` and ``=``.
+
+    The old ``"src=<v>|tgt=<v>"`` dict key was ambiguous on these characters; the
+    structured row round-trips them losslessly.
+    """
+    row = PartitionedCardinalityRow(
+        key=PartitionKey(source={}, target={"label": "a|b=c"}),
+        stats=BoundedDistribution(count=1, min=1.0, max=1.0),
+    )
+    restored = PartitionedCardinalityRow.model_validate(row.model_dump())
+    assert restored == row
+    assert restored.key.target == {"label": "a|b=c"}
+
+
+def test_partitioned_cardinality_row_cardinality_stats_loses_subtype():
+    """A CardinalityStats passed as stats is restored as BoundedDistribution.
+
+    The field is typed on the base ``BoundedDistribution`` so round-trip equality holds.
+    """
+    row = PartitionedCardinalityRow(
+        key=PartitionKey(source={}, target={"type": "combine"}),
+        stats=CardinalityStats(count=5, min=1.0, max=3.0),
+    )
+    restored = PartitionedCardinalityRow.model_validate(row.model_dump())
+    assert restored.stats.min == 1.0
+    assert restored.stats.max == 3.0
+    assert type(restored.stats) is BoundedDistribution
 
 
 # --- per-side partitioned cardinality on RelationshipTypeProfile ---
@@ -767,151 +838,120 @@ def test_relationship_type_profile_partitioned_cardinality_defaults_none():
 
 
 def test_relationship_type_profile_with_partitioned_cardinality():
-    """A profile with two partitions carries the expected BoundedDistribution values."""
-    k1 = PartitionKey(source_value="subsampling", target_value="Sample")
-    k2 = PartitionKey(source_value="nothing", target_value="Sample")
-    partitions = {
-        str(k1): BoundedDistribution(count=10, min=2.0, max=2.0, mean=2.0),
-        str(k2): BoundedDistribution(count=5, min=0.0, max=0.0, mean=0.0),
-    }
+    """A profile carries a list of rows with the expected values, order preserved."""
+    rows = [
+        PartitionedCardinalityRow(
+            key=PartitionKey(source={"step": "subsampling"}, target={}),
+            stats=BoundedDistribution(count=10, min=2.0, max=2.0, mean=2.0),
+        ),
+        PartitionedCardinalityRow(
+            key=PartitionKey(source={"step": "nothing"}, target={}),
+            stats=BoundedDistribution(count=5, min=0.0, max=0.0, mean=0.0),
+        ),
+    ]
     r = RelationshipTypeProfile(
         rel_type="PRODUCES",
         count=15,
         source_label="Operation",
         target_label="Sample",
-        source_partitioned_cardinality=partitions,
+        source_partitioned_cardinality=rows,
     )
     assert r.source_partitioned_cardinality is not None
     assert len(r.source_partitioned_cardinality) == 2
-    assert r.source_partitioned_cardinality[str(k1)].min == 2.0
-    assert r.source_partitioned_cardinality[str(k2)].max == 0.0
+    assert r.source_partitioned_cardinality[0].stats.min == 2.0
+    assert r.source_partitioned_cardinality[1].stats.max == 0.0
 
 
-def test_relationship_type_profile_both_sides_independent_no_collision():
-    """Both per-side breakdowns coexist without colliding on the same key.
+def test_relationship_type_profile_both_sides_independent():
+    """Both per-side breakdowns coexist as independent lists of rows.
 
-    The same ``str(PartitionKey)`` may appear on both sides with different degree
-    distributions (source-counted vs target-counted); the two named fields keep
-    them separate.
+    A partition discriminating the same property/value may appear on both sides
+    with different degree distributions (source-counted vs target-counted); the
+    two named list fields keep them separate.
     """
-    k = PartitionKey(source_value="subsampling", target_value="subsampling")
+    key = PartitionKey(source={"step": "subsampling"}, target={"step": "subsampling"})
     r = RelationshipTypeProfile(
         rel_type="HAS_OUTPUT",
         count=4,
         source_label="Operation",
         target_label="Sample",
-        source_partitioned_cardinality={
-            str(k): BoundedDistribution(count=1, min=2.0, max=2.0)
-        },
-        target_partitioned_cardinality={
-            str(k): BoundedDistribution(count=2, min=1.0, max=1.0)
-        },
+        source_partitioned_cardinality=[
+            PartitionedCardinalityRow(
+                key=key, stats=BoundedDistribution(count=1, min=2.0, max=2.0)
+            )
+        ],
+        target_partitioned_cardinality=[
+            PartitionedCardinalityRow(
+                key=key, stats=BoundedDistribution(count=2, min=1.0, max=1.0)
+            )
+        ],
     )
     assert r.source_partitioned_cardinality is not None
     assert r.target_partitioned_cardinality is not None
-    # Same key, distinct distributions — no collision.
-    assert r.source_partitioned_cardinality[str(k)].max == 2.0
-    assert r.target_partitioned_cardinality[str(k)].max == 1.0
+    assert r.source_partitioned_cardinality[0].stats.max == 2.0
+    assert r.target_partitioned_cardinality[0].stats.max == 1.0
     restored = RelationshipTypeProfile.model_validate(r.model_dump())
     assert restored == r
 
 
 def test_relationship_type_profile_partitioned_cardinality_round_trip():
-    """A per-side breakdown round-trips through model_dump/model_validate.
-
-    The field is typed on ``BoundedDistribution`` (not the ``CardinalityStats``
-    marker subclass), so storing ``BoundedDistribution`` makes the round-trip
-    lossless and equality-preserving.  See
-    ``test_relationship_type_profile_cardinality_stats_partition_loses_subtype``
-    for why a ``CardinalityStats`` value must not be stored here.
-    """
-    k1 = PartitionKey(source_value="subsampling", target_value="Sample")
-    k2 = PartitionKey(source_value=None, target_value="Sample")
-    partitions: dict[str, BoundedDistribution] = {
-        str(k1): BoundedDistribution(count=10, min=2.0, max=2.0),
-        str(k2): BoundedDistribution(count=3, min=0.0, max=1.0),
-    }
+    """A full profile with a list of rows on each side round-trips, order preserved."""
+    source_rows = [
+        PartitionedCardinalityRow(
+            key=PartitionKey(source={"step": "subsampling"}, target={}),
+            stats=BoundedDistribution(count=10, min=2.0, max=2.0),
+        ),
+        PartitionedCardinalityRow(
+            key=PartitionKey(source={"step": None}, target={}),
+            stats=BoundedDistribution(count=3, min=0.0, max=1.0),
+        ),
+    ]
+    target_rows = [
+        PartitionedCardinalityRow(
+            key=PartitionKey(source={}, target={"type": "combine"}),
+            stats=BoundedDistribution(count=9, min=2.0, max=3.0),
+        ),
+    ]
     r = RelationshipTypeProfile(
         rel_type="PRODUCES",
         count=13,
         source_label="Operation",
         target_label="Sample",
         cardinality_stats=CardinalityStats(count=13, min=0.0, max=2.0),
-        source_partitioned_cardinality=partitions,
-    )
-    d = r.model_dump()
-    restored = RelationshipTypeProfile.model_validate(d)
-    assert restored == r
-    assert restored.source_partitioned_cardinality is not None
-    assert len(restored.source_partitioned_cardinality) == 2
-
-
-def test_relationship_type_profile_cardinality_stats_partition_loses_subtype():
-    """Storing a CardinalityStats partition is not round-trip-stable.
-
-    ``CardinalityStats`` is a marker subclass that adds no fields; the field is
-    typed on ``BoundedDistribution``, so Pydantic restores the base type on
-    reload.  This test pins the documented contract (store ``BoundedDistribution``,
-    not ``CardinalityStats``) so a future regression that silently relies on
-    subtype identity is caught.
-    """
-    k = PartitionKey(source_value="A", target_value="B")
-    r = RelationshipTypeProfile(
-        rel_type="REL",
-        count=5,
-        source_label="A",
-        target_label="B",
-        source_partitioned_cardinality={
-            str(k): CardinalityStats(count=5, min=1.0, max=3.0)
-        },
+        source_partitioned_cardinality=source_rows,
+        target_partitioned_cardinality=target_rows,
     )
     restored = RelationshipTypeProfile.model_validate(r.model_dump())
+    assert restored == r
     assert restored.source_partitioned_cardinality is not None
-    # Data is preserved (CardinalityStats adds no fields)...
-    assert restored.source_partitioned_cardinality[str(k)].min == 1.0
-    assert restored.source_partitioned_cardinality[str(k)].max == 3.0
-    # ...but the subtype is not, hence the field/inspectors use BoundedDistribution.
-    assert type(restored.source_partitioned_cardinality[str(k)]) is BoundedDistribution
-
-
-def test_partitioned_cardinality_accepts_bounded_distribution():
-    """Field type is BoundedDistribution — plain BoundedDistribution is accepted."""
-    k = PartitionKey(source_value="A", target_value="B")
-    partitions: dict[str, BoundedDistribution] = {
-        str(k): BoundedDistribution(count=5, min=1.0, max=3.0),
-    }
-    r = RelationshipTypeProfile(
-        rel_type="REL",
-        count=5,
-        source_label="A",
-        target_label="B",
-        source_partitioned_cardinality=partitions,
-    )
-    assert r.source_partitioned_cardinality is not None
-    assert isinstance(r.source_partitioned_cardinality[str(k)], BoundedDistribution)
+    assert [row.key for row in restored.source_partitioned_cardinality] == [
+        row.key for row in source_rows
+    ]
 
 
 def test_relationship_type_profile_existing_aggregate_unaffected():
     """cardinality_stats (aggregate) is unaffected when a per-side breakdown is
     also set."""
     agg = CardinalityStats(count=15, min=0.0, max=2.0, mean=1.0)
-    k = PartitionKey(source_value="A", target_value="B")
     r = RelationshipTypeProfile(
         rel_type="REL",
         count=15,
         source_label="A",
         target_label="B",
         cardinality_stats=agg,
-        source_partitioned_cardinality={
-            str(k): BoundedDistribution(count=10, min=1.0, max=2.0)
-        },
+        source_partitioned_cardinality=[
+            PartitionedCardinalityRow(
+                key=PartitionKey(source={"k": "v"}, target={}),
+                stats=BoundedDistribution(count=10, min=1.0, max=2.0),
+            )
+        ],
     )
     assert r.cardinality_stats == agg
     assert r.source_partitioned_cardinality is not None
 
 
 # ---------------------------------------------------------------------------
-# RelTypeKey -- relationship-identity encoding/decoding (ADR-037, E50.1)
+# RelTypeKey -- relationship-identity encoding/decoding
 # ---------------------------------------------------------------------------
 
 

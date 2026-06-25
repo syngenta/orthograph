@@ -273,8 +273,8 @@ def test_compare_unexpected_property(
 def test_compare_endpoint_mismatch_reclassifies(
     filmography_model: GraphDefinition,
 ):
-    """Under ADR-037 a wrong endpoint is a different identity (address), so it
-    reclassifies to MISSING_REL_TYPE + UNEXPECTED_REL_TYPE — never INVALID_ENDPOINT."""
+    """A wrong endpoint is a different identity (address), so it
+    reclassifies to MISSING_REL_TYPE + UNEXPECTED_REL_TYPE."""
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
     acted_in = profiles.pop("Person:ACTED_IN:Movie")
@@ -432,8 +432,7 @@ def test_compare_undirected_cross_type_reverse_valid():
 
 
 def test_compare_directed_cross_type_reverse_rejected():
-    """Directed: reversed source/target is rejected (as a presence mismatch under
-    ADR-037 triple identity)."""
+    """Directed: reversed source/target is rejected (as a presence mismatch)."""
     from orthograph.graph_definition.models import NodeModel, RelationshipModel
 
     class DPerson(NodeModel):
@@ -498,7 +497,7 @@ def test_compare_directed_cross_type_reverse_rejected():
         rel_type_profiles=rel_profiles,
     )
     result = compare_profile_to_definition(profile, graph_definition)
-    # Under ADR-037 reversed endpoints are a different identity, so the
+    # Reversed endpoints are a different identity, so the
     # declared shape is MISSING and the observed (reversed) shape is UNEXPECTED.
     # INVALID_ENDPOINT no longer exists.
     codes = {i.code for i in result.issues}

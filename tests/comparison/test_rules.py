@@ -55,6 +55,7 @@ from orthograph.graph_profile.models import (
     CardinalityStats,
     GraphProfile,
     NodeTypeProfile,
+    PartitionedCardinalityRow,
     PartitionKey,
     PropertyProfile,
     RelationshipTypeProfile,
@@ -669,7 +670,7 @@ def test_property_type_mismatch_per_off_type_share_with_multiple_mismatches():
 def test_property_type_mismatch_off_type_absent_from_populated_counts_is_legacy_error():
     """A populated counts map missing one off-type → legacy ERROR for that type.
 
-    By ADR-035 invariant a populated value scan should count every present
+    A populated value scan should count every present
     off-type, so this combination is not expected in practice. The rule's
     honest escape never invents a share: an off-type absent from a populated
     map falls back to the legacy ERROR with no prevalence claim.
@@ -724,12 +725,12 @@ def test_property_type_mismatch_matching_types_excluded_from_share():
 
 
 # ---------------------------------------------------------------------------
-# Endpoint reclassification (ADR-037 §4): endpoint mismatch -> presence findings
+# Endpoint reclassification: endpoint mismatch -> presence findings
 #
-# InvalidEndpointRule is deleted.  Under triple identity a different endpoint is
-# a different address, so a declared `Person-ACTED_IN-Movie` vs an observed
-# `Person-ACTED_IN-Company` produces MISSING_REL_TYPE (declared, not observed)
-# and UNEXPECTED_REL_TYPE (observed, not declared) — never INVALID_ENDPOINT.
+# Endpoint mismatches produce different addresses, so a declared
+# `Person-ACTED_IN-Movie` vs an observed `Person-ACTED_IN-Company` produces
+# MISSING_REL_TYPE (declared, not observed) and UNEXPECTED_REL_TYPE
+# (observed, not declared).
 # ---------------------------------------------------------------------------
 
 
@@ -874,7 +875,7 @@ def test_standard_rules_expected_keys():
 
 
 # ===========================================================================
-# How to add a Case-B comparable rule (ADR-015 §3) — reference recipe
+# How to add a Case-B comparable rule — reference recipe
 #
 # Use this section as a template when you need to compare a new declared
 # constraint against a new observed measurement.
@@ -1155,7 +1156,7 @@ def test_case_b_extension_via_injection():
     )
     assert missing_issues[0].entity_id == "Movie.title"
 
-    # E45.4: Person.name is declared-required but the profile carries no
+    # Person.name is declared-required but the profile carries no
     # constraint_required (None) → PropertyConstraintPresenceRule emits one
     # CONSTRAINT_UNVERIFIABLE (INFO).
     unverifiable = [i for i in result.issues if i.code == "CONSTRAINT_UNVERIFIABLE"]
@@ -1231,7 +1232,7 @@ _E407_PROFILE = GraphProfile(
 
 
 def _e407_ctx(**kwargs: Any) -> RuleContext:
-    """Build a RuleContext with E40.7 model + profile."""
+    """Build a RuleContext with the model + profile."""
     return RuleContext(
         left_graph=DefinitionView(_E407_MODEL),
         right_graph=ProfileView(_E407_PROFILE),
@@ -1299,8 +1300,8 @@ def test_cardinality_violation_rule_constant_unchanged_regression():
 # ===========================================================================
 # Comparison rules: presence (3 sources), enum/value, total-count diff-only
 #
-# Implements the ADR-034 §8 non-cardinality rows.  Settled severities
-# (recorded in ADR-034 §8):
+# Settled severities for comparison rules:
+# (recorded in comparison specifications):
 #   - PROPERTY_INCOMPLETE          WARNING  (declared-required & completeness<1)
 #   - PROPERTY_UNCONSTRAINED       WARNING  (declared-required & constraint False)
 #   - UNDECLARED_CONSTRAINT        INFO     (constraint True & not declared-required)
@@ -1319,7 +1320,7 @@ class _Status(Enum):
 
 
 # ---------------------------------------------------------------------------
-# PropertyIncompleteRule — declared-required vs occurrence (ADR-034 §8)
+# PropertyIncompleteRule — declared-required vs occurrence
 # ---------------------------------------------------------------------------
 
 
@@ -1499,7 +1500,7 @@ def test_enum_value_rule_silent_for_non_enum_property():
 
 
 # ---------------------------------------------------------------------------
-# PropertyEnumValueRule — truncated value_distribution (ADR-034 §2 honesty)
+# PropertyEnumValueRule — truncated value_distribution
 #
 # A histogram capped at ``limit`` (``sample_complete is False``) hides
 # ``other_count`` observations.  The rule must NOT make absence-based verdicts on
@@ -1738,7 +1739,7 @@ def test_e2e_enum_property_flags_both_coverage_directions_no_type_mismatch():
 
 
 # ---------------------------------------------------------------------------
-# Total count is diff-only — never a profile↔description finding (ADR-034 §6)
+# Total count is diff-only — never a profile↔description finding
 # ---------------------------------------------------------------------------
 
 
@@ -1805,20 +1806,46 @@ def test_standard_rules_includes_e45_4_rules():
 
 
 # ===========================================================================
-# E41.5 — CardinalityViolationRule: per-pair enforcement of conditional bounds
+# CardinalityViolationRule: per-pair enforcement of conditional bounds
 #
-# Implements the cardinality rows of the ADR-034 §8 comparison matrix.  When
+# Enforces the cardinality rows of the comparison matrix.  When
 # the declared side is ConditionalCardinality and the observed profile carries
 # ``partitioned_cardinality``, each declared rule's bound is enforced against
 # the matching observed partition (full bound via spec.contains, both min and
-# max — aligned with the in-memory per-node verdict, E41.5).  When the
-# breakdown is absent, the E40.7 CARDINALITY_UNVERIFIABLE fallback is kept.
+# max). When the breakdown is absent, CARDINALITY_UNVERIFIABLE is returned.
 # ===========================================================================
 
 
-def _partition(source_value: str | None, target_value: str | None) -> str:
-    """Shorthand for the observed partition dict key (str(PartitionKey))."""
-    return str(PartitionKey(source_value=source_value, target_value=target_value))
+def _pk(
+    source_value: str | None,
+    target_value: str | None,
+    source_name: str = "kind",
+    target_name: str = "kind",
+) -> PartitionKey:
+    """Build a name-bearing PartitionKey from scalar discriminator values.
+
+    A ``None`` value is the wildcard / no-discriminator endpoint (``{}``); a
+    non-``None`` value ``v`` discriminating on property ``name`` becomes
+    ``{name: v}``.  The property names default to ``kind`` (the convention used
+    by the conditional fixtures in this module).
+    """
+    source = {} if source_value is None else {source_name: source_value}
+    target = {} if target_value is None else {target_name: target_value}
+    return PartitionKey(source=source, target=target)
+
+
+def _row(
+    source_value: str | None,
+    target_value: str | None,
+    dist: BoundedDistribution,
+    source_name: str = "kind",
+    target_name: str = "kind",
+) -> PartitionedCardinalityRow:
+    """A single observed partitioned-cardinality row for the given pair."""
+    return PartitionedCardinalityRow(
+        key=_pk(source_value, target_value, source_name, target_name),
+        stats=dist,
+    )
 
 
 def _e415_ctx(rel_profile: RelationshipTypeProfile, **kwargs: Any) -> RuleContext:
@@ -1842,7 +1869,7 @@ def _e415_ctx(rel_profile: RelationshipTypeProfile, **kwargs: Any) -> RuleContex
 
 
 def _e415_profile(
-    partitioned_cardinality: dict[str, BoundedDistribution] | None,
+    partitioned_cardinality: list[PartitionedCardinalityRow] | None,
 ) -> RelationshipTypeProfile:
     """A HAS_OUTPUT profile with the given source-side partitioned breakdown."""
     return RelationshipTypeProfile(
@@ -1860,11 +1887,13 @@ def test_cardinality_conditional_within_bounds_no_violation():
     rule = CardinalityViolationRule()
     # subsampling->subsampling declared 1..2; observed degree 2 is within bounds.
     rtp = _e415_profile(
-        {
-            _partition("subsampling", "subsampling"): BoundedDistribution(
-                count=1, min=2, max=2, mean=2.0
+        [
+            _row(
+                "subsampling",
+                "subsampling",
+                BoundedDistribution(count=1, min=2, max=2, mean=2.0),
             ),
-        }
+        ]
     )
     issues = list(rule(_e415_ctx(rtp)))
     assert [i.code for i in issues if i.code == "CARDINALITY_VIOLATION"] == []
@@ -1875,19 +1904,21 @@ def test_cardinality_conditional_partition_out_of_bounds_violation():
     rule = CardinalityViolationRule()
     # subsampling->subsampling declared 1..2; observed max 3 exceeds the bound.
     rtp = _e415_profile(
-        {
-            _partition("subsampling", "subsampling"): BoundedDistribution(
-                count=1, min=3, max=3, mean=3.0
+        [
+            _row(
+                "subsampling",
+                "subsampling",
+                BoundedDistribution(count=1, min=3, max=3, mean=3.0),
             ),
-        }
+        ]
     )
     issues = [i for i in rule(_e415_ctx(rtp)) if i.code == "CARDINALITY_VIOLATION"]
     assert len(issues) == 1
     assert issues[0].severity == Severity.ERROR
     assert issues[0].entity_type == EntityType.RELATIONSHIP
     assert issues[0].entity_id == "Operation:HAS_OUTPUT:Sample"
-    assert issues[0].context["source_value"] == "subsampling"
-    assert issues[0].context["target_value"] == "subsampling"
+    assert issues[0].context["source"] == {"kind": "subsampling"}
+    assert issues[0].context["target"] == {"kind": "subsampling"}
 
 
 def test_cardinality_conditional_absent_partition_min_violation():
@@ -1895,16 +1926,18 @@ def test_cardinality_conditional_absent_partition_min_violation():
     rule = CardinalityViolationRule()
     # subsampling->subsampling declared 1..2 but never observed; degree 0 < min 1.
     rtp = _e415_profile(
-        {
-            _partition("nothing", "nothing"): BoundedDistribution(
-                count=1, min=0, max=0, mean=0.0
+        [
+            _row(
+                "nothing",
+                "nothing",
+                BoundedDistribution(count=1, min=0, max=0, mean=0.0),
             ),
-        }
+        ]
     )
     issues = [i for i in rule(_e415_ctx(rtp)) if i.code == "CARDINALITY_VIOLATION"]
     assert any(
-        i.context.get("source_value") == "subsampling"
-        and i.context.get("target_value") == "subsampling"
+        i.context.get("source") == {"kind": "subsampling"}
+        and i.context.get("target") == {"kind": "subsampling"}
         for i in issues
     )
 
@@ -1925,14 +1958,18 @@ def test_cardinality_conditional_unmatched_kind_info():
     # subsampling->subsampling (declared 1..2) satisfied; 'nothing' matches no rule
     # and the default 0..* admits degree 1, so no default-floor violation fires.
     rtp = _e415_profile(
-        {
-            _partition("subsampling", "subsampling"): BoundedDistribution(
-                count=1, min=2, max=2, mean=2.0
+        [
+            _row(
+                "subsampling",
+                "subsampling",
+                BoundedDistribution(count=1, min=2, max=2, mean=2.0),
             ),
-            _partition("nothing", "nothing"): BoundedDistribution(
-                count=1, min=1, max=1, mean=1.0
+            _row(
+                "nothing",
+                "nothing",
+                BoundedDistribution(count=1, min=1, max=1, mean=1.0),
             ),
-        }
+        ]
     )
     issues = list(rule(_e415_ctx(rtp)))
     unmatched = [i for i in issues if i.code == "CARDINALITY_UNMATCHED_KIND"]
@@ -1945,8 +1982,7 @@ def test_cardinality_conditional_unmatched_kind_default_floor_violation():
     """Unmatched-kind partition with min>0 default + zero degree → default-floor ERROR.
 
     Uses a conditional whose default is ``1..*`` so an unmatched node with zero
-    observed degree violates the default (mirrors validation._default_floor_issue
-    / E40.5).
+    observed degree violates the default.
     """
 
     class _HasOutputFloorDefault(RelationshipModel):
@@ -1976,11 +2012,13 @@ def test_cardinality_conditional_unmatched_kind_default_floor_violation():
         source_label="Operation",
         target_label="Sample",
         cardinality_stats=CardinalityStats(count=1, min=0, max=0, mean=0.0),
-        source_partitioned_cardinality={
-            _partition("nothing", "nothing"): BoundedDistribution(
-                count=1, min=0, max=0, mean=0.0
+        source_partitioned_cardinality=[
+            _row(
+                "nothing",
+                "nothing",
+                BoundedDistribution(count=1, min=0, max=0, mean=0.0),
             ),
-        },
+        ],
     )
     ctx = RuleContext(
         left_graph=DefinitionView(model),
@@ -2041,11 +2079,11 @@ def _floor_default_model(
 def _floor_ctx(
     model: GraphDefinition,
     rt_class: type[RelationshipModel],
-    partitioned: dict[str, BoundedDistribution],
+    partitioned: list[PartitionedCardinalityRow],
 ) -> RuleContext:
     rtp = RelationshipTypeProfile(
         rel_type="HAS_OUTPUT_FLOOR",
-        count=sum(int(d.max or 0) for d in partitioned.values()),
+        count=sum(int(r.stats.max or 0) for r in partitioned),
         source_label="Operation",
         target_label="Sample",
         cardinality_stats=CardinalityStats(count=1, min=0, max=2, mean=1.0),
@@ -2076,14 +2114,16 @@ def test_cardinality_default_floor_uses_total_across_partitions_no_violation():
     """
     model, rt_class = _floor_default_model("2..*")
     rule = CardinalityViolationRule()
-    partitioned = {
-        _partition("nothing", "subsampling"): BoundedDistribution(
-            count=1, min=1, max=1, mean=1.0
+    partitioned = [
+        _row(
+            "nothing",
+            "subsampling",
+            BoundedDistribution(count=1, min=1, max=1, mean=1.0),
         ),
-        _partition("nothing", "nothing"): BoundedDistribution(
-            count=1, min=1, max=1, mean=1.0
+        _row(
+            "nothing", "nothing", BoundedDistribution(count=1, min=1, max=1, mean=1.0)
         ),
-    }
+    ]
     issues = list(rule(_floor_ctx(model, rt_class, partitioned)))
     unmatched = [i for i in issues if i.code == "CARDINALITY_UNMATCHED_KIND"]
     floor = [
@@ -2104,14 +2144,16 @@ def test_cardinality_default_floor_uses_total_across_partitions_violation():
     """
     model, rt_class = _floor_default_model("3..*")
     rule = CardinalityViolationRule()
-    partitioned = {
-        _partition("nothing", "subsampling"): BoundedDistribution(
-            count=1, min=1, max=1, mean=1.0
+    partitioned = [
+        _row(
+            "nothing",
+            "subsampling",
+            BoundedDistribution(count=1, min=1, max=1, mean=1.0),
         ),
-        _partition("nothing", "nothing"): BoundedDistribution(
-            count=1, min=1, max=1, mean=1.0
+        _row(
+            "nothing", "nothing", BoundedDistribution(count=1, min=1, max=1, mean=1.0)
         ),
-    }
+    ]
     issues = list(rule(_floor_ctx(model, rt_class, partitioned)))
     floor = [
         i
@@ -2126,8 +2168,7 @@ def test_cardinality_default_floor_uses_total_across_partitions_violation():
 def test_cardinality_constant_max_exceeded_violation():
     """Constant finite-max spec with observed aggregate max over the bound → ERROR.
 
-    Aggregate path now checks the full bound (both min and max) via
-    spec.contains() — aligned with the in-memory per-node verdict (E41.5).
+    Aggregate path now checks the full bound (both min and max) via spec.contains().
     """
 
     class _BoundedRel(RelationshipModel):
@@ -2218,8 +2259,8 @@ def _both_sides_model() -> tuple[GraphDefinition, type[RelationshipModel]]:
 def _both_sides_ctx(
     model: GraphDefinition,
     rt_class: type[RelationshipModel],
-    source_partitioned: dict[str, BoundedDistribution] | None,
-    target_partitioned: dict[str, BoundedDistribution] | None,
+    source_partitioned: list[PartitionedCardinalityRow] | None,
+    target_partitioned: list[PartitionedCardinalityRow] | None,
 ) -> RuleContext:
     rtp = RelationshipTypeProfile(
         rel_type="MAKES",
@@ -2247,25 +2288,32 @@ def _both_sides_ctx(
 def test_cardinality_both_sides_one_violating_yields_one_violation():
     """Both-sides conditional, source in bounds, target violating → one ERROR.
 
-    E41.7: each conditional side is enforced independently; only the breaching
+    Each conditional side is enforced independently; only the breaching
     side yields a violation.
     """
     model, rt_class = _both_sides_model()
     rule = CardinalityViolationRule()
-    pair = _partition("assembler", "final")
     issues = list(
         rule(
             _both_sides_ctx(
                 model,
                 rt_class,
                 # Source side within 2..2.
-                source_partitioned={
-                    pair: BoundedDistribution(count=1, min=2, max=2, mean=2.0)
-                },
+                source_partitioned=[
+                    _row(
+                        "assembler",
+                        "final",
+                        BoundedDistribution(count=1, min=2, max=2, mean=2.0),
+                    )
+                ],
                 # Target side declares 1..1 but observed 2 → violation.
-                target_partitioned={
-                    pair: BoundedDistribution(count=2, min=2, max=2, mean=2.0)
-                },
+                target_partitioned=[
+                    _row(
+                        "assembler",
+                        "final",
+                        BoundedDistribution(count=2, min=2, max=2, mean=2.0),
+                    )
+                ],
             )
         )
     )
@@ -2273,26 +2321,33 @@ def test_cardinality_both_sides_one_violating_yields_one_violation():
     assert len(violations) == 1
     assert violations[0].severity == Severity.ERROR
     # The violation names the target-side partition (the side that breached).
-    assert violations[0].context["source_value"] == "assembler"
-    assert violations[0].context["target_value"] == "final"
+    assert violations[0].context["source"] == {"kind": "assembler"}
+    assert violations[0].context["target"] == {"kind": "final"}
 
 
 def test_cardinality_both_sides_both_in_bounds_no_violation():
-    """Both-sides conditional, both sides within bounds → no violation (E41.7)."""
+    """Both-sides conditional, both sides within bounds → no violation."""
     model, rt_class = _both_sides_model()
     rule = CardinalityViolationRule()
-    pair = _partition("assembler", "final")
     issues = list(
         rule(
             _both_sides_ctx(
                 model,
                 rt_class,
-                source_partitioned={
-                    pair: BoundedDistribution(count=1, min=2, max=2, mean=2.0)
-                },
-                target_partitioned={
-                    pair: BoundedDistribution(count=2, min=1, max=1, mean=1.0)
-                },
+                source_partitioned=[
+                    _row(
+                        "assembler",
+                        "final",
+                        BoundedDistribution(count=1, min=2, max=2, mean=2.0),
+                    )
+                ],
+                target_partitioned=[
+                    _row(
+                        "assembler",
+                        "final",
+                        BoundedDistribution(count=2, min=1, max=1, mean=1.0),
+                    )
+                ],
             )
         )
     )
@@ -2300,24 +2355,26 @@ def test_cardinality_both_sides_both_in_bounds_no_violation():
 
 
 def test_cardinality_both_sides_target_absent_is_unverifiable_for_that_side():
-    """A both-sides type with only the source breakdown present (E41.7).
+    """A both-sides type with only the source breakdown present.
 
     The source side is enforced (in bounds → silent); the target side has no
     breakdown → exactly one CARDINALITY_UNVERIFIABLE INFO for the target side,
-    never a false verdict.  This is the regression guard for single-side profiles
-    behaving as in E41.5.
+    never a false verdict.
     """
     model, rt_class = _both_sides_model()
     rule = CardinalityViolationRule()
-    pair = _partition("assembler", "final")
     issues = list(
         rule(
             _both_sides_ctx(
                 model,
                 rt_class,
-                source_partitioned={
-                    pair: BoundedDistribution(count=1, min=2, max=2, mean=2.0)
-                },
+                source_partitioned=[
+                    _row(
+                        "assembler",
+                        "final",
+                        BoundedDistribution(count=1, min=2, max=2, mean=2.0),
+                    )
+                ],
                 target_partitioned=None,
             )
         )
@@ -2329,7 +2386,7 @@ def test_cardinality_both_sides_target_absent_is_unverifiable_for_that_side():
 
 
 # ===========================================================================
-# E49 T2: one-sided (wildcard) discriminator mirror.
+# One-sided (wildcard) discriminator mirror.
 # A target-keyed, source-wildcard conditional now produces a breakdown on the
 # observed side, so the rule resolves the per-partition bound instead of
 # falling back to CARDINALITY_UNVERIFIABLE — the declared/observed mirror is
@@ -2356,7 +2413,7 @@ class _IsInputOneSided(RelationshipModel):
 
 
 class _OperationTypedNode(NodeModel):
-    """Operation node carrying the ``type`` discriminator (E49 T2 fixture)."""
+    """Operation node carrying the ``type`` discriminator."""
 
     __label__ = "Operation"
     type: str
@@ -2370,7 +2427,7 @@ _ONE_SIDED_MODEL = GraphDefinition(
 
 
 def _one_sided_ctx(
-    target_partitioned: dict[str, BoundedDistribution] | None,
+    target_partitioned: list[PartitionedCardinalityRow] | None,
 ) -> RuleContext:
     rtp = RelationshipTypeProfile(
         rel_type="IS_INPUT",
@@ -2400,12 +2457,15 @@ def _one_sided_ctx(
 def test_cardinality_one_sided_breakdown_resolves_not_unverifiable():
     """One-sided breakdown present → bound resolved, no CARDINALITY_UNVERIFIABLE."""
     rule = CardinalityViolationRule()
-    # combine declared 2..4; observed degree 2 is within bounds (null source).
-    target = {
-        _partition(None, "combine"): BoundedDistribution(
-            count=1, min=2, max=2, mean=2.0
+    # combine declared 2..4; observed degree 2 is within bounds (wildcard source).
+    target = [
+        _row(
+            None,
+            "combine",
+            BoundedDistribution(count=1, min=2, max=2, mean=2.0),
+            target_name="type",
         )
-    }
+    ]
     issues = list(rule(_one_sided_ctx(target)))
     codes = {i.code for i in issues}
     assert "CARDINALITY_UNVERIFIABLE" not in codes
@@ -2416,15 +2476,18 @@ def test_cardinality_one_sided_breakdown_out_of_bounds_violation():
     """One-sided partition out of bounds → CARDINALITY_VIOLATION (mirror restored)."""
     rule = CardinalityViolationRule()
     # combine declared 2..4; observed degree 5 exceeds the bound.
-    target = {
-        _partition(None, "combine"): BoundedDistribution(
-            count=1, min=5, max=5, mean=5.0
+    target = [
+        _row(
+            None,
+            "combine",
+            BoundedDistribution(count=1, min=5, max=5, mean=5.0),
+            target_name="type",
         )
-    }
+    ]
     issues = [
         i for i in rule(_one_sided_ctx(target)) if i.code == "CARDINALITY_VIOLATION"
     ]
     assert len(issues) == 1
     assert issues[0].severity == Severity.ERROR
-    assert issues[0].context["target_value"] == "combine"
-    assert issues[0].context["source_value"] is None
+    assert issues[0].context["target"] == {"type": "combine"}
+    assert issues[0].context["source"] == {}

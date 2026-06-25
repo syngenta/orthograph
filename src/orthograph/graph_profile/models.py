@@ -90,27 +90,62 @@ class CardinalityStats(BoundedDistribution):
 
 
 class PartitionKey(BaseModel):
-    """Serialisable key for a (source-discriminator, target-discriminator) partition.
+    """Name-aware key for a (source-discriminator, target-discriminator) partition.
 
-    ``None`` encodes the null/absent-edge partition (no edge of this type
-    observed for that discriminator value).  ``__str__`` is deterministic and
-    stable so that ``str(key)`` is a safe ``dict`` / JSON key.
+    Each endpoint carries a ``{property_name: value}`` map, so the partition is
+    **self-describing**: ``target={"type": "combine"}`` is interpretable with no
+    ``GraphDefinition``.  The maps mirror a ``ConditionalRule``'s
+    ``source.conditions`` / ``target.conditions`` ``PropMatch`` maps, so comparison
+    matches map-against-map with no name re-derivation.
 
-    Encoding: ``"src=<value>|tgt=<value>"`` where ``None`` is the literal
-    ``"null"`` (lower-case).  Values that already contain ``|`` or ``=`` are
-    embedded verbatim; consumers must reconstruct via the model fields, not
-    by parsing the string.
+    - ``{}`` means **that endpoint carries no discriminator** (the wildcard /
+      source-label-node case, ADR-032's absolute convention).
+    - ``{"type": None}`` means **the discriminator property is present but its
+      observed value is null** — distinct from ``{}``.
+
+    Hashable (usable as a ``dict`` key / ``set`` member) despite carrying ``dict``
+    fields: :meth:`__hash__` hashes the sorted map items, consistent with the
+    field-wise equality of a frozen model.
+
+    ``__str__`` is **display-only** (used by ``visualization/text.py``); it is a
+    deterministic, sorted-key form and is **never** a serialisation/dict key.
+    Nothing parses it back — there is no ``parse`` method (ADR-039 §2).
     """
 
     model_config = {"frozen": True}
 
-    source_value: str | None
-    target_value: str | None
+    source: dict[str, str | None]
+    target: dict[str, str | None]
+
+    def __hash__(self) -> int:
+        return hash(
+            (tuple(sorted(self.source.items())), tuple(sorted(self.target.items())))
+        )
 
     def __str__(self) -> str:
-        src = "null" if self.source_value is None else self.source_value
-        tgt = "null" if self.target_value is None else self.target_value
-        return f"src={src}|tgt={tgt}"
+        def _fmt(m: dict[str, str | None]) -> str:
+            inner = ", ".join(f"{k}={m[k]}" for k in sorted(m))
+            return "{" + inner + "}"
+
+        return f"source={_fmt(self.source)} target={_fmt(self.target)}"
+
+
+class PartitionedCardinalityRow(BaseModel):
+    """One per-pair row of an observed partitioned-cardinality breakdown.
+
+    ``key`` is the name-carrying :class:`PartitionKey` for this partition (the
+    self-describing ``{property_name: value}`` maps per endpoint).  ``stats`` is a
+    :class:`BoundedDistribution` (the degree distribution of this partition) —
+    typed on the base class directly, **not** the ``CardinalityStats`` marker
+    subclass, so that round-tripping a list of these rows preserves equality (a
+    ``CardinalityStats`` value would be restored as its ``BoundedDistribution``
+    base on reload, ADR-039 §3).
+    """
+
+    model_config = {"frozen": True}
+
+    key: PartitionKey
+    stats: BoundedDistribution
 
 
 class PropertyProfile(BaseModel):
@@ -221,37 +256,38 @@ class RelationshipTypeProfile(BaseModel):
     )
     property_profiles: dict[str, PropertyProfile] = Field(default_factory=dict)
     cardinality_stats: CardinalityStats | None = None
-    source_partitioned_cardinality: dict[str, BoundedDistribution] | None = Field(
+    source_partitioned_cardinality: list[PartitionedCardinalityRow] | None = Field(
         default=None,
         description=(
             "Per-pair cardinality breakdown for the **source side** of a "
-            "conditional relationship type.  The counted degree is "
-            "the source-label node's outgoing degree, grouped by the absolute "
-            "``(source_discriminator, target_discriminator)`` partition.  Key = "
-            "``str(PartitionKey)`` (``src=<v>|tgt=<v>``); value = "
-            "``BoundedDistribution`` (the degree distribution of that partition).  "
-            "Store ``BoundedDistribution`` instances directly: the field is *not* "
-            "typed on the ``CardinalityStats`` marker subclass, so a "
+            "conditional relationship type, as a list of "
+            "``PartitionedCardinalityRow`` (``{key, stats}``).  The counted degree "
+            "is the source-label node's outgoing degree, grouped by the absolute "
+            "``(source_discriminator, target_discriminator)`` partition.  Each "
+            "row's ``key`` is a name-carrying :class:`PartitionKey` "
+            "(``{property_name: value}`` maps per endpoint), so the partition is "
+            "self-describing; ``stats`` is the degree ``BoundedDistribution`` for "
+            "that partition.  Store ``BoundedDistribution`` instances directly: the "
+            "field is *not* typed on the ``CardinalityStats`` marker subclass, so a "
             "``CardinalityStats`` value would be restored as its "
             "``BoundedDistribution`` base on reload and break round-trip equality.  "
             "``None`` when ``__source_cardinality__`` is not conditional or the "
             "inspector did not compute the breakdown."
         ),
     )
-    target_partitioned_cardinality: dict[str, BoundedDistribution] | None = Field(
+    target_partitioned_cardinality: list[PartitionedCardinalityRow] | None = Field(
         default=None,
         description=(
             "Per-pair cardinality breakdown for the **target side** of a "
-            "conditional relationship type.  Symmetric to "
+            "conditional relationship type, as a list of "
+            "``PartitionedCardinalityRow``.  Symmetric to "
             "``source_partitioned_cardinality`` but the counted degree is the "
-            "target-label node's incoming degree; the partition key still reads "
-            "the source discriminator first and the target discriminator second.  "
-            "Splitting the two sides into "
+            "target-label node's incoming degree.  Splitting the two sides into "
             "separate fields prevents a source-counted and a target-counted "
-            "partition from colliding on the same ``str(PartitionKey)`` when a "
-            "relationship type is conditional on **both** endpoints.  ``None`` "
-            "when ``__target_cardinality__`` is not conditional or the inspector "
-            "did not compute the breakdown."
+            "partition (which may carry the same :class:`PartitionKey`) from "
+            "colliding when a relationship type is conditional on **both** "
+            "endpoints.  ``None`` when ``__target_cardinality__`` is not "
+            "conditional or the inspector did not compute the breakdown."
         ),
     )
 
@@ -390,20 +426,3 @@ class EndpointLabelsRow(BaseModel):
 
     source_labels: list[str]
     target_labels: list[str]
-
-
-class PartitionedCardinalityRow(BaseModel):
-    """One per-pair row of the grouped cardinality query.
-
-    ``source_value`` / ``target_value`` are the source/target discriminator
-    values for this partition; ``None`` encodes the null/absent-edge partition
-    (the database returned ``null`` for that discriminator).  ``stats`` is a
-    :class:`BoundedDistribution` (the degree distribution of this partition) —
-    constructed as the base class directly, **not** the ``CardinalityStats``
-    marker subclass, so that round-tripping ``partitioned_cardinality`` (which is
-    typed on ``BoundedDistribution``) preserves the exact type.
-    """
-
-    source_value: str | None
-    target_value: str | None
-    stats: BoundedDistribution

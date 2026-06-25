@@ -306,6 +306,43 @@ def validate_cypher_spec(
     return result
 
 
+def validate_query(
+    query: CypherQuery,
+    definition: GraphDefinition | None,
+) -> ValidationResult:
+    """Validate a :class:`~orthograph.cypher.query.CypherQuery` against *definition*.
+
+    Runs the same syntactic + semantic checks as the typed path via the shared
+    :func:`validate_cypher_spec` core:
+
+    * ``$param`` ↔ declared arg alignment → ``QUERY_PARAM_ALIGNMENT_ERROR``
+    * Cypher dialect parse (syntax) → ``QUERY_PARSE_ERROR``
+    * Unknown node labels   → ``QUERY_UNKNOWN_NODE_LABEL`` (ERROR)
+    * Unknown rel types     → ``QUERY_UNKNOWN_REL_TYPE`` (ERROR)
+    * Unknown properties    → ``QUERY_UNKNOWN_PROPERTY`` (ERROR)
+    * Invalid endpoints     → ``QUERY_INVALID_ENDPOINT`` (ERROR)
+
+    Parameters
+    ----------
+    query:
+        The :class:`~orthograph.cypher.query.CypherQuery` to validate.
+    definition:
+        A :class:`~orthograph.graph_definition.graph_definition.GraphDefinition`
+        to validate the query against.  Pass ``None`` to perform a syntactic-only
+        check (param alignment + parse); domain validation is skipped.
+    """
+    params_fields: set[str] = set(query.Params.model_fields)
+    identifier_fields: set[str] = set((query.Identifiers or NoIdentifiers).model_fields)
+    return validate_cypher_spec(
+        cypher=query.cypher_template,
+        params_fields=params_fields,
+        query_name=query.name,
+        identifier_fields=identifier_fields,
+        graph_definition=definition,
+        output_model=None,
+    )
+
+
 def validate_query_catalogue(
     query_catalogue: QueryCatalogue,
     graph_definition: GraphDefinition,

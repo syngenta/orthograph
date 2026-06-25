@@ -79,6 +79,8 @@ teams can adopt with minimal friction: one using raw Cypher, one using GQLAlchem
 | E50 | Endpoint-Aware Relationship Identity | High | **done** (2026-06-24; ADR-037; relationship identity becomes the `(source, label, target)` triple — fixes the observed-side blending of distinct shapes; breaking across declaration/profiling/comparison/Cypher + YAML format; supersedes the identity implication of ADR-014, amends ADR-015 §address-space + ADR-034 §7/§8; delegation-ready tasks Opus/Sonnet/Haiku) |
 | E51 | Multi-Label Endpoint Relationship Shapes | Medium | planned (depends on E50; ADR-038 decision-only; scopes and resolves asymmetry: observed side can discover multi-label endpoint nodes (causing double-count bugs), but declared side cannot declare them; decision pending: first-class multi-label declaration vs. detect-and-harden-warn/error; E51.0 = scoping session + ADR)                                          |
 | E52 | GQLAlchemy Backend — Complete Delivery & Bug Sweep | High | planned (consolidates+supersedes E8+E9; blocked by E16 (done) for catalogue/executor; client+codegen tasks independent; Workstreams D=delivery, C=composition-cleanup [HITL], W=bug sweep incl. the codegen `type`-clobber found 2026-06-25; Open Decision: reject vs map-and-preserve GQLAlchemy-reserved property names)                                                |
+| E53 | Self-Describing, Name-Aware Partitioned-Cardinality Key (single-property) | High | **done** (2026-06-25; ADR-039; reshapes `PartitionKey` to `{name:value}` maps + field → `list[PartitionedCardinalityRow]`; deletes the lossy string-key parse; name-aware comparison **and** profile↔profile diff; **single-property**, delivers the MatProt `Operation.type` value; amends ADR-034 §3/§7/§8 + ADR-032 §4; **no** declaration-time guard; blocks E54) |
+| E54 | Multi-Property Partitioned-Cardinality Profiling (producer generalisation) | Medium | planned (**blocked by E53**; ADR-039 §5/§6; lifts the `len(keys)==1` producer cut — NetworkX multi-key read + variable-width Cypher grouping with N spliced discriminator names; closes the silent-drift hole by *capability* (no declaration-time guard); reuses E53's model/serialization/comparison/diff/visualization + their tests **unchanged**, adds only new multi-property tests; delegation-ready Opus/Sonnet/Haiku) |
 
 ---
 
@@ -143,6 +145,12 @@ AFTER E40:
        endpoints' discriminators, removes by_kind sugar, definition-time guard — closes the
        silent-wrong-validation hole; coordinate with E42 on models.py)
 
+AFTER E41 + E49 (partitioned cardinality shipped):
+   E54  Multi-Property Partitioned-Cardinality Profiling (depends on E53; ADR-039 §5/§6; lifts
+        the len(keys)==1 producer cut — NetworkX multi-key + variable-width Cypher grouping with
+        N safely-spliced discriminator names; closes the silent-drift hole by capability, not a
+        construction-time guard; reuses E53's model/comparison/diff/viz + tests unchanged)
+
 AFTER E44 + E45 (both done):
   E46  Populate observed_type_counts (closes ADR-015 B1 TODO + the two backends/neo4j/inspector.py
        TODOs; new bounded value→type→count aggregation across 3 backends, registered in all three
@@ -150,8 +158,7 @@ AFTER E44 + E45 (both done):
        prevalent"; rides E45 bounded-sampling opt-in; E46.0 produces an ADR first)
        ✓ done (2026-06-24)
 
-AFTER E46.2 (or when reconciliation invariant observed failing):
-  E47  Inspector Snapshot Consistency (structural follow-on to E46.2; enforces ADR-035 §2
+AFTER E46.2 (or when reconciliation invariant observed failing):  E47  Inspector Snapshot Consistency (structural follow-on to E46.2; enforces ADR-035 §2
        reconciliation invariant by shared read transaction; low priority — start only if the
        invariant breaks in production or deployment profile changes to write-heavy)
 
@@ -253,6 +260,7 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E48 — Configuration — Thread Tunable Knobs Through the Public API](active_epics/E48_configuration.md)
 - [E51 — Multi-Label Endpoint Relationship Shapes](active_epics/E51_multi_label_endpoint_relationship_shapes.md)
 - [E52 — GQLAlchemy Backend — Complete Delivery & Bug Sweep](active_epics/E52_gqlalchemy_complete_delivery_and_bug_sweep.md) *(consolidates+supersedes E8+E9)*
+- [E54 — Multi-Property Partitioned-Cardinality Profiling](active_epics/E54_multi_property_partition_profiling.md) *(ADR-039 §5/§6; depends on E53)*
 
 ### Archived — [`archived_epics/`](archived_epics/) (do not pick up work from these)
 
@@ -280,7 +288,8 @@ Active epics live in [`active_epics/`](active_epics/); completed and retired epi
 - [E12 — Shared Catalogue Interface](archived_epics/E12_shared_catalogue_interface.md)
 - [E13 — Typed Query Catalogue Contract](archived_epics/E13_typed_query_catalogue_contract.md)
 - [E15 — Typed Cypher Catalogue Backend](archived_epics/E15_typed_cypher_backend.md)
-- [E50 — Endpoint-Aware Relationship Identity](archived_epics/E50_endpoint_aware_relationship_identity.md)
+- [E50 — Endpoint-Aware Relationship Identity](archived_epics/E50_endpoint_aware_relationship_identity.md) *(done 2026-06-24)*
+- [E53 — Self-Describing, Name-Aware Partitioned-Cardinality Key (single-property)](archived_epics/E53_self_describing_partition_key.md) *(done 2026-06-25; ADR-039; reshapes `PartitionKey` to `{name:value}` maps + field → `list[PartitionedCardinalityRow]`, deletes the lossy string-key parse, name-aware comparison + profile↔profile diff; single-property delivers the MatProt `Operation.type` value; amends ADR-034 §3/§7/§8 + ADR-032 §4; blocks E54)*
 
 **Retired (superseded by E28 — Testing Strategy):**
 - [E21 — Technical Debt: E2E Test Activation & Configuration](archived_epics/E21_tech_debt_e2e_test_config.md)

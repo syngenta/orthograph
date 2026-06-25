@@ -1,4 +1,4 @@
-"""Tests for GraphView Protocol, DefinitionView, and ProfileView (E27.T1)."""
+"""Tests for GraphView Protocol, DefinitionView, and ProfileView."""
 
 from typing import Optional
 

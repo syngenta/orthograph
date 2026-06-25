@@ -11,15 +11,12 @@ Execution is separate — see ``orthograph.query.base_models``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from orthograph.cypher.query import CypherQuery
 from orthograph.query.base_models import Backend, D, P, R, ReadQuery, WriteQuery
-
-
-if TYPE_CHECKING:
-    from orthograph.cypher.query import CypherQuery
 
 
 @dataclass(frozen=True)

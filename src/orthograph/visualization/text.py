@@ -3,7 +3,11 @@
 from orthograph.diagnostics.result import ValidationIssue, ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import CardinalitySpec, ConditionalCardinality
-from orthograph.graph_profile.models import BoundedDistribution, GraphProfile
+from orthograph.graph_profile.models import (
+    BoundedDistribution,
+    GraphProfile,
+    PartitionedCardinalityRow,
+)
 
 
 def _format_conditional(card: ConditionalCardinality) -> str:
@@ -100,23 +104,21 @@ def _format_value_distribution(dist: BoundedDistribution) -> str:
 
 
 def _render_partitioned_cardinality(
-    side: str, breakdown: dict[str, BoundedDistribution]
+    side: str, rows: list[PartitionedCardinalityRow]
 ) -> list[str]:
     """Render one side's partitioned-cardinality breakdown as indented lines.
 
-    ``breakdown`` keys are already the display form ``str(PartitionKey)``
-    (``src=<v>|tgt=<v>``, with ``null`` for an absent/wildcard discriminator);
-    they are printed verbatim, never re-parsed.  Partitions are sorted by key for
-    deterministic output.  ``side`` is ``"source"`` or ``"target"`` and names the
-    field the breakdown belongs to.
+    Each row's :class:`PartitionKey` is rendered via its display ``__str__``
+    (e.g. ``source={} target={type=combine}``), which shows the discriminator
+    **name** alongside the value so the partition is self-describing.  Rows are
+    sorted by ``str(key)`` for deterministic output.  ``side`` is ``"source"``
+    or ``"target"`` and names the field the breakdown belongs to.
 
-    The header is annotated to disambiguate the two axes carried in each row: the
-    ``src=...|tgt=...`` key identifies the **partition** (both endpoints'
-    discriminators), while the distribution itself is the degree of the *counted*
-    node — the **source-label node's outgoing degree** for the source side, the
-    **target-label node's incoming degree** for the target side.  Without this the
-    repeated ``src|tgt`` key can read as if both sides' degrees are shown, when
-    only one side's is (ADR-032 §1a).
+    The header is annotated to disambiguate the two axes: the partition key
+    identifies both endpoints' discriminators, while the distribution is the
+    degree of the *counted* node — the **source-label node's outgoing degree**
+    for the source side, the **target-label node's incoming degree** for the
+    target side (ADR-032 §1a).
     """
     counted = (
         "source node's outgoing degree"
@@ -124,12 +126,13 @@ def _render_partitioned_cardinality(
         else "target node's incoming degree"
     )
     lines: list[str] = [
-        f"    {side}_partitioned_cardinality ({counted}, grouped by src|tgt partition):"
+        f"    {side}_partitioned_cardinality ({counted}, grouped by partition):"
     ]
-    for key, dist in sorted(breakdown.items()):
+    for row in sorted(rows, key=lambda r: str(r.key)):
+        dist = row.stats
         mean_str = f"{dist.mean:.2f}" if dist.mean is not None else "n/a"
         lines.append(
-            f"      {key}: min={dist.min}, max={dist.max}, "
+            f"      {row.key}: min={dist.min}, max={dist.max}, "
             f"avg={mean_str}, sample_size={dist.count}"
         )
     return lines

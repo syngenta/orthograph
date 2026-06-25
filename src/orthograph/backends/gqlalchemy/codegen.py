@@ -6,6 +6,8 @@ classes at runtime.  Generated classes are internal; consumers never use them di
 
 from __future__ import annotations
 
+import types
+import typing
 from dataclasses import dataclass, field
 from typing import Any, Optional, get_type_hints
 
@@ -191,16 +193,11 @@ def _translate_type(info: TypeInfo, raw_annotation: Any) -> Any:
 
 def _is_optional(annotation: Any) -> bool:
     """Check if an annotation is Optional[T] (i.e., Union[T, None])."""
-    import types
-    import typing
-
     origin = getattr(annotation, "__origin__", None)
 
-    # Python 3.10+ UnionType (X | Y)
     if isinstance(annotation, types.UnionType):
         return type(None) in annotation.__args__
 
-    # typing.Union
     if origin is typing.Union:
         return type(None) in annotation.__args__
 

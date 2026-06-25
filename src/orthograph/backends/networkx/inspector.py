@@ -21,6 +21,7 @@ from orthograph.graph_profile.models import (
     CardinalityStats,
     GraphProfile,
     NodeTypeProfile,
+    PartitionedCardinalityRow,
     PartitionKey,
     PropertyProfile,
     RelationshipTypeProfile,
@@ -337,19 +338,24 @@ def _discriminator_keys(matches: tuple[Any, ...]) -> frozenset[str]:
     return frozenset(keys)
 
 
-def _discriminator_value(attrs: dict[str, Any], keys: frozenset[str]) -> str | None:
-    """Read the single discriminator value for *keys* from *attrs*, as a string.
+def _discriminator_map(
+    attrs: dict[str, Any], keys: frozenset[str]
+) -> dict[str, str | None]:
+    """Read the single discriminator as a ``{name: value}`` map from *attrs*.
 
-    The single-``kind`` first cut discriminates on one property per
-    endpoint; an endpoint with no discriminator, or a missing/``None`` value,
-    maps to ``None`` (the null-partition component).  Multi-key endpoints are not
-    supported in this first cut and also yield ``None`` (the guarded follow-on
-    tracked in the epic Out-of-Scope handles them).
+    The single-property first cut discriminates on one property per endpoint:
+
+    - exactly one key → ``{the_key: str(value) or None}`` (a missing/``None``
+      attribute yields ``{the_key: None}`` — discriminator present, value null);
+    - no keys → ``{}`` (this endpoint carries no discriminator);
+    - more than one key → ``{}`` (declined — multi-property profiling is the
+      E54 follow-on tracked in the epic Out-of-Scope).
     """
     if len(keys) != 1:
-        return None
-    value = attrs.get(next(iter(keys)))
-    return None if value is None else str(value)
+        return {}
+    key = next(iter(keys))
+    value = attrs.get(key)
+    return {key: None if value is None else str(value)}
 
 
 def _partition_degrees(
@@ -357,7 +363,7 @@ def _partition_degrees(
     side: str,
     endpoints: list[_EdgeEndpoints],
 ) -> dict[PartitionKey, list[int]]:
-    """Group per-counted-node degrees by the absolute (src_value, tgt_value) pair.
+    """Group per-counted-node degrees by the absolute (source map, target map) pair.
 
     For each edge the partition key reads the source-label node's discriminator
     and the target-label node's discriminator (absolute convention).  The counted
@@ -372,8 +378,8 @@ def _partition_degrees(
     counts: dict[PartitionKey, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for edge in endpoints:
         partition = PartitionKey(
-            source_value=_discriminator_value(edge.src_attrs, src_keys),
-            target_value=_discriminator_value(edge.tgt_attrs, tgt_keys),
+            source=_discriminator_map(edge.src_attrs, src_keys),
+            target=_discriminator_map(edge.tgt_attrs, tgt_keys),
         )
         counted_node = edge.src_node if side == "source" else edge.tgt_node
         counts[partition][counted_node] += 1
@@ -386,28 +392,35 @@ def _partition_degrees(
 
 def _stats_per_partition(
     degrees_by_partition: dict[PartitionKey, list[int]],
-) -> dict[str, BoundedDistribution]:
-    """Summarise each partition's per-node degrees into a BoundedDistribution.
+) -> list[PartitionedCardinalityRow]:
+    """Summarise each partition's per-node degrees into a list of rows.
 
-    Constructs :class:`BoundedDistribution` directly (not the
-    :class:`CardinalityStats` marker subclass): the profile field is typed on
-    the base, so a subclass value would be restored as its base on reload and
-     break round-trip equality.  Reuses the population-variance
-    estimator of :func:`_compute_cardinality` so partition and aggregate stats
-    stay consistent.
+    Each :class:`PartitionedCardinalityRow` pairs the name-carrying
+    :class:`PartitionKey` with a :class:`BoundedDistribution` constructed directly
+    (not the :class:`CardinalityStats` marker subclass): the profile field is
+    typed on the base, so a subclass value would be restored as its base on reload
+    and break round-trip equality.  Reuses the population-variance estimator of
+    :func:`_compute_cardinality` so partition and aggregate stats stay consistent.
+    Rows are ordered deterministically by ``str(key)``.
     """
-    result: dict[str, BoundedDistribution] = {}
+    rows: list[PartitionedCardinalityRow] = []
     for partition, degrees in degrees_by_partition.items():
         mean = sum(degrees) / len(degrees)
         variance = sum((d - mean) ** 2 for d in degrees) / len(degrees)
-        result[str(partition)] = BoundedDistribution(
-            count=len(degrees),
-            min=min(degrees),
-            max=max(degrees),
-            mean=mean,
-            variance=variance,
+        rows.append(
+            PartitionedCardinalityRow(
+                key=partition,
+                stats=BoundedDistribution(
+                    count=len(degrees),
+                    min=min(degrees),
+                    max=max(degrees),
+                    mean=mean,
+                    variance=variance,
+                ),
+            )
         )
-    return result
+    rows.sort(key=lambda row: str(row.key))
+    return rows
 
 
 def _compute_partitioned_cardinality(
@@ -415,7 +428,7 @@ def _compute_partitioned_cardinality(
     endpoints: list[_EdgeEndpoints],
     graph_definition: GraphDefinition | None,
 ) -> tuple[
-    dict[str, BoundedDistribution] | None, dict[str, BoundedDistribution] | None
+    list[PartitionedCardinalityRow] | None, list[PartitionedCardinalityRow] | None
 ]:
     """Return ``(source_breakdown, target_breakdown)`` for a conditional rel type.
 
@@ -437,8 +450,8 @@ def _compute_partitioned_cardinality(
     if not endpoints:
         return None, None
 
-    source_breakdown: dict[str, BoundedDistribution] | None = None
-    target_breakdown: dict[str, BoundedDistribution] | None = None
+    source_breakdown: list[PartitionedCardinalityRow] | None = None
+    target_breakdown: list[PartitionedCardinalityRow] | None = None
     for card, side in _conditional_sides(rel_type):
         breakdown = _stats_per_partition(_partition_degrees(card, side, endpoints))
         if side == "source":

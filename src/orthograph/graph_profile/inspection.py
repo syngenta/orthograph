@@ -5,11 +5,9 @@ from typing import Any
 
 from orthograph.cypher.bindings import NoParams
 from orthograph.graph_profile.models import (
-    BoundedDistribution,
     CardinalityStats,
     GraphProfile,
     PartitionedCardinalityRow,
-    PartitionKey,
     RelationshipTypeProfile,
 )
 
@@ -22,9 +20,9 @@ def _extract_discriminators(card: Any) -> tuple[str | None, str | None] | None:
 
     * **one** property → that property name is the discriminator for the side;
     * **zero** properties (a wildcard ``PropMatch()``) → ``None``, meaning the
-      side has no grouping key and resolves to a constant ``null`` partition
-      value — mirroring ADR-032's absolute convention and the
-      ``PartitionKey(source_value=None | target_value=None)`` representation.
+      side has no grouping key and resolves to an empty-map partition endpoint
+      (``{}``) — mirroring ADR-032's absolute convention and the
+      ``PartitionKey(source={} | target={})`` representation.
 
     Returns ``None`` (declines) only when **either** endpoint carries more than
     one condition property, since the single-property-per-endpoint restriction
@@ -33,8 +31,8 @@ def _extract_discriminators(card: Any) -> tuple[str | None, str | None] | None:
     path rejects.  At least one side must be non-wildcard; a fully-wildcard rule
     set (both empty) also declines (nothing to partition on).
 
-    Mirrors :func:`_discriminator_value` in the NetworkX reference inspector,
-    where a zero-key endpoint likewise maps to the ``null`` partition component.
+    Mirrors :func:`_discriminator_map` in the NetworkX reference inspector,
+    where a zero-key endpoint likewise maps to the empty-map partition endpoint.
     """
     src_keys: set[str] = set()
     tgt_keys: set[str] = set()
@@ -175,8 +173,8 @@ class CypherInspector(GraphInspector):
         endpoint via ``endpoint_label``, so the breakdown belongs to exactly one
         relationship shape.  ``side == "source"`` counts each source node's
         outgoing degree; ``side == "target"`` counts each target node's incoming
-        degree.  The result is assembled into ``dict[str, BoundedDistribution]``
-        keyed by ``str(PartitionKey)`` and attached to
+        degree.  The result is assembled into a ``list[PartitionedCardinalityRow]``
+        (each row's ``key`` a name-carrying :class:`PartitionKey`) and attached to
         ``{side}_partitioned_cardinality``.
 
         ``query_variants`` maps ``"both"`` / ``"wildcard_source"`` /
@@ -231,28 +229,22 @@ class CypherInspector(GraphInspector):
             query = query_variants["wildcard_target"]
             identifiers = {**base_identifiers, "discriminator": source_discriminator}
 
-        partitioned: dict[str, BoundedDistribution] = {}
         rows: list[PartitionedCardinalityRow] = self._run_query(
             connection,
             query,
             identifiers=identifiers,
             **execute_kwargs,
         )
+        kept: list[PartitionedCardinalityRow] = []
         for row in rows:
             # Suppress zero-degree rows from OPTIONAL MATCH (parity with
             # NetworkX, which only emits observed edges).  Absent partitions are
             # handled at comparison time by treating a missing key as degree 0.
             if row.stats.min == 0 and row.stats.max == 0:
                 continue
-            key = str(
-                PartitionKey(
-                    source_value=row.source_value,
-                    target_value=row.target_value,
-                )
-            )
-            partitioned[key] = row.stats
+            kept.append(row)
 
-        breakdown = partitioned if partitioned else None
+        breakdown = kept if kept else None
         return profile.model_copy(
             update={
                 f"{side}_partitioned_cardinality": breakdown,

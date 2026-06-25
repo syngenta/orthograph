@@ -205,8 +205,9 @@ def test_partitioned_materialize_maps_row() -> None:
         }
     )
     assert isinstance(row, PartitionedCardinalityRow)
-    assert row.source_value == "subsampling"
-    assert row.target_value == "Sample"
+    # Names threaded from the query's identifiers (source/target discriminator "kind").
+    assert row.key.source == {"kind": "subsampling"}
+    assert row.key.target == {"kind": "Sample"}
     assert isinstance(row.stats, BoundedDistribution)
     # constructed as BoundedDistribution directly, not the CardinalityStats marker
     assert type(row.stats) is BoundedDistribution
@@ -229,8 +230,8 @@ def test_target_partitioned_materialize_maps_row() -> None:
         }
     )
     assert isinstance(row, PartitionedCardinalityRow)
-    assert row.source_value == "assembler"
-    assert row.target_value == "final"
+    assert row.key.source == {"kind": "assembler"}
+    assert row.key.target == {"kind": "final"}
     assert type(row.stats) is BoundedDistribution
     assert row.stats.count == 2
 
@@ -246,8 +247,9 @@ def test_partitioned_materialize_null_target_maps_to_none() -> None:
             "sample_size": 4,
         }
     )
-    assert row.source_value == "subsampling"
-    assert row.target_value is None  # null partition, not the string "null"
+    assert row.key.source == {"kind": "subsampling"}
+    # Discriminator present, observed value null → {name: None}, not the string "null".
+    assert row.key.target == {"kind": None}
 
 
 def test_partitioned_materialize_null_source_maps_to_none() -> None:
@@ -261,8 +263,8 @@ def test_partitioned_materialize_null_source_maps_to_none() -> None:
             "sample_size": 2,
         }
     )
-    assert row.source_value is None
-    assert row.target_value == "Sample"
+    assert row.key.source == {"kind": None}
+    assert row.key.target == {"kind": "Sample"}
 
 
 def test_partitioned_injected_source_discriminator_raises() -> None:

@@ -28,11 +28,21 @@ from dataclasses import dataclass
 from typing import Literal
 
 from orthograph.comparison.rules import Rule, RuleContext
+from orthograph.comparison.type_mapping import db_type_to_python
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue
-from orthograph.graph_definition.models import RelationshipModel, representative_spec
+from orthograph.graph_definition.models import (
+    ConditionalCardinality,
+    RelationshipModel,
+    representative_spec,
+)
 from orthograph.graph_definition.property_spec import TypeInfo
-from orthograph.graph_profile.models import PropertyProfile, RelationshipTypeProfile
+from orthograph.graph_profile.models import (
+    NodeTypeProfile,
+    PartitionedCardinalityRow,
+    PropertyProfile,
+    RelationshipTypeProfile,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -80,13 +90,7 @@ def _resolved_definition_types(
 def _resolved_profile_types(
     left: PropertyProfile, right: PropertyProfile
 ) -> tuple[object, object] | None:
-    """Return (left_types, right_types) as sets if they differ, else None.
-
-    Imports ``db_type_to_python`` lazily to avoid a circular dependency at
-    module load time.
-    """
-    from orthograph.comparison.engine import db_type_to_python
-
+    """Return (left_types, right_types) as sets if they differ, else None."""
     left_types = {
         (m if (m := db_type_to_python(t)) is not None else t)
         for t in left.observed_types
@@ -174,6 +178,98 @@ def _cardinality_issue_profile(
     )
 
 
+def _partitioned_cardinality_issues_profile(
+    rt: str,
+    left: RelationshipTypeProfile,
+    right: RelationshipTypeProfile,
+) -> Iterable[ValidationIssue]:
+    """Yield ``PARTITIONED_CARDINALITY_CHANGED`` (INFO) per differing partition.
+
+    Matches partitions across the two profiles by :class:`PartitionKey` **map
+    equality**, so partitions discriminating the same value on *different*
+    properties (``{"type": "combine"}`` vs ``{"stage": "combine"}``) no longer
+    collide — they surface as a removed + an added partition.  A partition on one
+    side only emits a ``left_only`` / ``right_only`` delta; a partition on both
+    sides with differing degree ``stats`` (``min``/``max``) emits a ``stats``
+    delta.  Both per-side breakdowns are diffed.  Deterministic: partitions are
+    visited in ``str(key)`` order.  Total count is excluded (ADR-034 §6).
+    """
+    for side in ("source", "target"):
+        left_rows = getattr(left, f"{side}_partitioned_cardinality") or []
+        right_rows = getattr(right, f"{side}_partitioned_cardinality") or []
+        left_by_key = {row.key: row for row in left_rows}
+        right_by_key = {row.key: row for row in right_rows}
+        for key in sorted(left_by_key.keys() | right_by_key.keys(), key=str):
+            left_row = left_by_key.get(key)
+            right_row = right_by_key.get(key)
+            issue = _partition_delta(rt, side, left_row, right_row)
+            if issue is not None:
+                yield issue
+
+
+def _partition_delta(
+    rt: str,
+    side: str,
+    left_row: PartitionedCardinalityRow | None,
+    right_row: PartitionedCardinalityRow | None,
+) -> ValidationIssue | None:
+    """Build the per-partition delta for one matched/unmatched (left, right) pair.
+
+    At least one of ``left_row`` / ``right_row`` is non-``None`` (the caller only
+    visits keys present on some side).
+    """
+    if right_row is None:
+        assert left_row is not None
+        return ValidationIssue(
+            code="PARTITIONED_CARDINALITY_CHANGED",
+            severity=Severity.INFO,
+            entity_type=EntityType.RELATIONSHIP,
+            entity_id=rt,
+            message=(
+                f"Relationship '{rt}' {side}-side partition {left_row.key} "
+                "is present in left but not in right"
+            ),
+            context={"side": side, "change": "left_only", "key": str(left_row.key)},
+        )
+    if left_row is None:
+        return ValidationIssue(
+            code="PARTITIONED_CARDINALITY_CHANGED",
+            severity=Severity.INFO,
+            entity_type=EntityType.RELATIONSHIP,
+            entity_id=rt,
+            message=(
+                f"Relationship '{rt}' {side}-side partition {right_row.key} "
+                "is present in right but not in left"
+            ),
+            context={"side": side, "change": "right_only", "key": str(right_row.key)},
+        )
+    # Present on both sides: a delta only when the degree bounds differ.
+    l_stats = left_row.stats
+    r_stats = right_row.stats
+    if l_stats.min == r_stats.min and l_stats.max == r_stats.max:
+        return None
+    return ValidationIssue(
+        code="PARTITIONED_CARDINALITY_CHANGED",
+        severity=Severity.INFO,
+        entity_type=EntityType.RELATIONSHIP,
+        entity_id=rt,
+        message=(
+            f"Relationship '{rt}' {side}-side partition {left_row.key} "
+            f"cardinality differs: left min={l_stats.min} max={l_stats.max}, "
+            f"right min={r_stats.min} max={r_stats.max}"
+        ),
+        context={
+            "side": side,
+            "change": "stats",
+            "key": str(left_row.key),
+            "left_min": l_stats.min,
+            "left_max": l_stats.max,
+            "right_min": r_stats.min,
+            "right_max": r_stats.max,
+        },
+    )
+
+
 def _cardinality_issue_definition(
     rt: str,
     left: type[RelationshipModel],
@@ -186,8 +282,6 @@ def _cardinality_issue_definition(
     structural equality (``==``) is used and the context omits ``.min``/``.max``
     keys (which do not exist on conditional specs).
     """
-    from orthograph.graph_definition.models import ConditionalCardinality
-
     l_card = left.source_cardinality()
     r_card = right.source_cardinality()
     if l_card == r_card:
@@ -514,6 +608,33 @@ class CardinalityChangedRule:
 
 
 @dataclass
+class PartitionedCardinalityChangedRule:
+    """Emits ``PARTITIONED_CARDINALITY_CHANGED`` (INFO) per differing partition.
+
+    Profile ↔ profile only: matches the per-side partitioned-cardinality rows of
+    two :class:`RelationshipTypeProfile` operands by :class:`PartitionKey` **map
+    equality**, so partitions discriminating different properties no longer
+    collide (``{"type": ...}`` ≠ ``{"stage": ...}``).  A partition present on one
+    side only, or with differing degree ``stats``, emits a per-partition delta.
+    Definition operands carry no observed breakdown, so the rule is silent for
+    them.  Closes the profile↔profile partition row of ADR-034 §8 honestly.
+    """
+
+    key: str = "diff.rel.partitioned_cardinality_changed"
+
+    def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
+        if context.extra.get("address_type") != "rel_type":
+            return
+        if context.left is None or context.right is None:
+            return
+        if _rel_operand_kind(context.left, context.right) != "profile":
+            return
+        yield from _partitioned_cardinality_issues_profile(
+            context.address, context.left, context.right
+        )
+
+
+@dataclass
 class CountChangedRule:
     """Emits ``COUNT_CHANGED`` (INFO) when both sides observe a node label or
     relationship type but the entity ``count`` differs.
@@ -527,11 +648,6 @@ class CountChangedRule:
     key: str = "diff.count_changed"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        from orthograph.graph_profile.models import (
-            NodeTypeProfile,
-            RelationshipTypeProfile,
-        )
-
         address_type = context.extra.get("address_type")
         if address_type not in ("node_label", "rel_type"):
             return  # only the type-level addresses carry a total count
@@ -581,5 +697,6 @@ def diff_rules() -> list[Rule]:
         PropertyTypeChangedRule(),
         EndpointsChangedRule(),
         CardinalityChangedRule(),
+        PartitionedCardinalityChangedRule(),
         CountChangedRule(),
     ]

@@ -18,39 +18,12 @@ from collections.abc import Sequence
 
 from orthograph.comparison.diff_rules import diff_rules
 from orthograph.comparison.rules import Rule, RuleContext, standard_rules
+from orthograph.comparison.type_mapping import db_type_to_python as db_type_to_python
 from orthograph.comparison.views import DefinitionView, GraphView, ProfileView
 from orthograph.diagnostics.classification import EntityType
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_profile.models import GraphProfile
-
-
-# --- DB type to Python type mapping ---
-
-_DB_TYPE_MAP: dict[str, type] = {
-    "String": str,
-    "str": str,
-    "Long": int,
-    "Integer": int,
-    "Int": int,
-    "int": int,
-    "Double": float,
-    "Float": float,
-    "float": float,
-    "Boolean": bool,
-    "Bool": bool,
-    "bool": bool,
-    "StringArray": list,
-    "LongArray": list,
-    "DoubleArray": list,
-    "List": list,
-    "list": list,
-}
-
-
-def db_type_to_python(db_type: str) -> type | None:
-    """Map a database type string to a Python type."""
-    return _DB_TYPE_MAP.get(db_type)
 
 
 # ---------------------------------------------------------------------------

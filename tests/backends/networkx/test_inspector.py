@@ -15,12 +15,29 @@ from orthograph.graph_definition.models import (
     PropMatch,
     RelationshipModel,
 )
-from orthograph.graph_profile.models import PartitionKey, RelTypeKey
+from orthograph.graph_profile.models import (
+    BoundedDistribution,
+    PartitionedCardinalityRow,
+    PartitionKey,
+    RelTypeKey,
+)
 
 
 def _make_graph() -> nx.MultiDiGraph[str]:
     """Helper to create a fresh empty MultiDiGraph."""
     return nx.MultiDiGraph()
+
+
+def _by_key(
+    rows: list[PartitionedCardinalityRow] | None,
+) -> dict[str, BoundedDistribution]:
+    """Index a partitioned-cardinality row list by ``str(key)``.
+
+    ``PartitionKey`` carries ``dict`` fields and is therefore unhashable, so its
+    deterministic display ``str`` is used as the lookup key in tests.
+    """
+    assert rows is not None
+    return {str(row.key): row.stats for row in rows}
 
 
 def test_inspect_empty_graph():
@@ -589,17 +606,22 @@ def test_inspect_partitioned_cardinality_deciding_scenario():
     partitions = profile.rel_type_profiles[has_output].source_partitioned_cardinality
 
     assert partitions is not None
-    sub_sub = str(PartitionKey(source_value="subsampling", target_value="subsampling"))
-    sub_nothing = str(PartitionKey(source_value="subsampling", target_value="nothing"))
-    assert set(partitions) == {sub_sub, sub_nothing}
+    sub_sub = PartitionKey(
+        source={"kind": "subsampling"}, target={"kind": "subsampling"}
+    )
+    sub_nothing = PartitionKey(
+        source={"kind": "subsampling"}, target={"kind": "nothing"}
+    )
+    by_key = _by_key(partitions)
+    assert set(by_key) == {str(sub_sub), str(sub_nothing)}
 
-    assert partitions[sub_sub].min == 2
-    assert partitions[sub_sub].max == 2
-    assert partitions[sub_sub].count == 1
+    assert by_key[str(sub_sub)].min == 2
+    assert by_key[str(sub_sub)].max == 2
+    assert by_key[str(sub_sub)].count == 1
 
-    assert partitions[sub_nothing].min == 1
-    assert partitions[sub_nothing].max == 1
-    assert partitions[sub_nothing].count == 1
+    assert by_key[str(sub_nothing)].min == 1
+    assert by_key[str(sub_nothing)].max == 1
+    assert by_key[str(sub_nothing)].count == 1
 
 
 def test_inspect_partitioned_cardinality_constant_is_none():
@@ -663,10 +685,13 @@ def test_inspect_partitioned_cardinality_zero_output_partition_absent():
     partitions = profile.rel_type_profiles[has_output].source_partitioned_cardinality
 
     assert partitions is not None
-    sub_sub = str(PartitionKey(source_value="subsampling", target_value="subsampling"))
-    assert set(partitions) == {sub_sub}
-    assert partitions[sub_sub].min == 2
-    assert partitions[sub_sub].max == 2
+    sub_sub = PartitionKey(
+        source={"kind": "subsampling"}, target={"kind": "subsampling"}
+    )
+    by_key = _by_key(partitions)
+    assert set(by_key) == {str(sub_sub)}
+    assert by_key[str(sub_sub)].min == 2
+    assert by_key[str(sub_sub)].max == 2
 
 
 def test_inspect_partitioned_cardinality_target_side():
@@ -728,12 +753,15 @@ def test_inspect_partitioned_cardinality_target_side():
     assert partitions is not None
     # A target-side-only conditional leaves the source-side breakdown None.
     assert rtp.source_partitioned_cardinality is None
-    assembler_final = str(PartitionKey(source_value="assembler", target_value="final"))
-    assert set(partitions) == {assembler_final}
+    assembler_final = PartitionKey(
+        source={"kind": "assembler"}, target={"kind": "final"}
+    )
+    by_key = _by_key(partitions)
+    assert set(by_key) == {str(assembler_final)}
     # a1 has 2 incoming edges from assembler producers.
-    assert partitions[assembler_final].min == 2
-    assert partitions[assembler_final].max == 2
-    assert partitions[assembler_final].count == 1
+    assert by_key[str(assembler_final)].min == 2
+    assert by_key[str(assembler_final)].max == 2
+    assert by_key[str(assembler_final)].count == 1
 
 
 def test_inspect_partitioned_cardinality_both_sides():
@@ -802,21 +830,23 @@ def test_inspect_partitioned_cardinality_both_sides():
         RelTypeKey(source_label="Operation", label="MAKES", target_label="Sample")
     )
     rtp = profile.rel_type_profiles[makes]
-    pair = str(PartitionKey(source_value="assembler", target_value="final"))
+    pair = PartitionKey(source={"kind": "assembler"}, target={"kind": "final"})
 
     # Source side: op1 has outgoing degree 2 in the (assembler, final) partition.
     assert rtp.source_partitioned_cardinality is not None
-    assert set(rtp.source_partitioned_cardinality) == {pair}
-    assert rtp.source_partitioned_cardinality[pair].min == 2
-    assert rtp.source_partitioned_cardinality[pair].max == 2
-    assert rtp.source_partitioned_cardinality[pair].count == 1
+    source_by_key = _by_key(rtp.source_partitioned_cardinality)
+    assert set(source_by_key) == {str(pair)}
+    assert source_by_key[str(pair)].min == 2
+    assert source_by_key[str(pair)].max == 2
+    assert source_by_key[str(pair)].count == 1
 
     # Target side: a1 and a2 each have incoming degree 1 in the same partition.
     assert rtp.target_partitioned_cardinality is not None
-    assert set(rtp.target_partitioned_cardinality) == {pair}
-    assert rtp.target_partitioned_cardinality[pair].min == 1
-    assert rtp.target_partitioned_cardinality[pair].max == 1
-    assert rtp.target_partitioned_cardinality[pair].count == 2
+    target_by_key = _by_key(rtp.target_partitioned_cardinality)
+    assert set(target_by_key) == {str(pair)}
+    assert target_by_key[str(pair)].min == 1
+    assert target_by_key[str(pair)].max == 1
+    assert target_by_key[str(pair)].count == 2
 
 
 # --- E49 T2: one-sided (wildcard) discriminator ---
@@ -827,9 +857,9 @@ def test_inspect_partitioned_cardinality_one_sided_target_keyed():
 
     The one-sided shape ADR-032 made enforceable: only the (target) Operation
     endpoint carries the ``type`` discriminator; the source Sample endpoint is a
-    wildcard ``PropMatch()``.  The breakdown must be produced (not None), keyed by
-    ``src=null|tgt=<type>`` per the absolute convention, with the wildcard source
-    rendered as ``null``.
+    wildcard ``PropMatch()``.  The breakdown must be produced (not None), with each
+    row keyed by ``source={} target={"type": <type>}`` per the absolute
+    convention — the wildcard source carries no discriminator (``{}``).
     """
 
     class Sample(NodeModel):
@@ -890,14 +920,17 @@ def test_inspect_partitioned_cardinality_one_sided_target_keyed():
 
     assert partitions is not None
     assert rtp.source_partitioned_cardinality is None
-    combine = str(PartitionKey(source_value=None, target_value="combine"))
-    split = str(PartitionKey(source_value=None, target_value="split"))
-    assert set(partitions) == {combine, split}
+    combine = PartitionKey(source={}, target={"type": "combine"})
+    split = PartitionKey(source={}, target={"type": "split"})
+    by_key = _by_key(partitions)
+    assert set(by_key) == {str(combine), str(split)}
+    # Wildcard source endpoint carries no discriminator ({} on every row).
+    assert all(row.key.source == {} for row in partitions)
     # combine op has incoming degree 2; split op has incoming degree 1.
-    assert partitions[combine].min == 2
-    assert partitions[combine].max == 2
-    assert partitions[split].min == 1
-    assert partitions[split].max == 1
+    assert by_key[str(combine)].min == 2
+    assert by_key[str(combine)].max == 2
+    assert by_key[str(split)].min == 1
+    assert by_key[str(split)].max == 1
 
 
 def test_inspect_partitioned_cardinality_multi_property_declines():
@@ -942,14 +975,15 @@ def test_inspect_partitioned_cardinality_multi_property_declines():
     g.add_node("a1", __label__="Artifact", uid="a1")
     g.add_edge("p1", "a1", __label__="PRODUCES")
 
-    # Must not crash; the multi-key endpoint maps to the null partition component
-    # (NetworkX _discriminator_value returns None for len(keys) != 1).
+    # Must not crash; the multi-key endpoint declines to an empty map (no per-value
+    # split) — _discriminator_map returns {} for len(keys) != 1.  Value unchanged
+    # from before; only the shape is now a {} map instead of a None scalar.
     profile = NetworkxInspector().inspect(g, graph_definition=gd)
     produces = str(
         RelTypeKey(source_label="Producer", label="PRODUCES", target_label="Artifact")
     )
     rtp = profile.rel_type_profiles[produces]
-    # The breakdown collapses to a single all-null partition (no per-value split).
-    null_null = str(PartitionKey(source_value=None, target_value=None))
+    # The breakdown collapses to a single empty-map partition (no per-value split).
+    empty = PartitionKey(source={}, target={})
     assert rtp.source_partitioned_cardinality is not None
-    assert set(rtp.source_partitioned_cardinality) == {null_null}
+    assert [row.key for row in rtp.source_partitioned_cardinality] == [empty]

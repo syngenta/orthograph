@@ -19,7 +19,11 @@ from orthograph.graph_definition.models import (
     PropMatch,
     RelationshipModel,
 )
-from orthograph.graph_profile.models import PartitionKey
+from orthograph.graph_profile.models import (
+    BoundedDistribution,
+    PartitionedCardinalityRow,
+    PartitionKey,
+)
 from tests.backends.conftest import mock_execute_query
 from tests.fixtures.conftest import ActedIn, Movie, Person
 
@@ -1045,6 +1049,18 @@ def _partitioned_row(
     }
 
 
+def _by_key(
+    rows: list[PartitionedCardinalityRow] | None,
+) -> dict[str, BoundedDistribution]:
+    """Index a partitioned-cardinality row list by ``str(key)``.
+
+    ``PartitionKey`` carries ``dict`` fields and is therefore unhashable, so its
+    deterministic display ``str`` is the lookup key in tests.
+    """
+    assert rows is not None
+    return {str(row.key): row.stats for row in rows}
+
+
 def test_neo4j_partitioned_cardinality_assembles_expected_partitions() -> None:
     """Given grouped-query rows, the inspector assembles partitioned_cardinality.
 
@@ -1147,19 +1163,24 @@ def test_neo4j_partitioned_cardinality_assembles_expected_partitions() -> None:
     partitions = has_output.source_partitioned_cardinality
     assert partitions is not None
 
-    sub_sub = str(PartitionKey(source_value="subsampling", target_value="subsampling"))
-    sub_nothing = str(PartitionKey(source_value="subsampling", target_value="nothing"))
-    assert set(partitions) == {sub_sub, sub_nothing}
+    sub_sub = PartitionKey(
+        source={"kind": "subsampling"}, target={"kind": "subsampling"}
+    )
+    sub_nothing = PartitionKey(
+        source={"kind": "subsampling"}, target={"kind": "nothing"}
+    )
+    by_key = _by_key(partitions)
+    assert set(by_key) == {str(sub_sub), str(sub_nothing)}
 
     # min/max/count parity (variance not materialised by Cypher — None on DB side).
-    assert partitions[sub_sub].min == 2
-    assert partitions[sub_sub].max == 2
-    assert partitions[sub_sub].count == 1
-    assert partitions[sub_sub].variance is None
+    assert by_key[str(sub_sub)].min == 2
+    assert by_key[str(sub_sub)].max == 2
+    assert by_key[str(sub_sub)].count == 1
+    assert by_key[str(sub_sub)].variance is None
 
-    assert partitions[sub_nothing].min == 1
-    assert partitions[sub_nothing].max == 1
-    assert partitions[sub_nothing].count == 1
+    assert by_key[str(sub_nothing)].min == 1
+    assert by_key[str(sub_nothing)].max == 1
+    assert by_key[str(sub_nothing)].count == 1
 
 
 def test_neo4j_partitioned_cardinality_zero_degree_rows_suppressed() -> None:
@@ -1243,9 +1264,11 @@ def test_neo4j_partitioned_cardinality_zero_degree_rows_suppressed() -> None:
     partitions = has_output.source_partitioned_cardinality
 
     assert partitions is not None
-    sub_sub = str(PartitionKey(source_value="subsampling", target_value="subsampling"))
+    sub_sub = PartitionKey(
+        source={"kind": "subsampling"}, target={"kind": "subsampling"}
+    )
     # The null-target zero-degree partition must NOT appear.
-    assert set(partitions) == {sub_sub}
+    assert set(_by_key(partitions)) == {str(sub_sub)}
 
 
 def test_neo4j_partitioned_cardinality_constant_type_is_none() -> None:
@@ -1499,13 +1522,16 @@ def test_neo4j_partitioned_cardinality_parity_with_networkx() -> None:
     ].source_partitioned_cardinality
     assert neo4j_partitions is not None
 
+    nx_by_key = _by_key(nx_partitions)
+    db_by_key = _by_key(neo4j_partitions)
+
     # Keys must match.
-    assert set(neo4j_partitions) == set(nx_partitions)
+    assert set(db_by_key) == set(nx_by_key)
 
     # min/max/count parity per partition (variance excluded — not from Cypher).
-    for key in nx_partitions:
-        nx_p = nx_partitions[key]
-        db_p = neo4j_partitions[key]
+    for key in nx_by_key:
+        nx_p = nx_by_key[key]
+        db_p = db_by_key[key]
         assert db_p.min == nx_p.min, f"min mismatch for {key!r}"
         assert db_p.max == nx_p.max, f"max mismatch for {key!r}"
         assert db_p.count == nx_p.count, f"count mismatch for {key!r}"
@@ -1682,11 +1708,17 @@ def test_neo4j_partitioned_cardinality_both_sides_parity_with_networkx() -> None
         nx_part = getattr(nx_rtp, f"{side}_partitioned_cardinality")
         db_part = getattr(db_rtp, f"{side}_partitioned_cardinality")
         assert db_part is not None, f"{side} breakdown missing on DB side"
-        assert set(db_part) == set(nx_part), f"{side} keys differ"
-        for key in nx_part:
-            assert db_part[key].min == nx_part[key].min, f"{side} min mismatch {key!r}"
-            assert db_part[key].max == nx_part[key].max, f"{side} max mismatch {key!r}"
-            assert db_part[key].count == nx_part[key].count, (
+        nx_by_key = _by_key(nx_part)
+        db_by_key = _by_key(db_part)
+        assert set(db_by_key) == set(nx_by_key), f"{side} keys differ"
+        for key in nx_by_key:
+            assert db_by_key[key].min == nx_by_key[key].min, (
+                f"{side} min mismatch {key!r}"
+            )
+            assert db_by_key[key].max == nx_by_key[key].max, (
+                f"{side} max mismatch {key!r}"
+            )
+            assert db_by_key[key].count == nx_by_key[key].count, (
                 f"{side} count mismatch {key!r}"
             )
 
@@ -1924,7 +1956,7 @@ def test_neo4j_partitioned_cardinality_one_sided_renders_null_and_populates() ->
     source Sample endpoint is a wildcard.  The profiler must (a) issue the
     target-side wildcard-source query whose Cypher renders ``null AS sk`` rather
     than a read of a non-existent Sample property, and (b) populate
-    ``target_partitioned_cardinality`` keyed ``src=null|tgt=<type>``.
+    ``target_partitioned_cardinality`` keyed ``source={} target={"type": <type>}``.
     """
 
     class Sample(NodeModel):
@@ -2015,13 +2047,15 @@ def test_neo4j_partitioned_cardinality_one_sided_renders_null_and_populates() ->
     profile = Neo4jInspector().inspect(driver, graph_definition=gd)
     is_input = profile.rel_type_profiles["Sample:IS_INPUT:Operation"]
 
-    # The breakdown is populated, keyed with a null source discriminator.
+    # The breakdown is populated; the wildcard source carries no discriminator ({}).
     partitions = is_input.target_partitioned_cardinality
     assert partitions is not None
-    combine = str(PartitionKey(source_value=None, target_value="combine"))
-    assert set(partitions) == {combine}
-    assert partitions[combine].min == 2
-    assert partitions[combine].max == 4 or partitions[combine].max == 2
+    combine = PartitionKey(source={}, target={"type": "combine"})
+    by_key = _by_key(partitions)
+    assert set(by_key) == {str(combine)}
+    assert all(row.key.source == {} for row in partitions)
+    assert by_key[str(combine)].min == 2
+    assert by_key[str(combine)].max == 4 or by_key[str(combine)].max == 2
 
     # The wildcard side rendered a constant null, never a property read of a
     # non-existent Sample discriminator.

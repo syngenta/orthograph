@@ -6,6 +6,11 @@
 **Epic:** E43 (General Conditional-Cardinality Partitioning)
 **Amends:** ADR-029 §3 (partition axis), §4 (`by_kind` sugar), §7 (data-time semantics)
 **Extends:** ADR-005 (cardinality semantics), ADR-031 (UML notation authoring)
+**Amended by:** ADR-039 §5/§6 (2026-06-25) — the §4 definition-time guard against
+unenforceable (multi-property) rules was **never implemented** on the profile side and is
+**not** added; the gap is closed by *capability* instead — E54 makes the profiler emit
+multi-property partition breakdowns, so the §2 "fix it for good" generality is realised on
+the profile side. See "Implementation status of §4" below.
 **Relates:** ADR-015 (declared/observed mirror), ADR-030 (per-pair observed stats),
 ADR-017 (package topology)
 
@@ -158,6 +163,23 @@ mis-validation. With both-endpoint partitioning the previously-broken case is no
 (a key that exists on neither endpoint of the edge), closing the silent-pass hole
 for good.
 
+> **Implementation status of §4 — amended by ADR-039 (2026-06-25).**
+> The *enforcement-axis* guard described above (a key on neither endpoint) is covered by
+> the shipped `DiscriminatorPropertyExistsCheck` in
+> `graph_definition/cardinality_checks.py`. **However**, the *profile-side* limitation —
+> the inspectors and the profile↔definition comparison only represent **one** discriminator
+> property per endpoint (`len(keys) == 1` gates in
+> `backends/networkx/inspector.py::_discriminator_value`,
+> `graph_profile/inspection.py::_extract_discriminators`, and
+> `comparison/rules.py::_single_disc_key`) — was **never guarded**. A legal multi-property
+> rule therefore constructs fine, is silently declined by the profiler (collapsed to the
+> `null/null` partition), and surfaces only as `CARDINALITY_UNVERIFIABLE` (INFO). ADR-039 §6
+> resolves this by **capability, not prohibition**: E54 makes the producers emit
+> multi-property partition maps, eliminating the gap at its root; **no `len(keys) > 1`
+> rejection is added at construction time** in either E53 or E54. Until E54 ships, the
+> multi-property `CARDINALITY_UNVERIFIABLE` INFO is the honest "unverifiable" verdict
+> (ADR-034 §2 — never a false pass/fail).
+
 ### 5. Data-time semantics (amends ADR-029 §7)
 
 Unchanged in spirit; generalised in axis:
@@ -225,6 +247,7 @@ untouched.
 
 - ADR-029: conditional cardinality (amended here — §3, §4, §7)
 - ADR-031: UML notation authoring (`spec="2..5"` coercion stays the rule-spec form)
+- ADR-039: self-describing partition key — realises §2's generality on the profile side (E54); records that §4's profile-side guard was never added and is closed by capability
 - ADR-015: declared/observed mirror
 - ADR-030: per-pair observed statistics (Phase 2; boundary untouched)
 - `ConditionalCardinality` / `ConditionalRule` / `PropMatch`:

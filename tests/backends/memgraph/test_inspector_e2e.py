@@ -54,7 +54,11 @@ from orthograph.graph_definition.models import (
     PropMatch,
     RelationshipModel,
 )
-from orthograph.graph_profile.models import PartitionKey
+from orthograph.graph_profile.models import (
+    BoundedDistribution,
+    PartitionedCardinalityRow,
+    PartitionKey,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +110,18 @@ def _seed(driver: Any) -> None:
         " MERGE (alice)-[:ACTED_IN {role: 'Cameo'}]->(dune)"
         " MERGE (bob)-[:ACTED_IN {role: 'Supporting'}]->(inc)"
     )
+
+
+def _by_key(
+    rows: list[PartitionedCardinalityRow] | None,
+) -> dict[str, BoundedDistribution]:
+    """Index a partitioned-cardinality row list by ``str(key)``.
+
+    ``PartitionKey`` carries ``dict`` fields and is therefore unhashable, so its
+    deterministic display ``str`` is the lookup key in tests.
+    """
+    assert rows is not None
+    return {str(row.key): row.stats for row in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +496,7 @@ BOTH_SIDES_MODEL = GraphDefinition(
     relationship_types=[Makes],
 )
 
-_PAIR = str(PartitionKey(source_value="assembler", target_value="final"))
+_PAIR = str(PartitionKey(source={"kind": "assembler"}, target={"kind": "final"}))
 
 
 def _seed_both_sides(driver: Any) -> None:
@@ -511,10 +527,11 @@ def test_both_sides_source_breakdown_populated(
         "Operation:MAKES:Sample"
     ].source_partitioned_cardinality
     assert src is not None, "source_partitioned_cardinality must be populated"
-    assert _PAIR in src, f"expected partition {_PAIR!r} in {set(src)}"
-    assert src[_PAIR].min == 2
-    assert src[_PAIR].max == 2
-    assert src[_PAIR].count == 1
+    src_by_key = _by_key(src)
+    assert _PAIR in src_by_key, f"expected partition {_PAIR!r} in {set(src_by_key)}"
+    assert src_by_key[_PAIR].min == 2
+    assert src_by_key[_PAIR].max == 2
+    assert src_by_key[_PAIR].count == 1
 
 
 @pytest.mark.memgraph
@@ -534,10 +551,11 @@ def test_both_sides_target_breakdown_populated(
         "Operation:MAKES:Sample"
     ].target_partitioned_cardinality
     assert tgt is not None, "target_partitioned_cardinality must be populated"
-    assert _PAIR in tgt, f"expected partition {_PAIR!r} in {set(tgt)}"
-    assert tgt[_PAIR].min == 1
-    assert tgt[_PAIR].max == 1
-    assert tgt[_PAIR].count == 2
+    tgt_by_key = _by_key(tgt)
+    assert _PAIR in tgt_by_key, f"expected partition {_PAIR!r} in {set(tgt_by_key)}"
+    assert tgt_by_key[_PAIR].min == 1
+    assert tgt_by_key[_PAIR].max == 1
+    assert tgt_by_key[_PAIR].count == 2
 
 
 @pytest.mark.memgraph
@@ -556,9 +574,12 @@ def test_both_sides_source_and_target_are_distinct(
     rtp = profile.rel_type_profiles["Operation:MAKES:Sample"]
     assert rtp.source_partitioned_cardinality is not None
     assert rtp.target_partitioned_cardinality is not None
-    assert rtp.source_partitioned_cardinality[_PAIR].min != (
-        rtp.target_partitioned_cardinality[_PAIR].min
-    ), "source and target breakdowns are identical -- likely both used the source query"
+    src_by_key = _by_key(rtp.source_partitioned_cardinality)
+    tgt_by_key = _by_key(rtp.target_partitioned_cardinality)
+    assert src_by_key[_PAIR].min != tgt_by_key[_PAIR].min, (
+        "source and target breakdowns are identical -- "
+        "likely both used the source query"
+    )
 
 
 @pytest.mark.memgraph

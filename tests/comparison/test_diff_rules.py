@@ -1,4 +1,4 @@
-"""Unit tests for the symmetric diff rule family (E27.T4).
+"""Unit tests for the symmetric diff rule family.
 
 One focused test per rule — mirrors ``test_rules.py`` style.
 
@@ -24,6 +24,7 @@ from orthograph.comparison.diff_rules import (
     EndpointsChangedRule,
     NodeLabelOnlyInLeftRule,
     NodeLabelOnlyInRightRule,
+    PartitionedCardinalityChangedRule,
     PropertyOnlyInLeftRule,
     PropertyOnlyInRightRule,
     PropertyTypeChangedRule,
@@ -45,9 +46,12 @@ from orthograph.graph_definition.models import (
 )
 from orthograph.graph_definition.property_spec import TypeInfo
 from orthograph.graph_profile.models import (
+    BoundedDistribution,
     CardinalityStats,
     GraphProfile,
     NodeTypeProfile,
+    PartitionedCardinalityRow,
+    PartitionKey,
     PropertyProfile,
     RelationshipTypeProfile,
 )
@@ -251,9 +255,9 @@ _PROP_EXTRA_REL = {
 # ---------------------------------------------------------------------------
 
 
-def test_diff_rules_returns_ten_rules():
+def test_diff_rules_returns_eleven_rules():
     rules = diff_rules()
-    assert len(rules) == 10
+    assert len(rules) == 11
 
 
 def test_diff_rules_order():
@@ -268,6 +272,7 @@ def test_diff_rules_order():
         "diff.property.type_changed",
         "diff.rel.endpoints_changed",
         "diff.rel.cardinality_changed",
+        "diff.rel.partitioned_cardinality_changed",
         "diff.count_changed",
     ]
     assert [r.key for r in diff_rules()] == expected
@@ -614,7 +619,7 @@ def test_property_type_changed_noop_no_prop_name():
 # ---------------------------------------------------------------------------
 # EndpointsChangedRule — profile ↔ profile
 #
-# Under ADR-037 a profile's source/target labels are part of relationship
+# A profile's source/target labels are part of relationship
 # identity (the address), so an endpoint difference is a *different* address and
 # surfaces via RelTypeOnlyInLeft/Right — never as ENDPOINTS_CHANGED.  The profile
 # carries no direction field, so EndpointsChangedRule is always silent for
@@ -770,6 +775,137 @@ def test_cardinality_changed_noop_when_stats_none():
     )
     ctx = _pctx(
         left=rtp, right=rtp, address="ACTED_IN", extra={"address_type": "rel_type"}
+    )
+    assert list(rule(ctx)) == []
+
+
+# ---------------------------------------------------------------------------
+# PartitionedCardinalityChangedRule — profile ↔ profile
+# ---------------------------------------------------------------------------
+
+
+def _rtp_with_partitions(
+    source_rows: list[PartitionedCardinalityRow] | None = None,
+    target_rows: list[PartitionedCardinalityRow] | None = None,
+) -> RelationshipTypeProfile:
+    return RelationshipTypeProfile(
+        rel_type="IS_INPUT",
+        count=2,
+        source_label="Sample",
+        target_label="Operation",
+        cardinality_stats=CardinalityStats(count=1, min=1, max=2, mean=1.5),
+        source_partitioned_cardinality=source_rows,
+        target_partitioned_cardinality=target_rows,
+    )
+
+
+def test_partitioned_cardinality_changed_same_partition_differing_stats():
+    """Same {"type": "combine"} partition, differing degree stats → one delta."""
+    rule = PartitionedCardinalityChangedRule()
+    key = PartitionKey(source={}, target={"type": "combine"})
+    left = _rtp_with_partitions(
+        target_rows=[
+            PartitionedCardinalityRow(
+                key=key, stats=BoundedDistribution(count=9, min=2, max=3)
+            )
+        ]
+    )
+    right = _rtp_with_partitions(
+        target_rows=[
+            PartitionedCardinalityRow(
+                key=key, stats=BoundedDistribution(count=9, min=2, max=5)
+            )
+        ]
+    )
+    ctx = _pctx(
+        left=left, right=right, address="IS_INPUT", extra={"address_type": "rel_type"}
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].code == "PARTITIONED_CARDINALITY_CHANGED"
+    assert issues[0].severity == Severity.INFO
+    assert issues[0].context["change"] == "stats"
+    assert issues[0].context["left_max"] == 3
+    assert issues[0].context["right_max"] == 5
+
+
+def test_partitioned_cardinality_changed_distinct_property_names_not_matched():
+    """{"type": "combine"} vs {"stage": "combine"} → distinct (added + removed).
+
+    The name-blindness regression this epic fixes: a value-only key would collide
+    these two as one matched (no-change) partition; with name-aware keys they are
+    a removed left partition and an added right partition.
+    """
+    rule = PartitionedCardinalityChangedRule()
+    left = _rtp_with_partitions(
+        target_rows=[
+            PartitionedCardinalityRow(
+                key=PartitionKey(source={}, target={"type": "combine"}),
+                stats=BoundedDistribution(count=9, min=2, max=3),
+            )
+        ]
+    )
+    right = _rtp_with_partitions(
+        target_rows=[
+            PartitionedCardinalityRow(
+                key=PartitionKey(source={}, target={"stage": "combine"}),
+                stats=BoundedDistribution(count=9, min=2, max=3),
+            )
+        ]
+    )
+    ctx = _pctx(
+        left=left, right=right, address="IS_INPUT", extra={"address_type": "rel_type"}
+    )
+    issues = list(rule(ctx))
+    changes = {i.context["change"] for i in issues}
+    assert len(issues) == 2
+    assert changes == {"left_only", "right_only"}
+    assert all(i.code == "PARTITIONED_CARDINALITY_CHANGED" for i in issues)
+
+
+def test_partitioned_cardinality_changed_partition_left_only():
+    """A partition present on the left only → a left_only delta."""
+    rule = PartitionedCardinalityChangedRule()
+    left = _rtp_with_partitions(
+        target_rows=[
+            PartitionedCardinalityRow(
+                key=PartitionKey(source={}, target={"type": "combine"}),
+                stats=BoundedDistribution(count=9, min=2, max=3),
+            )
+        ]
+    )
+    right = _rtp_with_partitions(target_rows=None)
+    ctx = _pctx(
+        left=left, right=right, address="IS_INPUT", extra={"address_type": "rel_type"}
+    )
+    issues = list(rule(ctx))
+    assert len(issues) == 1
+    assert issues[0].context["change"] == "left_only"
+    assert issues[0].severity == Severity.INFO
+
+
+def test_partitioned_cardinality_changed_noop_identical():
+    """Identical breakdowns on both sides → no delta."""
+    rule = PartitionedCardinalityChangedRule()
+    key = PartitionKey(source={}, target={"type": "combine"})
+    stats = BoundedDistribution(count=9, min=2, max=3)
+    rtp = _rtp_with_partitions(
+        target_rows=[PartitionedCardinalityRow(key=key, stats=stats)]
+    )
+    ctx = _pctx(
+        left=rtp, right=rtp, address="IS_INPUT", extra={"address_type": "rel_type"}
+    )
+    assert list(rule(ctx)) == []
+
+
+def test_partitioned_cardinality_changed_silent_for_definition_operands():
+    """Definition operands carry no breakdown → the rule is silent."""
+    rule = PartitionedCardinalityChangedRule()
+    ctx = _ctx(
+        left=_LivesIn,
+        right=_LivesInLoose,
+        address="LIVES_IN",
+        extra={"address_type": "rel_type"},
     )
     assert list(rule(ctx)) == []
 

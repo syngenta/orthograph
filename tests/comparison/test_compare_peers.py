@@ -1,4 +1,4 @@
-"""End-to-end tests for ``compare_profiles`` and ``compare_definitions`` (E27.T4).
+"""End-to-end tests for ``compare_profiles`` and ``compare_definitions``.
 
 Tests the two new symmetric comparison entry points through the full engine
 stack, using the ``filmography_model`` fixture from ``conftest.py`` and
@@ -203,9 +203,9 @@ def test_compare_profiles_property_type_changed():
 
 
 def test_compare_profiles_endpoint_difference_is_presence_diff():
-    """ADR-037: differing endpoints are different identities (addresses), so a
+    """Differing endpoints are different identities (addresses), so a
     profile↔profile endpoint difference surfaces as REL_TYPE_ONLY_IN_* presence
-    diffs — not ENDPOINTS_CHANGED (which no longer applies to profiles)."""
+    diffs — not ENDPOINTS_CHANGED."""
     rtp_left = RelationshipTypeProfile(
         rel_type="ACTED_IN",
         count=5,
@@ -471,7 +471,7 @@ _GD_ORIG_ENDPOINTS = GraphDefinition(
 
 
 def test_compare_definitions_endpoint_difference_is_presence_diff():
-    """ADR-037: differing endpoints are different identities (addresses), so a
+    """Differing endpoints are different identities (addresses), so a
     definition↔definition endpoint difference surfaces as REL_TYPE_ONLY_IN_*
     presence diffs — ENDPOINTS_CHANGED is trimmed to the ``__directed__`` delta."""
     result = compare_definitions(_GD_ORIG_ENDPOINTS, _GD_ALT_ENDPOINTS)

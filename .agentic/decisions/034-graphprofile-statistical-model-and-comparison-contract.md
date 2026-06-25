@@ -7,7 +7,11 @@
 **Amended by:** ADR-037 §7/§8 (2026-06-24, E50) — relationship identity is now the
 triple `(source_label, label, target_label)`; the §8 endpoint rows reclassify (endpoint
 mismatch → `MISSING_*`/`UNEXPECTED_*`; `ENDPOINTS_CHANGED` narrows to the `__directed__`
-delta) and §7's partitioned cardinality now nests inside an endpoint-identified profile
+delta) and §7's partitioned cardinality now nests inside an endpoint-identified profile ·
+ADR-039 §2 (2026-06-25, E53) — §3/§7's partitioned-cardinality field reshapes from a
+string-keyed `dict[str, BoundedDistribution]` to a `list[PartitionedCardinalityRow]`, and
+the partition key (`PartitionKey`) now carries discriminator **names** as
+`{property_name: value}` maps per endpoint (self-describing; name-aware comparison)
 **Relates:** ADR-015 (declared/observed mirror), ADR-009 (inspector parity),
 ADR-033 (Neo4j three-way strategy — drives field availability), ADR-017 (package topology),
 ADR-027/ADR-031 (cardinality notation)
@@ -120,6 +124,15 @@ class BoundedDistribution(BaseModel):
 BoundedDistribution]`, each partition carrying its own truncation signal and an
 optional `histogram` placeholder.
 
+> **Amended by ADR-039 (E53, 2026-06-25).** The partitioned-cardinality field is
+> reshaped from a string-keyed `dict[str, BoundedDistribution]` to a
+> `list[PartitionedCardinalityRow]`, where each row is `{key: PartitionKey, stats:
+> BoundedDistribution}` and `PartitionKey` carries discriminator **names** as
+> `{property_name: value}` maps per endpoint (`source` / `target`). This makes the
+> profile self-describing and the comparison name-aware on both paths; the lossy
+> `str(PartitionKey)` dict key is removed. `stats` stays typed on `BoundedDistribution`
+> (the round-trip note below is unchanged). See ADR-039.
+
 ### 4. `PropertyProfile` carries three distinct presence signals
 
 The declared/observed/constraint distinction is made explicit so comparison can
@@ -175,6 +188,12 @@ the *type* is the contract check; the *count* is not.
   distribution may be impossible on a backend → `histogram=None`, summary moments
   only; the placeholder remains for the day a backend can supply it.
 
+  > **Amended by ADR-039 (E53).** "keyed by `label + one-or-more properties`" is now
+  > literal: each partition is a `PartitionedCardinalityRow` whose `PartitionKey` carries
+  > the discriminating `{property_name: value}` map(s) per endpoint, not an opaque
+  > value-only string key. The single-property producer cut (E53) emits at most one entry
+  > per endpoint; multi-property emission is the E54 follow-on (model unchanged).
+
 ### 8. The comparison contract (the full matrix)
 
 This ADR is the authority for **what enters each comparison**. E45 implements the
@@ -188,6 +207,13 @@ node/property/constraint/value rows; E41 implements the cardinality rows.
 > `__directed__`-flag delta only. The §7 partitioned cardinality now nests *inside* an
 > already-endpoint-identified profile (no double counting). All other rows are unchanged.
 
+> **Amended by ADR-039 (E53).** The **partitioned cardinality** row is now matched
+> **by discriminator name**: profile↔description matches the observed `PartitionKey`
+> `{name: value}` maps against each `ConditionalRule`'s `PropMatch` maps (no name
+> re-derivation by convention); profile↔profile matches partitions by `PartitionKey`
+> map equality, so partitions discriminating on *different* properties no longer collide.
+> The verdicts/severities in the row are unchanged; only the matching becomes name-aware.
+
 | Field | profile ↔ description | profile ↔ profile |
 |-------|----------------------|-------------------|
 | node-type / rel-type list | presence: `MISSING_*` (ERROR) / `UNEXPECTED_*` (WARNING) | added/removed (INFO) |
@@ -198,7 +224,6 @@ node/property/constraint/value rows; E41 implements the cardinality rows.
 | **value_distribution (non-enum)** | — | distribution delta (INFO) |
 | **simple cardinality** | aggregate bound check (`CARDINALITY_VIOLATION` ERROR) | degree-summary delta (INFO) |
 | **partitioned cardinality** | per-pair bound check when present, else `CARDINALITY_UNVERIFIABLE` (INFO) | per-partition delta (INFO) |
-
 Any field whose value is `None` and which a row would otherwise check yields the
 corresponding `*_UNVERIFIABLE` (INFO), never a false verdict (§2).
 
@@ -278,6 +303,7 @@ corresponding `*_UNVERIFIABLE` (INFO), never a false verdict (§2).
 ## Cross-references
 
 - ADR-030: per-pair observed statistics (amended — the field now sits on `BoundedDistribution`)
+- ADR-039: self-describing, name-aware partition key (amends §3/§7 — field → `list[PartitionedCardinalityRow]`, key carries names)
 - ADR-015: declared/observed mirror
 - ADR-009: inspector query alignment & GraphProfile parity
 - ADR-033: Neo4j three-way strategy (drives `constraint_required` / type availability)

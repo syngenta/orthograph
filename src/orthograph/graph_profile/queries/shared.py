@@ -4,7 +4,7 @@ Uses only plain ``MATCH``/``RETURN``; no APOC or vendor-specific procedures.
 Runs identically on any Cypher backend.
 """
 
-from typing import Any
+from typing import Any, cast
 
 from orthograph.cypher.base_models import CypherReadQuery
 from orthograph.cypher.bindings import NoParams
@@ -16,6 +16,7 @@ from orthograph.graph_profile.models import (
     EndpointLabelsRow,
     PartitionedCardinalityIdentifiers,
     PartitionedCardinalityRow,
+    PartitionKey,
     WildcardPartitionedCardinalityIdentifiers,
 )
 
@@ -82,18 +83,39 @@ class InspectEndpointLabelsQuery(CypherReadQuery[NoParams, EndpointLabelsRow]):
         )
 
 
-def _materialize_partitioned_row(raw: Any) -> PartitionedCardinalityRow:
+def _discriminator_endpoint(name: str | None, value: Any) -> dict[str, str | None]:
+    """Build one endpoint's ``{name: value}`` map for a :class:`PartitionKey`.
+
+    A wildcard endpoint (``name is None``) carries no discriminator → ``{}``.
+    Otherwise the grouped ``sk``/``tk`` value is stringified for parity with the
+    NetworkX reference (``None`` preserved as ``{name: None}`` — discriminator
+    present, observed value null).
+    """
+    if name is None:
+        return {}
+    return {name: None if value is None else str(value)}
+
+
+def _materialize_partitioned_row(
+    raw: Any, source_name: str | None, target_name: str | None
+) -> PartitionedCardinalityRow:
     """Map a grouped-cardinality raw row to a :class:`PartitionedCardinalityRow`.
 
     Shared by the source- and target-anchored queries, which differ only in their
     Cypher (which endpoint they anchor on / whose degree they count), not in row
-    shape.  ``stats`` is a :class:`BoundedDistribution` directly (not the
-    ``CardinalityStats`` marker): the per-side fields are typed on
-    ``BoundedDistribution``, so a subclass value would lose its subtype on reload.
+    shape.  The discriminator **names** (``source_name`` / ``target_name``, each
+    ``None`` for a wildcard endpoint) come from the identifiers the calling query
+    was built with — they are never re-derived here — so the resulting
+    name-carrying :class:`PartitionKey` is self-describing.  ``stats`` is a
+    :class:`BoundedDistribution` directly (not the ``CardinalityStats`` marker):
+    the per-side fields are typed on ``BoundedDistribution``, so a subclass value
+    would lose its subtype on reload.
     """
     return PartitionedCardinalityRow(
-        source_value=raw["sk"],
-        target_value=raw["tk"],
+        key=PartitionKey(
+            source=_discriminator_endpoint(source_name, raw["sk"]),
+            target=_discriminator_endpoint(target_name, raw["tk"]),
+        ),
         stats=BoundedDistribution(
             count=raw["sample_size"],
             min=raw["min_degree"],
@@ -143,7 +165,10 @@ class InspectSourcePartitionedCardinalityQuery(
     )
 
     def materialize(self, raw: Any) -> PartitionedCardinalityRow:
-        return _materialize_partitioned_row(raw)
+        ident = cast(PartitionedCardinalityIdentifiers, self._identifiers)
+        return _materialize_partitioned_row(
+            raw, ident.source_discriminator, ident.target_discriminator
+        )
 
 
 class InspectSourcePartitionedCardinalityWildcardSourceQuery(
@@ -171,7 +196,8 @@ class InspectSourcePartitionedCardinalityWildcardSourceQuery(
     )
 
     def materialize(self, raw: Any) -> PartitionedCardinalityRow:
-        return _materialize_partitioned_row(raw)
+        ident = cast(WildcardPartitionedCardinalityIdentifiers, self._identifiers)
+        return _materialize_partitioned_row(raw, None, ident.discriminator)
 
 
 class InspectSourcePartitionedCardinalityWildcardTargetQuery(
@@ -199,7 +225,8 @@ class InspectSourcePartitionedCardinalityWildcardTargetQuery(
     )
 
     def materialize(self, raw: Any) -> PartitionedCardinalityRow:
-        return _materialize_partitioned_row(raw)
+        ident = cast(WildcardPartitionedCardinalityIdentifiers, self._identifiers)
+        return _materialize_partitioned_row(raw, ident.discriminator, None)
 
 
 class InspectTargetPartitionedCardinalityQuery(
@@ -235,7 +262,10 @@ class InspectTargetPartitionedCardinalityQuery(
     )
 
     def materialize(self, raw: Any) -> PartitionedCardinalityRow:
-        return _materialize_partitioned_row(raw)
+        ident = cast(PartitionedCardinalityIdentifiers, self._identifiers)
+        return _materialize_partitioned_row(
+            raw, ident.source_discriminator, ident.target_discriminator
+        )
 
 
 class InspectTargetPartitionedCardinalityWildcardSourceQuery(
@@ -263,7 +293,8 @@ class InspectTargetPartitionedCardinalityWildcardSourceQuery(
     )
 
     def materialize(self, raw: Any) -> PartitionedCardinalityRow:
-        return _materialize_partitioned_row(raw)
+        ident = cast(WildcardPartitionedCardinalityIdentifiers, self._identifiers)
+        return _materialize_partitioned_row(raw, None, ident.discriminator)
 
 
 class InspectTargetPartitionedCardinalityWildcardTargetQuery(
@@ -290,4 +321,5 @@ class InspectTargetPartitionedCardinalityWildcardTargetQuery(
     )
 
     def materialize(self, raw: Any) -> PartitionedCardinalityRow:
-        return _materialize_partitioned_row(raw)
+        ident = cast(WildcardPartitionedCardinalityIdentifiers, self._identifiers)
+        return _materialize_partitioned_row(raw, ident.discriminator, None)

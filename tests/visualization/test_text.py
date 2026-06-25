@@ -20,6 +20,7 @@ from orthograph.graph_profile.models import (
     CardinalityStats,
     GraphProfile,
     NodeTypeProfile,
+    PartitionedCardinalityRow,
     PartitionKey,
     PropertyProfile,
     RelationshipTypeProfile,
@@ -258,7 +259,7 @@ def test_profile_to_text_cardinality_stats(sample_profile: GraphProfile):
 
 
 # ============================================================
-# E45.5 rendering tests: constraint_required and value_distribution
+# Rendering tests: constraint_required and value_distribution
 # ============================================================
 
 
@@ -594,7 +595,7 @@ def test_model_to_text_constant_cardinality_unchanged():
 
 
 # ============================================================
-# E50.9 — keyed profiles, scalar endpoints
+# Keyed profiles, scalar endpoints
 # ============================================================
 
 
@@ -674,20 +675,12 @@ def test_profile_to_text_two_shapes_output_is_deterministic():
 
 
 # ============================================================
-# E49 T1: partitioned cardinality rendering
+# Partitioned cardinality rendering
 # ============================================================
 
 
 def _make_partitioned_profile() -> GraphProfile:
-    """A one-sided (target) partitioned breakdown, including the null partition."""
-    breakdown = {
-        str(PartitionKey(source_value=None, target_value="combine")): (
-            BoundedDistribution(count=10, min=2.0, max=4.0, mean=2.7)
-        ),
-        str(PartitionKey(source_value=None, target_value="split")): (
-            BoundedDistribution(count=8, min=1.0, max=1.0, mean=1.0)
-        ),
-    }
+    """A one-sided (target) partitioned breakdown: wildcard source, keyed target."""
     return GraphProfile(
         source="test",
         timestamp=datetime(2026, 1, 1, 12, 0),
@@ -700,34 +693,43 @@ def _make_partitioned_profile() -> GraphProfile:
                 cardinality_stats=CardinalityStats(
                     count=149, min=0.0, max=3.0, mean=0.7
                 ),
-                target_partitioned_cardinality=breakdown,
+                target_partitioned_cardinality=[
+                    PartitionedCardinalityRow(
+                        key=PartitionKey(source={}, target={"type": "combine"}),
+                        stats=BoundedDistribution(count=10, min=2.0, max=4.0, mean=2.7),
+                    ),
+                    PartitionedCardinalityRow(
+                        key=PartitionKey(source={}, target={"type": "split"}),
+                        stats=BoundedDistribution(count=8, min=1.0, max=1.0, mean=1.0),
+                    ),
+                ],
             )
         },
     )
 
 
 def test_profile_to_text_renders_target_partitioned_cardinality():
-    """The target partitioned breakdown is rendered with every partition shown."""
+    """The target partitioned breakdown renders with discriminator names visible."""
     text = profile_to_text(_make_partitioned_profile())
     assert (
         "target_partitioned_cardinality "
-        "(target node's incoming degree, grouped by src|tgt partition):" in text
+        "(target node's incoming degree, grouped by partition):" in text
     )
-    # Both partitions present, keyed by the verbatim PartitionKey display form.
-    assert "src=null|tgt=combine: min=2.0, max=4.0, avg=2.70, sample_size=10" in text
-    assert "src=null|tgt=split: min=1.0, max=1.0, avg=1.00, sample_size=8" in text
+    # Both partitions present; names visible in the key display form.
+    assert "target={type=combine}: min=2.0, max=4.0, avg=2.70, sample_size=10" in text
+    assert "target={type=split}: min=1.0, max=1.0, avg=1.00, sample_size=8" in text
 
 
-def test_profile_to_text_partition_null_discriminator_renders_as_null():
-    """The wildcard source endpoint renders as ``src=null`` (PartitionKey None)."""
+def test_profile_to_text_wildcard_source_renders_empty_map():
+    """The wildcard source endpoint renders as ``source={}``."""
     text = profile_to_text(_make_partitioned_profile())
-    assert "src=null|tgt=combine" in text
+    assert "source={} target={type=combine}" in text
 
 
 def test_profile_to_text_partitions_sorted_deterministically():
-    """Partitions are sorted by key — ``combine`` before ``split``."""
+    """Partitions are sorted by str(key) — ``combine`` before ``split``."""
     text = profile_to_text(_make_partitioned_profile())
-    assert text.index("tgt=combine") < text.index("tgt=split")
+    assert text.index("type=combine") < text.index("type=split")
 
 
 def test_profile_to_text_no_partition_section_when_both_none():
@@ -755,16 +757,6 @@ def sample_profile_no_partitions() -> GraphProfile:
 
 def test_profile_to_text_renders_both_sides_when_present():
     """A both-endpoint conditional type renders both partition sections."""
-    src_breakdown = {
-        str(PartitionKey(source_value="combine", target_value=None)): (
-            BoundedDistribution(count=4, min=1.0, max=2.0, mean=1.5)
-        ),
-    }
-    tgt_breakdown = {
-        str(PartitionKey(source_value=None, target_value="split")): (
-            BoundedDistribution(count=8, min=1.0, max=1.0, mean=1.0)
-        ),
-    }
     profile = GraphProfile(
         source="test",
         timestamp=datetime(2026, 1, 1, 12, 0),
@@ -774,19 +766,27 @@ def test_profile_to_text_renders_both_sides_when_present():
                 count=12,
                 source_label="A",
                 target_label="B",
-                source_partitioned_cardinality=src_breakdown,
-                target_partitioned_cardinality=tgt_breakdown,
+                source_partitioned_cardinality=[
+                    PartitionedCardinalityRow(
+                        key=PartitionKey(source={"type": "combine"}, target={}),
+                        stats=BoundedDistribution(count=4, min=1.0, max=2.0, mean=1.5),
+                    ),
+                ],
+                target_partitioned_cardinality=[
+                    PartitionedCardinalityRow(
+                        key=PartitionKey(source={}, target={"type": "split"}),
+                        stats=BoundedDistribution(count=8, min=1.0, max=1.0, mean=1.0),
+                    ),
+                ],
             )
         },
     )
     text = profile_to_text(profile)
-    # Header names the field and annotates which node's degree is counted, so the
-    # repeated src|tgt partition key is not mistaken for both sides' degrees.
     assert (
         "source_partitioned_cardinality "
-        "(source node's outgoing degree, grouped by src|tgt partition):" in text
+        "(source node's outgoing degree, grouped by partition):" in text
     )
     assert (
         "target_partitioned_cardinality "
-        "(target node's incoming degree, grouped by src|tgt partition):" in text
+        "(target node's incoming degree, grouped by partition):" in text
     )
