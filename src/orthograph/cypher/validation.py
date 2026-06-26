@@ -331,12 +331,14 @@ def validate_query(
         to validate the query against.  Pass ``None`` to perform a syntactic-only
         check (param alignment + parse); domain validation is skipped.
     """
-    params_fields: set[str] = set(query.Params.model_fields)
-    identifier_fields: set[str] = set((query.Identifiers or NoIdentifiers).model_fields)
+    params_fields: set[str] = set(query.params_schema.model_fields)
+    identifier_fields: set[str] = set(
+        (query.identifiers_schema or NoIdentifiers).model_fields
+    )
     return validate_cypher_spec(
         cypher=query.cypher_template,
         params_fields=params_fields,
-        query_name=query.name,
+        query_name=query.query_id,
         identifier_fields=identifier_fields,
         graph_definition=definition,
         output_model=None,
@@ -368,30 +370,32 @@ def validate_query_catalogue(
     result = ValidationResult()
 
     for query in query_catalogue.queries():
+        # --- Simple CypherQuery branch (YAML / direct-instantiation path) ---
+        # Resolved first so the remainder of the loop is narrowed to
+        # ReadQuery | WriteQuery, where .name is guaranteed to exist.
+        if isinstance(query, CypherQuery):
+            params_fields: set[str] = set(query.params_schema.model_fields)
+            identifier_fields_simple: set[str] = set(
+                (query.identifiers_schema or NoIdentifiers).model_fields
+            )
+            result.merge(
+                validate_cypher_spec(
+                    cypher=query.cypher_template,
+                    params_fields=params_fields,
+                    query_name=query.query_id,
+                    identifier_fields=identifier_fields_simple,
+                    graph_definition=graph_definition,
+                    output_model=None,
+                )
+            )
+            continue
+
         if query.backend != Backend.CYPHER:
             result.add(
                 _unverifiable(
                     query.name,
                     f"backend is {query.backend.value}; this validator only "
                     "checks Cypher queries",
-                )
-            )
-            continue
-
-        # --- Simple CypherQuery branch (YAML / direct-instantiation path) ---
-        if isinstance(query, CypherQuery):
-            params_fields: set[str] = set(query.Params.model_fields)
-            identifier_fields_simple: set[str] = set(
-                (query.Identifiers or NoIdentifiers).model_fields
-            )
-            result.merge(
-                validate_cypher_spec(
-                    cypher=query.cypher_template,
-                    params_fields=params_fields,
-                    query_name=query.name,
-                    identifier_fields=identifier_fields_simple,
-                    graph_definition=graph_definition,
-                    output_model=None,
                 )
             )
             continue

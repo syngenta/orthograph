@@ -115,7 +115,7 @@ def test_yaml_query_read_returns_matching_rows(
     _seed(neo4j_driver)
 
     yaml_src = """
-- name: find_movie_by_title
+- query_id: find_movie_by_title
   cypher_template: "MATCH (m:Movie {title: $title}) RETURN m.title, m.released"
   params_schema:
     title: FindMovieByTitleParams
@@ -144,10 +144,10 @@ def test_cypher_query_read_all_movies(neo4j_driver: Any, neo4j_clean: None) -> N
     from orthograph.cypher.bindings import NoParams
 
     query = CypherQuery(
-        name="all_movies",
+        query_id="all_movies",
         cypher_template="MATCH (m:Movie) RETURN m.title ORDER BY m.title",
-        Params=NoParams,
-        Identifiers=NoIdentifiers,
+        params_schema=NoParams,
+        identifiers_schema=NoIdentifiers,
     )
     adapter = CypherQueryReadAdapter(query)
     executor = _make_executor(neo4j_driver)
@@ -171,12 +171,12 @@ def test_cypher_query_read_with_typed_params(
         released: int
 
     query = CypherQuery(
-        name="movies_by_year",
+        query_id="movies_by_year",
         cypher_template=(
             "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
         ),
-        Params=MovieByYearParams,
-        Identifiers=NoIdentifiers,
+        params_schema=MovieByYearParams,
+        identifiers_schema=NoIdentifiers,
     )
     adapter = CypherQueryReadAdapter(query)
     executor = _make_executor(neo4j_driver)
@@ -197,10 +197,10 @@ def test_cypher_query_read_optional_param_excluded_when_absent(
     from orthograph.cypher.bindings import NoParams
 
     query = CypherQuery(
-        name="movies_with_optional_limit",
+        query_id="movies_with_optional_limit",
         cypher_template="MATCH (m:Movie) RETURN m.title ORDER BY m.title",
-        Params=NoParams,
-        Identifiers=NoIdentifiers,
+        params_schema=NoParams,
+        identifiers_schema=NoIdentifiers,
     )
     adapter = CypherQueryReadAdapter(query)
     executor = _make_executor(neo4j_driver)
@@ -224,13 +224,13 @@ def test_cypher_query_read_actors_for_movie(
         title: str
 
     query = CypherQuery(
-        name="actors_for_movie",
+        query_id="actors_for_movie",
         cypher_template=(
             "MATCH (p:Person)-[:ACTED_IN]->(m:Movie {title: $title})"
             " RETURN p.name, p.born"
         ),
-        Params=ActorsForMovieParams,
-        Identifiers=NoIdentifiers,
+        params_schema=ActorsForMovieParams,
+        identifiers_schema=NoIdentifiers,
     )
     adapter = CypherQueryReadAdapter(query)
     executor = _make_executor(neo4j_driver)
@@ -259,10 +259,10 @@ def test_cypher_query_write_create_returns_nodes_created(
         released: int
 
     query = CypherQuery(
-        name="create_movie",
+        query_id="create_movie",
         cypher_template="CREATE (m:Movie {title: $title, released: $released})",
-        Params=CreateMovieParams,
-        Identifiers=NoIdentifiers,
+        params_schema=CreateMovieParams,
+        identifiers_schema=NoIdentifiers,
     )
     adapter = CypherQueryWriteAdapter(query)
     executor = _make_executor(neo4j_driver)
@@ -297,10 +297,10 @@ def test_cypher_query_write_set_returns_properties_set(
         genre: str
 
     query = CypherQuery(
-        name="tag_movie",
+        query_id="tag_movie",
         cypher_template="MATCH (m:Movie {title: $title}) SET m.genre = $genre",
-        Params=TagMovieParams,
-        Identifiers=NoIdentifiers,
+        params_schema=TagMovieParams,
+        identifiers_schema=NoIdentifiers,
     )
     adapter = CypherQueryWriteAdapter(query)
     executor = _make_executor(neo4j_driver)
@@ -329,13 +329,13 @@ def test_cypher_query_write_create_relationship(
         role: str
 
     query = CypherQuery(
-        name="add_actor_to_movie",
+        query_id="add_actor_to_movie",
         cypher_template=(
             "MATCH (p:Person {name: $actor}), (m:Movie {title: $movie})"
             " MERGE (p)-[r:ACTED_IN {role: $role}]->(m)"
         ),
-        Params=AddActorParams,
-        Identifiers=NoIdentifiers,
+        params_schema=AddActorParams,
+        identifiers_schema=NoIdentifiers,
     )
     adapter = CypherQueryWriteAdapter(query)
     executor = _make_executor(neo4j_driver)
@@ -362,7 +362,7 @@ def test_catalogue_validate_yaml_queries_against_live_definition(
     """validate_query_catalogue on YAML
     queries against FILM_DEFINITION returns no errors."""
     yaml_src = """
-- name: find_movie
+- query_id: find_movie
   cypher_template: "MATCH (m:Movie {title: $title}) RETURN m.title, m.released"
   params_schema:
     title: FindMovieParams
@@ -370,7 +370,7 @@ def test_catalogue_validate_yaml_queries_against_live_definition(
     properties:
       title: {type: string, title: Title}
     required: [title]
-- name: find_person
+- query_id: find_person
   cypher_template: "MATCH (p:Person {name: $name}) RETURN p.name, p.born"
   params_schema:
     title: FindPersonParams
@@ -378,7 +378,7 @@ def test_catalogue_validate_yaml_queries_against_live_definition(
     properties:
       name: {type: string, title: Name}
     required: [name]
-- name: actor_movies
+- query_id: actor_movies
   cypher_template: >-
     MATCH (p:Person {name: $name})-[:ACTED_IN]->(m:Movie)
     RETURN p.name, m.title
@@ -407,7 +407,7 @@ def test_catalogue_validate_detects_stale_param_in_yaml(
 ) -> None:
     """A YAML query with an undeclared $param surfaces QUERY_PARAM_ALIGNMENT_ERROR."""
     stale_yaml = """
-- name: bad_param
+- query_id: bad_param
   cypher_template: "MATCH (m:Movie {released: $released}) RETURN m.title"
   params_schema:
     title: BadParamParams

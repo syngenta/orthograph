@@ -724,10 +724,10 @@ def test_cypher_query_registers_in_catalogue() -> None:
         released: int
 
     query = CypherQuery(
-        name="find_movie",
+        query_id="find_movie",
         cypher_template="MATCH (m:Movie {released: $released}) RETURN m",
-        Params=FindMovieParams,
-        Identifiers=NoIdentifiers,
+        params_schema=FindMovieParams,
+        identifiers_schema=NoIdentifiers,
     )
     catalogue = QueryCatalogue()
     returned = catalogue.register_cypher_query(query)
@@ -740,10 +740,10 @@ def test_cypher_query_duplicate_name_raises() -> None:
     from orthograph.cypher.bindings import NoParams
 
     query = CypherQuery(
-        name="dup",
+        query_id="dup",
         cypher_template="MATCH (m:Movie) RETURN m",
-        Params=NoParams,
-        Identifiers=NoIdentifiers,
+        params_schema=NoParams,
+        identifiers_schema=NoIdentifiers,
     )
     catalogue = QueryCatalogue()
     catalogue.register_cypher_query(query)
@@ -766,10 +766,10 @@ def test_yaml_cypher_query_domain_error_via_catalogue(
         released: int
 
     query = CypherQuery(
-        name="find_film",
+        query_id="find_film",
         cypher_template="MATCH (f:Film {released: $released}) RETURN f",
-        Params=FindFilmParams,
-        Identifiers=NoIdentifiers,
+        params_schema=FindFilmParams,
+        identifiers_schema=NoIdentifiers,
     )
     catalogue = QueryCatalogue()
     catalogue.register_cypher_query(query)
@@ -795,10 +795,10 @@ def test_yaml_cypher_query_valid_label_no_errors(
         released: int
 
     query = CypherQuery(
-        name="find_movie_simple",
+        query_id="find_movie_simple",
         cypher_template="MATCH (m:Movie {released: $released}) RETURN m",
-        Params=FindMovieSimpleParams,
-        Identifiers=NoIdentifiers,
+        params_schema=FindMovieSimpleParams,
+        identifiers_schema=NoIdentifiers,
     )
     catalogue = QueryCatalogue()
     catalogue.register_cypher_query(query)
@@ -819,11 +819,11 @@ def test_cypher_query_stale_param_caught_via_catalogue(
         released: int
 
     query = CypherQuery(
-        name="stale_param",
+        query_id="stale_param",
         cypher_template="MATCH (m:Movie {released: $released, title: $title}) RETURN m",
-        Params=StaleParamParams,
+        params_schema=StaleParamParams,
         # 'title' used in cypher_template but not declared on Params → alignment error
-        Identifiers=NoIdentifiers,
+        identifiers_schema=NoIdentifiers,
     )
     catalogue = QueryCatalogue()
     catalogue.register_cypher_query(query)
@@ -852,10 +852,10 @@ def test_registered_cypher_query_appears_alongside_typed_query(
         released: int
 
     simple_query = CypherQuery(
-        name="find_film_bad",
+        query_id="find_film_bad",
         cypher_template="MATCH (f:Film {released: $released}) RETURN f",
-        Params=FindFilmBadParams,
-        Identifiers=NoIdentifiers,
+        params_schema=FindFilmBadParams,
+        identifiers_schema=NoIdentifiers,
     )
     catalogue = QueryCatalogue()
     catalogue.register_read(typed_query)

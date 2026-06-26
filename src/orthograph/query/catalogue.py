@@ -80,8 +80,8 @@ class QueryCatalogue:
         instances but participate in ``queries()`` and ``validate_query_catalogue``
         so that YAML-loaded queries receive the same static validation as typed ones.
         """
-        self._reject_duplicate(query.name)
-        self._cypher_queries[query.name] = query
+        self._reject_duplicate(query.query_id)
+        self._cypher_queries[query.query_id] = query
         return query
 
     def queries(
@@ -159,10 +159,10 @@ class QueryCatalogue:
         )
         descriptions.extend(
             QueryDescription(
-                name=q.name,
+                name=q.query_id,
                 kind="read",
                 backend=q.backend,
-                params_schema=q.Params.model_json_schema(),
+                params_schema=q.params_schema.model_json_schema(),
                 output_schema=None,
                 output_class=None,
             )

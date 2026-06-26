@@ -10,8 +10,6 @@ Nested objects, arrays, enums, $ref, and anyOf/allOf/oneOf are rejected with a
 :class:`~orthograph.cypher.exceptions.CypherQueryDefinitionError`.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from pydantic import BaseModel, create_model
@@ -94,7 +92,6 @@ def model_from_json_schema(
         python_type = _SCALAR_TYPE_MAP[raw_type]
 
         if field_name in required_names:
-            # Required field — Pydantic sentinel (no default).
             field_definitions[field_name] = (python_type, ...)
         else:
             default = prop.get("default", None)

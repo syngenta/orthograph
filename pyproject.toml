@@ -6,17 +6,22 @@ build-backend = "setuptools.build_meta"
 name = "orthograph"
 version = "0.1.0"
 description = "Pydantic-native graph data model definition and validation"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 readme = {file = "README.rst", content-type = "text/x-rst"}
 classifiers = [
-    "Private :: Do Not Upload",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Typing :: Typed",
+        "Intended Audience :: Science/Research",
+        "Operating System :: MacOS :: MacOS X",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: OS Independent",
+        "Operating System :: POSIX :: Linux",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Scientific/Engineering",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -54,7 +59,7 @@ memgraph = [
 
 # Backend: GQLAlchemy OGM + query builder integration
 gqlalchemy = [
-    "gqlalchemy>=1.6",
+    "gqlalchemy>=1.9",
 ]
 
 # All extensions (memgraph shares the neo4j driver so no extra dep is pulled in)

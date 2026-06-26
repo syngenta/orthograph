@@ -84,9 +84,12 @@ class CypherExecutor(Executor):
 
     def read(self, query: ReadQuery[P, D], raw_params: Any) -> list[D]:
         """Validate params → build → parse Cypher → run → materialise (no commit)."""
-        params = cast(P, query.Params.model_validate(raw_params))
+        # Support both CypherQuery (params_schema) and typed queries (Params)
+        params_model = getattr(query, "params_schema", None) or query.Params
+        query_id = getattr(query, "query_id", None) or query.name
+        params = cast(P, params_model.model_validate(raw_params))
         cypher, qparams = query.build(params)
-        self._validate_cypher(cypher, query.name)  # runtime syntax check
+        self._validate_cypher(cypher, query_id)  # runtime syntax check
         with self._driver_factory() as session:  # only I/O seam
             # Auto-commit: read() runs a single statement via session.run() and
             # does not open an explicit transaction (unlike write()). This is
@@ -109,9 +112,12 @@ class CypherExecutor(Executor):
         write queries express their result through ``interpret_result`` acting
         on those counters, not on returned row data.
         """
-        params = cast(P, query.Params.model_validate(raw_params))
+        # Support both CypherQuery (params_schema) and typed queries (Params)
+        params_model = getattr(query, "params_schema", None) or query.Params
+        query_id = getattr(query, "query_id", None) or query.name
+        params = cast(P, params_model.model_validate(raw_params))
         cypher, qparams = query.build(params)
-        self._validate_cypher(cypher, query.name)  # runtime syntax check
+        self._validate_cypher(cypher, query_id)  # runtime syntax check
         with self._driver_factory() as session:  # only I/O seam
             tx = session.begin_transaction()
             try:
@@ -149,8 +155,8 @@ class CypherQueryReadAdapter:
 
     def __init__(self, query: Any) -> None:  # query: CypherQuery
         self._query = query
-        self.Params: type[BaseModel] = query.Params
-        self.name: str = query.name
+        self.params_schema: type[BaseModel] = query.params_schema
+        self.query_id: str = query.query_id
         self.backend = query.backend
 
     def build(self, params: BaseModel) -> Any:
@@ -184,8 +190,8 @@ class CypherQueryWriteAdapter:
 
     def __init__(self, query: Any) -> None:  # query: CypherQuery
         self._query = query
-        self.Params: type[BaseModel] = query.Params
-        self.name: str = query.name
+        self.params_schema: type[BaseModel] = query.params_schema
+        self.query_id: str = query.query_id
         self.backend = query.backend
 
     def build(self, params: BaseModel) -> Any:

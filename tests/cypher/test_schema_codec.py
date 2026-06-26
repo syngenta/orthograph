@@ -23,19 +23,19 @@ def test_round_trip_required_and_optional_int() -> None:
         limit: int = 10
 
     schema = model_to_json_schema(SomeParams)
-    Rebuilt = model_from_json_schema(schema)
+    rebuilt = model_from_json_schema(schema)
 
-    assert set(Rebuilt.model_fields) == {"released", "limit"}
-    assert Rebuilt.model_fields["released"].is_required()
-    assert not Rebuilt.model_fields["limit"].is_required()
-    assert Rebuilt.model_fields["limit"].default == 10
+    assert set(rebuilt.model_fields) == {"released", "limit"}
+    assert rebuilt.model_fields["released"].is_required()
+    assert not rebuilt.model_fields["limit"].is_required()
+    assert rebuilt.model_fields["limit"].default == 10
 
 
 def test_round_trip_no_params() -> None:
     """Round-trip NoParams → zero-field model."""
     schema = model_to_json_schema(NoParams)
-    Rebuilt = model_from_json_schema(schema)
-    assert Rebuilt.model_fields == {}
+    rebuilt = model_from_json_schema(schema)
+    assert rebuilt.model_fields == {}
 
 
 def test_round_trip_scalar_types() -> None:
@@ -48,8 +48,8 @@ def test_round_trip_scalar_types() -> None:
         d: bool
 
     schema = model_to_json_schema(AllScalars)
-    Rebuilt = model_from_json_schema(schema)
-    assert set(Rebuilt.model_fields) == {"a", "b", "c", "d"}
+    rebuilt = model_from_json_schema(schema)
+    assert set(rebuilt.model_fields) == {"a", "b", "c", "d"}
 
 
 def test_required_optional_split_in_validate() -> None:
@@ -60,10 +60,10 @@ def test_required_optional_split_in_validate() -> None:
         b: int = 5
 
     schema = model_to_json_schema(Params)
-    Rebuilt = model_from_json_schema(schema)
+    rebuilt = model_from_json_schema(schema)
 
     # Can construct with only required field.
-    instance = Rebuilt.model_validate({"a": 42})
+    instance = rebuilt.model_validate({"a": 42})
     assert instance.a == 42  # type: ignore[attr-defined]
     # Optional field uses the default from the schema (5).
     assert instance.b == 5  # type: ignore[attr-defined]
@@ -72,7 +72,7 @@ def test_required_optional_split_in_validate() -> None:
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        Rebuilt.model_validate({})
+        rebuilt.model_validate({})
 
 
 def test_model_name_from_argument() -> None:
@@ -82,8 +82,8 @@ def test_model_name_from_argument() -> None:
         x: int
 
     schema = model_to_json_schema(Foo)
-    Rebuilt = model_from_json_schema(schema, model_name="CustomName")
-    assert Rebuilt.__name__ == "CustomName"
+    rebuilt = model_from_json_schema(schema, model_name="CustomName")
+    assert rebuilt.__name__ == "CustomName"
 
 
 def test_model_name_from_schema_title() -> None:
@@ -93,15 +93,15 @@ def test_model_name_from_schema_title() -> None:
         x: int
 
     schema = model_to_json_schema(MyParams)
-    Rebuilt = model_from_json_schema(schema)
-    assert Rebuilt.__name__ == "MyParams"
+    rebuilt = model_from_json_schema(schema)
+    assert rebuilt.__name__ == "MyParams"
 
 
 def test_model_name_default() -> None:
     """Falls back to 'ReconstructedParams' when no title and no model_name."""
     schema = {"type": "object", "properties": {}}
-    Rebuilt = model_from_json_schema(schema)
-    assert Rebuilt.__name__ == "ReconstructedParams"
+    rebuilt = model_from_json_schema(schema)
+    assert rebuilt.__name__ == "ReconstructedParams"
 
 
 # ---------------------------------------------------------------------------

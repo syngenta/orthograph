@@ -1,20 +1,19 @@
 """Tests for the query spec catalogue YAML loader.
 
 Covers:
-  - Loading from a YAML string (load_query_catalogue_string)
-  - Loading from a YAML file (load_query_catalogue_file)
-  - Round-trip: load → model_dump() output matches source YAML fields
-  - Legacy field name: query_name accepted for name
-  - cypher_template required (no cypher/query alias)
-  - params_schema reconstructs Params model; absent → NoParams sentinel
-  - identifiers_schema reconstructs Identifiers model when present
-  - description field is optional
-  - Multi-query YAML file
-  - Missing required field 'name' raises CypherCatalogueLoadError
-  - Missing 'cypher_template' raises CypherCatalogueLoadError
-  - Malformed YAML raises CypherCatalogueLoadError
-  - YAML with a non-list top-level structure raises CypherCatalogueLoadError
-  - list_catalogue_queries() returns all names from a YAML string/file
+   - Loading from a YAML string (load_query_catalogue_string)
+   - Loading from a YAML file (load_query_catalogue_file)
+   - Round-trip: load → model_dump() output matches source YAML fields
+   - cypher_template required (no cypher/query alias)
+   - params_schema reconstructs Params model; absent → NoParams sentinel
+   - identifiers_schema reconstructs Identifiers model when present
+   - description field is optional
+   - Multi-query YAML file
+   - Missing required field 'query_id' raises CypherCatalogueLoadError
+   - Missing 'cypher_template' raises CypherCatalogueLoadError
+   - Malformed YAML raises CypherCatalogueLoadError
+   - YAML with a non-list top-level structure raises CypherCatalogueLoadError
+   - list_catalogue_queries() returns all names from a YAML string/file
 """
 
 from pathlib import Path
@@ -36,7 +35,7 @@ from orthograph.io.query_catalogue_yaml import (
 # ---------------------------------------------------------------------------
 
 FULL_YAML = """\
-- name: find_movie
+- query_id: find_movie
   cypher_template: "MATCH (m:Movie {movie_id: $movie_id}) RETURN m"
   description: "Find a movie by its stable movie_id."
   params_schema:
@@ -46,7 +45,7 @@ FULL_YAML = """\
       movie_id: {type: string, title: MovieId}
     required: [movie_id]
 
-- name: movies_by_festival
+- query_id: movies_by_festival
   cypher_template: |
     MATCH (f:Festival {id: $festival_id})-[:HAS_MOVIE]->(m:Movie)
     RETURN m
@@ -59,30 +58,18 @@ FULL_YAML = """\
     required: [festival_id]
 """
 
-# Legacy name alias (query_name) must still be accepted.
-LEGACY_NAME_YAML = """\
-- query_name: find_movie
-  cypher_template: "MATCH (m:Movie {movie_id: $movie_id}) RETURN m"
-  params_schema:
-    title: FindMovieParams
-    type: object
-    properties:
-      movie_id: {type: string, title: MovieId}
-    required: [movie_id]
-"""
-
 # Minimal: no params_schema → NoParams.
 MINIMAL_YAML = """\
-- name: count_movies
+- query_id: count_movies
   cypher_template: "MATCH (m:Movie) RETURN count(m) AS n"
 """
 
-MISSING_QUERY_NAME_YAML = """\
+MISSING_QUERY_ID_YAML = """\
 - cypher_template: "MATCH (m:Movie) RETURN m"
 """
 
 MISSING_CYPHER_TEMPLATE_YAML = """\
-- name: find_movie
+- query_id: find_movie
 """
 
 EMPTY_YAML = "[]"
@@ -97,7 +84,7 @@ MALFORMED_YAML = """\
 """
 
 OPTIONAL_PARAMS_YAML = """\
-- name: movies_by_year
+- query_id: movies_by_year
   cypher_template: "MATCH (m:Movie {released: $released}) RETURN m.title LIMIT $limit"
   params_schema:
     title: MoviesByYearParams
@@ -125,21 +112,16 @@ class TestLoadFromString:
         """Standard fields are correctly mapped."""
         queries = load_query_catalogue_string(FULL_YAML)
         first = queries[0]
-        assert first.name == "find_movie"
+        assert first.query_id == "find_movie"
         assert "$movie_id" in first.cypher_template
-        assert "movie_id" in first.Params.model_fields
+        assert "movie_id" in first.params_schema.model_fields
         assert first.description == "Find a movie by its stable movie_id."
-
-    def test_legacy_name_alias_accepted(self):
-        """query_name is accepted as legacy alias for name."""
-        queries = load_query_catalogue_string(LEGACY_NAME_YAML)
-        assert queries[0].name == "find_movie"
 
     def test_absent_params_schema_defaults_to_no_params(self):
         """Missing params_schema → Params is NoParams (zero fields)."""
         queries = load_query_catalogue_string(MINIMAL_YAML)
         q = queries[0]
-        assert q.Params is NoParams or q.Params.model_fields == {}
+        assert q.params_schema is NoParams or q.params_schema.model_fields == {}
 
     def test_description_optional(self):
         queries = load_query_catalogue_string(MINIMAL_YAML)
@@ -149,9 +131,9 @@ class TestLoadFromString:
         queries = load_query_catalogue_string(EMPTY_YAML)
         assert queries == []
 
-    def test_missing_query_name_raises(self):
-        with pytest.raises(CypherCatalogueLoadError, match="name"):
-            load_query_catalogue_string(MISSING_QUERY_NAME_YAML)
+    def test_missing_query_id_raises(self):
+        with pytest.raises(CypherCatalogueLoadError, match="query_id"):
+            load_query_catalogue_string(MISSING_QUERY_ID_YAML)
 
     def test_missing_cypher_template_raises(self):
         with pytest.raises(CypherCatalogueLoadError, match="cypher_template"):
@@ -167,14 +149,14 @@ class TestLoadFromString:
 
     def test_multi_query_names(self):
         queries = load_query_catalogue_string(FULL_YAML)
-        names = [q.name for q in queries]
+        names = [q.query_id for q in queries]
         assert names == ["find_movie", "movies_by_festival"]
 
     def test_required_and_optional_params_reconstructed(self):
         """Required field has no default; optional field has default."""
         queries = load_query_catalogue_string(OPTIONAL_PARAMS_YAML)
         q = queries[0]
-        fields = q.Params.model_fields
+        fields = q.params_schema.model_fields
         assert "released" in fields
         assert "limit" in fields
         assert fields["released"].is_required()
@@ -230,11 +212,11 @@ class TestListQueries:
 
 
 class TestRoundTrip:
-    def test_model_dump_emits_query_name_alias(self):
-        """model_dump(by_alias=True) uses query_name alias for name."""
+    def test_model_dump_emits_query_id(self):
+        """model_dump(by_alias=True) serializes query_id field."""
         queries = load_query_catalogue_string(FULL_YAML)
         d = queries[0].model_dump(by_alias=True, exclude_none=True)
-        assert d["query_name"] == "find_movie"
+        assert d["query_id"] == "find_movie"
         assert "cypher_template" in d
         assert "params_schema" in d
 

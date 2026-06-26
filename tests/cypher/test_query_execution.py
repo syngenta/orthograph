@@ -351,12 +351,12 @@ def test_cypher_query_read_via_adapter_returns_raw_rows() -> None:
         released: int
 
     query = CypherQuery(
-        name="find_movies",
+        query_id="find_movies",
         cypher_template=(
             "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
         ),
-        Params=FindMoviesParams,
-        Identifiers=NoIdentifiers,
+        params_schema=FindMoviesParams,
+        identifiers_schema=NoIdentifiers,
     )
     session = FakeGraphSession(
         records=[
@@ -390,10 +390,10 @@ def test_cypher_query_read_adapter_with_typed_params_model() -> None:
         released: int
 
     query = CypherQuery(
-        name="find_movies_typed",
+        query_id="find_movies_typed",
         cypher_template="MATCH (m:Movie {released: $released}) RETURN m.title",
-        Params=MovieParams,
-        Identifiers=NoIdentifiers,
+        params_schema=MovieParams,
+        identifiers_schema=NoIdentifiers,
     )
     session = FakeGraphSession(records=[{"m.title": "Inception"}])
     executor = CypherExecutor(lambda: session)
@@ -418,10 +418,10 @@ def test_cypher_query_write_via_adapter_returns_full_summary() -> None:
         title: str
 
     query = CypherQuery(
-        name="create_movie",
+        query_id="create_movie",
         cypher_template="CREATE (m:Movie {title: $title})",
-        Params=CreateMovieParams,
-        Identifiers=NoIdentifiers,
+        params_schema=CreateMovieParams,
+        identifiers_schema=NoIdentifiers,
     )
 
     class _FakeSessionWithCounters(FakeGraphSession):
@@ -462,10 +462,10 @@ def test_cypher_query_write_adapter_commits_transaction() -> None:
         title: str
 
     query = CypherQuery(
-        name="set_property",
+        query_id="set_property",
         cypher_template="MATCH (m:Movie {title: $title}) SET m.watched = true",
-        Params=SetPropertyParams,
-        Identifiers=NoIdentifiers,
+        params_schema=SetPropertyParams,
+        identifiers_schema=NoIdentifiers,
     )
     session = FakeGraphSession(nodes_created=1)
     executor = CypherExecutor(lambda: session)

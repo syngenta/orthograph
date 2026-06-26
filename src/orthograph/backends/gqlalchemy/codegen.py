@@ -1,20 +1,17 @@
 """Generate GQLAlchemy Node/Relationship classes from an Orthograph model.
 
-Translates Pydantic v2 model definitions to GQLAlchemy-compatible Pydantic v1
-classes at runtime.  Generated classes are internal; consumers never use them directly.
+Translates Pydantic v2 model definitions to GQLAlchemy-compatible classes at
+runtime.  Generated classes are internal; consumers never use them directly.
 """
 
 from __future__ import annotations
 
-import types
-import typing
 from dataclasses import dataclass, field
-from typing import Any, Optional, get_type_hints
+from typing import Any, get_type_hints
 
 from orthograph.dependencies import require
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
-from orthograph.graph_definition.property_spec import TypeInfo
 
 
 require("gqlalchemy")
@@ -132,73 +129,30 @@ def _build_rel_class(
 
 
 # ---------------------------------------------------------------------------
-# Internal: field extraction and type translation
+# Internal: field extraction
 # ---------------------------------------------------------------------------
 
 
 def _extract_fields(
     model_cls: type[NodeModel] | type[RelationshipModel],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return ``(annotations, defaults)`` suitable for a dynamic ``type()`` call."""
+    """Return ``(annotations, defaults)`` suitable for a dynamic ``type()`` call.
+
+    Annotations are taken verbatim from ``get_type_hints`` so that generic types
+    (``list[str]``, ``dict[str, Any]``, ``Optional[str]``) are preserved as-is.
+    Pydantic v2 handles all of these natively.
+
+    Defaults follow the standard Pydantic convention: ``...`` (Ellipsis) for
+    required fields, the literal default value for optional ones.
+    """
     specs = model_cls.get_property_specs()
     annotations: dict[str, Any] = {}
     defaults: dict[str, Any] = {}
 
-    # Use get_type_hints for the raw annotations (preserves Optional etc.)
     raw_hints = get_type_hints(model_cls)
 
     for name, info in specs.items():
-        # Translate the type for Pydantic v1 compatibility
-        translated_type = _translate_type(info, raw_hints.get(name))
-        annotations[name] = translated_type
-
-        if not info.is_required:
-            defaults[name] = info.default
-        # Required fields: no default (Pydantic v1 treats missing default
-        # as required via the Ellipsis sentinel)
-        else:
-            defaults[name] = ...
+        annotations[name] = raw_hints.get(name, info.python_type)
+        defaults[name] = ... if info.is_required else info.default
 
     return annotations, defaults
-
-
-def _translate_type(info: TypeInfo, raw_annotation: Any) -> Any:
-    """Translate a Pydantic v2 annotation to a Pydantic v1-compatible one.
-
-    Generic types (``list[str]``, ``dict[str, Any]``) are simplified to their
-    origin (``list``, ``dict``) for v1 compatibility.  ``Optional[T]`` and plain
-    types pass through unchanged.
-    """
-    # If we have the raw annotation, use it directly for simple cases.
-    # This preserves Optional[str] as-is.
-    if raw_annotation is not None:
-        origin = getattr(raw_annotation, "__origin__", None)
-
-        # Optional[X] in Python is Union[X, None] -- preserve as-is
-        if _is_optional(raw_annotation):
-            return Optional[info.python_type]
-
-        # Generic types like list[str] -> list (simplified for v1)
-        if origin is not None:
-            return origin
-
-        # Plain types pass through
-        return raw_annotation
-
-    # Fallback: reconstruct from TypeInfo
-    if not info.is_required:
-        return Optional[info.python_type]
-    return info.python_type
-
-
-def _is_optional(annotation: Any) -> bool:
-    """Check if an annotation is Optional[T] (i.e., Union[T, None])."""
-    origin = getattr(annotation, "__origin__", None)
-
-    if isinstance(annotation, types.UnionType):
-        return type(None) in annotation.__args__
-
-    if origin is typing.Union:
-        return type(None) in annotation.__args__
-
-    return False

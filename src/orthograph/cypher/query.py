@@ -6,13 +6,13 @@ Orthograph offers two parallel authoring styles:
 
 * **Typed path** — :class:`~orthograph.cypher.base_models.CypherReadQuery` /
   :class:`~orthograph.cypher.base_models.CypherWriteQuery`.  Abstract bases you
-  subclass.  Enforce a full typed contract at class-definition time: ``Params``
+  subclass.  Enforce a full typed contract at class-definition time: ``params_schema``
   model required, ``Output`` model required, ``materialize()`` / ``interpret_result()``
   implementation required.  Results are statically typed.
 * **Simple path** — :class:`CypherQuery` (this module).  A **concrete data class
   you instantiate directly** — no subclassing required.  Lower ceremony; YAML
-  round-trip compatible via JSON-Schema serialization of ``Params`` /
-  ``Identifiers``.  The only difference from the typed path is that the simple
+  round-trip compatible via JSON-Schema serialization of ``params_schema`` /
+  ``identifiers_schema``.  The only difference from the typed path is that the simple
   path declares **no** ``Output`` model, so results are raw ``list[dict]`` rows.
 
 Both paths share the **same validation core** (``validate_cypher_spec``) and are
@@ -23,19 +23,18 @@ typed query.
 
 Design goals
 ------------
-* **YAML-serialisable.** ``Params`` and ``Identifiers`` models are serialized to
+* **YAML-serialisable.** ``params_schema`` and ``identifiers_schema`` models are serialized to
   JSON Schema (via ``model_to_json_schema``) and reconstructed on load (via
-  ``model_from_json_schema``).  ``name`` is serialised as ``query_name`` (legacy
-  alias preserved).
-* **Required typed Params.** A ``Params`` Pydantic model is **required**.  For
-  queries with no ``$value`` parameters, pass ``Params = NoParams`` (the canonical
+  ``model_from_json_schema``).
+* **Required typed params_schema.** A ``params_schema`` Pydantic model is **required**.  For
+  queries with no ``$value`` parameters, pass ``params_schema = NoParams`` (the canonical
   empty sentinel from :mod:`orthograph.cypher.bindings`).
-* **Required typed Identifiers.** An ``Identifiers`` Pydantic model is
+* **Required typed identifiers_schema.** An ``identifiers_schema`` Pydantic model is
   **required**.  For queries with no ``<<name>>`` identifier splicing, pass
-  ``Identifiers = NoIdentifiers`` (the canonical empty sentinel from
+  ``identifiers_schema = NoIdentifiers`` (the canonical empty sentinel from
   :mod:`orthograph.cypher.bindings`).  Identifier *values* are **not** stored on
   the query — they are passed to :meth:`build` at call time, symmetric with
-  ``Params``.
+  ``params_schema``.
 * **Full shared validation.** Use :func:`~orthograph.cypher.validation.validate_query`
   (a free function in :mod:`orthograph.cypher.validation`) to validate a
   ``CypherQuery`` against a
@@ -62,10 +61,10 @@ Usage — Python (simple path)::
      from orthograph.cypher.validation import validate_query
 
      query = CypherQuery(
-         name="find_movie",
+         query_id="find_movie",
          cypher_template="MATCH (m:Movie {movie_id: $movie_id}) RETURN m",
-         Params=FindMovieParams,
-         Identifiers=NoIdentifiers,
+         params_schema=FindMovieParams,
+         identifiers_schema=NoIdentifiers,
      )
      result = validate_query(query, my_graph_definition)   # static, no DB
      query_data = query.build(movie_id="M-001")
@@ -77,20 +76,20 @@ Usage — identifier splicing::
          label: str
 
      query = CypherQuery(
-         name="nodes_by_label",
+         query_id="nodes_by_label",
          cypher_template="MATCH (n:<<label>>) RETURN n",
-         Params=NoParams,
-         Identifiers=LabelIds,
+         params_schema=NoParams,
+         identifiers_schema=LabelIds,
      )
      query_data = query.build(identifiers=LabelIds(label="Movie"))
 
 Usage — zero-arg query::
 
      query = CypherQuery(
-         name="count_movies",
+         query_id="count_movies",
          cypher_template="MATCH (m:Movie) RETURN count(m) AS total",
-         Params=NoParams,
-         Identifiers=NoIdentifiers,
+         params_schema=NoParams,
+         identifiers_schema=NoIdentifiers,
      )
 
 YAML serialization (JSON-Schema round-trip)::
@@ -98,10 +97,10 @@ YAML serialization (JSON-Schema round-trip)::
      query.model_dump(by_alias=True)
      # Returns:
      # {
-     #   "query_name": "find_movie",
+     #   "query_id": "find_movie",
      #   "cypher_template": "...",
-     #   "params_schema": {...},       # JSON Schema of Params
-     #   "identifiers_schema": {...},  # JSON Schema of Identifiers
+     #   "params_schema": {...},       # JSON Schema of params_schema
+     #   "identifiers_schema": {...},  # JSON Schema of identifiers_schema
      # }
 """  # NOQA E501
 
@@ -131,31 +130,32 @@ class CypherQuery(BaseModel):
     """A concrete, YAML-serialisable Cypher query definition.
 
     Instantiate directly — do not subclass.  For typed queries with full
-    ``Params`` / ``Output`` / ``materialize()`` contracts, use
+    ``params_schema`` / ``Output`` / ``materialize()`` contracts, use
     :class:`~orthograph.cypher.base_models.CypherReadQuery` or
     :class:`~orthograph.cypher.base_models.CypherWriteQuery` instead.
 
     Parameters
     ----------
-    name:
+    query_id:
         Unique identifier for this query within a catalogue or YAML file.
-        Serialised as ``query_name`` for YAML compatibility.
+        Serialised as ``query_id`` in YAML/JSON.
     cypher_template:
         The raw Cypher string. ``$name`` placeholders are driver-bound
         parameters; ``<<name>>`` placeholders are identifier slots.
-        They must correspond to fields on ``Params`` / ``Identifiers``.
+        They must correspond to fields on ``params_schema`` / ``identifiers_schema``.
         No alias accepted — use ``cypher_template`` in YAML files.
-    Params:
+    params_schema:
         A Pydantic ``BaseModel`` subclass declaring accepted ``$value``
         parameters with Python types.  **Required** — pass ``NoParams`` for
-        zero-arg queries.  Serialised as a JSON Schema (``params_schema``)
-        and reconstructed on load.
-    Identifiers:
+        zero-arg queries.  Serialised as a JSON Schema and reconstructed on load.
+        This field holds a *class* (``type[BaseModel]``), not an instance.
+    identifiers_schema:
         A Pydantic ``BaseModel`` subclass declaring ``<<name>>`` identifier
         slots.  **Required** — pass ``NoIdentifiers`` for queries with no
-        identifier splicing.  Serialised as ``identifiers_schema``.
+        identifier splicing.  Optional field omitted from serialization when absent.
         Identifier *values* are passed to :meth:`build` at call time, not
-        stored on the query instance.
+        stored on the query instance.  This field holds a *class* (``type[BaseModel]``),
+        not an instance.
     description:
         Human-readable description of what this query does.
     """
@@ -167,40 +167,34 @@ class CypherQuery(BaseModel):
 
     backend: ClassVar[Backend] = Backend.CYPHER
 
-    name: str = Field(..., alias="query_name")
+    query_id: str = Field(...)
     cypher_template: str
     description: str | None = Field(default=None)
-    Params: type[BaseModel] = Field(..., alias="params_schema")  # noqa: N815
-    Identifiers: type[BaseModel] | None = Field(
-        default=None, alias="identifiers_schema"
-    )  # noqa: N815 — None and NoIdentifiers are equivalent (no splicing); real model when <<name>> slots needed
+    params_schema: type[BaseModel] = Field(...)
+    identifiers_schema: type[BaseModel] | None = Field(default=None)
 
-    # ------------------------------------------------------------------
-    # Serialization: model class ↔ JSON-Schema dict
-    # ------------------------------------------------------------------
-
-    @field_serializer("Params")
-    def _serialize_params(self, value: type[BaseModel]) -> dict[str, Any]:
+    @field_serializer("params_schema")
+    def _serialize_params_schema(self, value: type[BaseModel]) -> dict[str, Any]:
         return model_to_json_schema(value)
 
-    @field_serializer("Identifiers")
-    def _serialize_identifiers(
+    @field_serializer("identifiers_schema")
+    def _serialize_identifiers_schema(
         self, value: type[BaseModel] | None
     ) -> dict[str, Any] | None:
         if value is None:
             return None
         return model_to_json_schema(value)
 
-    @field_validator("Params", mode="before")
+    @field_validator("params_schema", mode="before")
     @classmethod
-    def _deserialize_params(cls, value: Any) -> Any:
+    def _deserialize_params_schema(cls, value: Any) -> Any:
         if isinstance(value, dict):
             return model_from_json_schema(value)
         return value
 
-    @field_validator("Identifiers", mode="before")
+    @field_validator("identifiers_schema", mode="before")
     @classmethod
-    def _deserialize_identifiers(cls, value: Any) -> Any:
+    def _deserialize_identifiers_schema(cls, value: Any) -> Any:
         if isinstance(value, dict):
             return model_from_json_schema(value)
         if value is NoIdentifiers:
@@ -209,18 +203,16 @@ class CypherQuery(BaseModel):
             )
         return value
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def list_arguments(self) -> dict[str, list[str]]:
-        """Return the required and optional argument names derived from ``Params``.
+        """Return required and optional argument names derived from ``params_schema``.
 
         Returns a dict with keys ``"required"`` and ``"optional"``.
         """
-        required = [n for n, f in self.Params.model_fields.items() if f.is_required()]
+        required = [
+            n for n, f in self.params_schema.model_fields.items() if f.is_required()
+        ]
         optional = [
-            n for n, f in self.Params.model_fields.items() if not f.is_required()
+            n for n, f in self.params_schema.model_fields.items() if not f.is_required()
         ]
         return {"required": required, "optional": optional}
 
@@ -234,7 +226,7 @@ class CypherQuery(BaseModel):
             query_data = query.build(movie_id="M-001")
             await session.run(query_data.cypher, query_data.params)
 
-        For queries with identifier splicing, pass an ``Identifiers`` model
+        For queries with identifier splicing, pass an ``identifiers_schema`` model
         instance::
 
             query_data = query.build(identifiers=LabelIds(label="Movie"))
@@ -246,14 +238,14 @@ class CypherQuery(BaseModel):
         Parameters
         ----------
         identifiers:
-            Optional ``Identifiers`` model instance.  When ``None`` (the
-            default) and ``Identifiers`` is not ``NoIdentifiers``, the
+            Optional model instance matching ``identifiers_schema``.  When ``None`` (the
+            default) and ``identifiers_schema`` is not ``NoIdentifiers``, the
             ``cypher_template`` must contain no ``<<name>>`` placeholders
             or a ``CypherQueryDefinitionError`` will be raised by
             ``render_with_identifiers``.  Pass ``None`` for queries declared
-            with ``Identifiers=NoIdentifiers``.
+            with ``identifiers_schema=NoIdentifiers``.
         **kwargs:
-            ``$value`` parameter values validated against ``Params``.
+            ``$value`` parameter values validated against ``params_schema``.
 
         Raises
         ------
@@ -261,18 +253,18 @@ class CypherQuery(BaseModel):
             If a required argument is missing or an unknown argument is
             supplied.
         pydantic.ValidationError
-            If the supplied values fail ``Params`` validation.
+            If the supplied values fail ``params_schema`` validation.
         """
         self._validate_call_kwargs(kwargs)
 
-        validated = self.Params.model_validate(kwargs)
+        validated = self.params_schema.model_validate(kwargs)
         params = validated.model_dump(exclude_unset=True)
 
         cypher = self.cypher_template
         bound = (
             identifiers
             if identifiers is not None
-            else (self.Identifiers or NoIdentifiers)()
+            else (self.identifiers_schema or NoIdentifiers)()
         )
         cypher = render_with_identifiers(cypher, bound)
 
@@ -280,51 +272,34 @@ class CypherQuery(BaseModel):
 
     def _validate_call_kwargs(self, kwargs: dict[str, Any]) -> None:
         """Check that all required args are present and no unknown args supplied."""
-        required = [n for n, f in self.Params.model_fields.items() if f.is_required()]
-        known = set(self.Params.model_fields)
+        required = [
+            n for n, f in self.params_schema.model_fields.items() if f.is_required()
+        ]
+        known = set(self.params_schema.model_fields)
 
         missing = [arg for arg in required if arg not in kwargs]
         if missing:
             raise CypherQueryError(
-                f"Query '{self.name}': Missing required argument(s): "
+                f"Query '{self.query_id}': Missing required argument(s): "
                 f"{', '.join(missing)}"
             )
 
         unknown = [arg for arg in kwargs if arg not in known]
         if unknown:
             raise CypherQueryError(
-                f"Query '{self.name}': Unknown argument(s): "
+                f"Query '{self.query_id}': Unknown argument(s): "
                 f"{', '.join(unknown)}. "
-                f"Declared on Params: {sorted(known)}"
+                f"Declared on params_schema: {sorted(known)}"
             )
-
-    def validate_query(
-        self,
-        definition: Any,  # GraphDefinition | None — avoid circular import
-    ) -> Any:  # ValidationResult
-        """Validate this query against *definition*.
-
-        Convenience wrapper around the free function
-        :func:`orthograph.cypher.validation.validate_query`.  Runs the same
-        syntactic + semantic checks as the typed path: ``$param`` alignment,
-        parse, unknown labels/rel-types, properties, and endpoints.
-
-        Pass ``None`` to perform a syntactic-only check (param alignment +
-        parse) without domain validation.
-        """
-        from orthograph.cypher.validation import (  # noqa: PLC0415 — lazy to avoid circular import
-            validate_query as _validate_query,
-        )
-
-        return _validate_query(self, definition)
 
     def __repr__(self) -> str:
         id_name = (
-            self.Identifiers.__name__
-            if self.Identifiers is not None
+            self.identifiers_schema.__name__
+            if self.identifiers_schema is not None
             else "NoIdentifiers"
         )
         return (
-            f"CypherQuery(name={self.name!r}, params={self.Params.__name__}, "
-            f"identifiers={id_name})"
+            f"CypherQuery(query_id={self.query_id!r}, "
+            f"params_schema={self.params_schema.__name__}, "
+            f"identifiers_schema={id_name})"
         )
