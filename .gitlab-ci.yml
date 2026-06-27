@@ -1,16 +1,36 @@
 stages:
   - lint
+  - security
   - pytest
   - release
 
+# Pipeline runs only for merge requests and pushes to main.
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
     - when: never
 
+variables:
+  GITLEAKS_VERSION: "v8.30.0"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PYTHON_VERSION: "3.12"   # default; overridden by the pytest matrix
+  # Full clone depth so gitleaks history scans and the MR diff-base SHA
+  # are always available. GitLab manages the fetch; no manual unshallow needed.
+  GIT_DEPTH: 0
 
+# Defaults applied to every job.
+default:
+  # Cancel superseded pipelines automatically when a new commit is pushed.
+  # Release jobs override this (see .bumpver).
+  interruptible: true
+
+# Cache pip downloads, keyed on pyproject.toml so the cache is invalidated
+# only when dependencies actually change (avoids cross-branch contamination).
 cache:
+  key:
+    files:
+      - pyproject.toml
   paths:
     - .cache/pip
 
@@ -23,27 +43,85 @@ pre-commit:
     - pip install -e '.[dev]'
     - SKIP=no-commit-to-branch pre-commit run --all-files --show-diff-on-failure --color=always
 
+# ── Gitleaks secret detection ────────────────────────────────────────
+# Base template shared by both MR and main scan jobs.
+.gitleaks_base:
+  stage: security
+  needs: []  # start immediately at pipeline start, independent of stage order
+  image:
+    name: zricethezav/gitleaks:${GITLEAKS_VERSION}
+    entrypoint: [""]
+  before_script:
+    # Git refuses to operate on a repo owned by another user inside the runner.
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+  artifacts:
+    paths:
+      - gitleaks-report.json
+    expire_in: 30 days
+    when: always
+
+# MR pipelines: scan only the commits introduced by the merge request.
+# Note: 'gitleaks git' takes the repo path as a positional argument ('.'),
+# not via a --source flag.
+gitleaks_secret_scan_mr:
+  extends: .gitleaks_base
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - >
+      gitleaks git
+      --log-opts="$CI_MERGE_REQUEST_DIFF_BASE_SHA..HEAD"
+      --report-format json
+      --report-path gitleaks-report.json
+      --verbose
+      --exit-code 1
+      .
+
+# Main branch: full repository history scan.
+gitleaks_secret_scan_full:
+  extends: .gitleaks_base
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - >
+      gitleaks git
+      --report-format json
+      --report-path gitleaks-report.json
+      --verbose
+      --exit-code 1
+      .
+
 pytest:
   stage: pytest
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-  image: "python:$VERSION"
+  image: "python:$PYTHON_VERSION"
   script:
-    - pip install -e '.[dev]'
-    - python -m pytest -v
+    - pip install --cache-dir "$PIP_CACHE_DIR" -e '.[dev]'
+    # --junitxml feeds the GitLab MR test report widget.
+    - python -m pytest -v --junitxml=report.xml
     # Notebook regression tests (cell execution via nbval).
     # DB-required notebooks are excluded via notebooks/conftest.py.
     - pytest notebooks/ --nbval-lax -v
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+    expire_in: 1 week
+  # Run the test suite across all supported Python versions in parallel.
   parallel:
     matrix:
-      - VERSION: [ "3.11", "3.12", "3.13", "3.14"]
+      - PYTHON_VERSION: ["3.11", "3.12", "3.13", "3.14"]
 
+# ── Release / version bump ───────────────────────────────────────────
 .bumpver:
   stage: release
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
   image: python:3.12
   when: manual
+  # Release must never be interrupted mid-publish.
+  interruptible: false
   variables:
     TYPE: ""
   tags:
@@ -53,11 +131,13 @@ pytest:
     - git config --global user.email "bumpver@syngenta.com"
     - git config --global user.name "bumpver"
     - git remote set-url origin "https://gitlab-ci-token:${BUMPVER_TOKEN}@gitlab.com/${CI_PROJECT_NAMESPACE}/${CI_PROJECT_NAME}.git"
-    - bumpver update $TYPE --no-push
-    - git push -o ci.skip --tags origin HEAD:${CI_COMMIT_REF_NAME}
+    - bumpver update "$TYPE" --no-push
+    - git push -o ci.skip --tags origin "HEAD:${CI_COMMIT_REF_NAME}"
     - python -m build
     - twine check dist/*
-    - twine upload --cert $ROOT_CA dist/*
+    # --skip-existing makes re-runs idempotent instead of erroring on a
+    # version that was already uploaded.
+    - twine upload --skip-existing --cert "$ROOT_CA" dist/*
 
 bumpver-minor:
   extends: .bumpver
