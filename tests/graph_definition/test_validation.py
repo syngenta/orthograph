@@ -33,41 +33,45 @@ from tests.graph_definition.conftest import (  # noqa: F401 — re-exported for 
 # --- Validate nodes tests ---
 
 
-def test_validate_nodes_valid_dict(filmography_model: GraphDefinition):
+def test_validate_nodes_valid_dict(filmography_model: GraphDefinition) -> None:
     v = GraphValidator(filmography_model)
     result = v.validate_nodes([{"__label__": "Person", "name": "Alice", "age": 30}])
     assert result.is_valid
 
 
-def test_validate_nodes_valid_model_instance(filmography_model: GraphDefinition):
+def test_validate_nodes_valid_model_instance(
+    filmography_model: GraphDefinition,
+) -> None:
     v = GraphValidator(filmography_model)
     p = Person(name="Alice", age=30)
     result = v.validate_nodes([p])
     assert result.is_valid
 
 
-def test_validate_nodes_unknown_label(filmography_model: GraphDefinition):
+def test_validate_nodes_unknown_label(filmography_model: GraphDefinition) -> None:
     v = GraphValidator(filmography_model)
     result = v.validate_nodes([{"__label__": "City", "name": "London"}])
     assert not result.is_valid
     assert result.errors[0].code == "UNKNOWN_NODE_LABEL"
 
 
-def test_validate_nodes_missing_label_field(filmography_model: GraphDefinition):
+def test_validate_nodes_missing_label_field(filmography_model: GraphDefinition) -> None:
     v = GraphValidator(filmography_model)
     result = v.validate_nodes([{"name": "Alice", "age": 30}])
     assert not result.is_valid
     assert result.errors[0].code == "MISSING_LABEL"
 
 
-def test_validate_nodes_missing_required_property(filmography_model: GraphDefinition):
+def test_validate_nodes_missing_required_property(
+    filmography_model: GraphDefinition,
+) -> None:
     v = GraphValidator(filmography_model)
     result = v.validate_nodes([{"__label__": "Person", "name": "Alice"}])
     assert not result.is_valid
     assert any(e.code == "PROPERTY_VALIDATION_ERROR" for e in result.errors)
 
 
-def test_validate_nodes_wrong_property_type(filmography_model: GraphDefinition):
+def test_validate_nodes_wrong_property_type(filmography_model: GraphDefinition) -> None:
     v = GraphValidator(filmography_model)
     result = v.validate_nodes(
         [
@@ -83,7 +87,7 @@ def test_validate_nodes_wrong_property_type(filmography_model: GraphDefinition):
 
 def test_validate_nodes_optional_property_can_be_absent(
     filmography_model: GraphDefinition,
-):
+) -> None:
     v = GraphValidator(filmography_model)
     result = v.validate_nodes([{"__label__": "Person", "name": "Alice", "age": 30}])
     assert result.is_valid
@@ -91,7 +95,7 @@ def test_validate_nodes_optional_property_can_be_absent(
 
 def test_validate_nodes_optional_property_can_be_none(
     filmography_model: GraphDefinition,
-):
+) -> None:
     v = GraphValidator(filmography_model)
     result = v.validate_nodes(
         [
@@ -106,7 +110,9 @@ def test_validate_nodes_optional_property_can_be_none(
     assert result.is_valid
 
 
-def test_validate_nodes_extra_properties_rejected(filmography_model: GraphDefinition):
+def test_validate_nodes_extra_properties_rejected(
+    filmography_model: GraphDefinition,
+) -> None:
     v = GraphValidator(filmography_model)
     result = v.validate_nodes(
         [
@@ -122,7 +128,7 @@ def test_validate_nodes_extra_properties_rejected(filmography_model: GraphDefini
     assert any(e.code == "EXTRA_PROPERTIES" for e in result.errors)
 
 
-def test_validate_nodes_multiple(filmography_model: GraphDefinition):
+def test_validate_nodes_multiple(filmography_model: GraphDefinition) -> None:
     v = GraphValidator(filmography_model)
     result = v.validate_nodes(
         [
@@ -138,7 +144,7 @@ def test_validate_nodes_multiple(filmography_model: GraphDefinition):
     assert result.is_valid
 
 
-def test_validate_nodes_collects_all_errors(filmography_model: GraphDefinition):
+def test_validate_nodes_collects_all_errors(filmography_model: GraphDefinition) -> None:
     v = GraphValidator(filmography_model)
     result = v.validate_nodes(
         [
@@ -154,7 +160,7 @@ def test_validate_nodes_collects_all_errors(filmography_model: GraphDefinition):
 # --- Validate relationships tests ---
 
 
-def test_validate_relationships_valid_dict(filmography_model: GraphDefinition):
+def test_validate_relationships_valid_dict(filmography_model: GraphDefinition) -> None:
     v = GraphValidator(filmography_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Person", "name": "Alice", "age": 30},
@@ -172,7 +178,9 @@ def test_validate_relationships_valid_dict(filmography_model: GraphDefinition):
     assert result.is_valid
 
 
-def test_validate_relationships_unknown_label(filmography_model: GraphDefinition):
+def test_validate_relationships_unknown_label(
+    filmography_model: GraphDefinition,
+) -> None:
     v = GraphValidator(filmography_model)
     rels: list[dict[str, Any]] = [
         {
@@ -186,7 +194,9 @@ def test_validate_relationships_unknown_label(filmography_model: GraphDefinition
     assert result.errors[0].code == "UNKNOWN_RELATIONSHIP_LABEL"
 
 
-def test_validate_relationships_missing_label(filmography_model: GraphDefinition):
+def test_validate_relationships_missing_label(
+    filmography_model: GraphDefinition,
+) -> None:
     v = GraphValidator(filmography_model)
     rels: list[dict[str, Any]] = [
         {"__source_uid__": "a", "__target_uid__": "b"},
@@ -198,7 +208,7 @@ def test_validate_relationships_missing_label(filmography_model: GraphDefinition
 
 def test_validate_relationships_missing_required_property(
     filmography_model: GraphDefinition,
-):
+) -> None:
     v = GraphValidator(filmography_model)
     rels: list[dict[str, Any]] = [
         {
@@ -212,7 +222,9 @@ def test_validate_relationships_missing_required_property(
     assert not result.is_valid
 
 
-def test_validate_relationships_missing_source_uid(filmography_model: GraphDefinition):
+def test_validate_relationships_missing_source_uid(
+    filmography_model: GraphDefinition,
+) -> None:
     v = GraphValidator(filmography_model)
     rels: list[dict[str, Any]] = [
         {
@@ -225,7 +237,9 @@ def test_validate_relationships_missing_source_uid(filmography_model: GraphDefin
     assert any(e.code == "MISSING_ENDPOINT" for e in result.errors)
 
 
-def test_validate_relationships_missing_target_uid(filmography_model: GraphDefinition):
+def test_validate_relationships_missing_target_uid(
+    filmography_model: GraphDefinition,
+) -> None:
     v = GraphValidator(filmography_model)
     rels: list[dict[str, Any]] = [
         {
@@ -241,7 +255,9 @@ def test_validate_relationships_missing_target_uid(filmography_model: GraphDefin
 # --- Validate referential integrity tests ---
 
 
-def test_validate_referential_integrity_valid(filmography_model: GraphDefinition):
+def test_validate_referential_integrity_valid(
+    filmography_model: GraphDefinition,
+) -> None:
     v = GraphValidator(filmography_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Person", "name": "Alice", "age": 30},
@@ -261,7 +277,7 @@ def test_validate_referential_integrity_valid(filmography_model: GraphDefinition
 
 def test_validate_referential_integrity_dangling_source(
     filmography_model: GraphDefinition,
-):
+) -> None:
     v = GraphValidator(filmography_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Movie", "title": "Inception", "year": 2010},
@@ -281,7 +297,7 @@ def test_validate_referential_integrity_dangling_source(
 
 def test_validate_referential_integrity_dangling_target(
     filmography_model: GraphDefinition,
-):
+) -> None:
     v = GraphValidator(filmography_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Person", "name": "Alice", "age": 30},
@@ -301,7 +317,7 @@ def test_validate_referential_integrity_dangling_target(
 
 def test_validate_referential_integrity_wrong_source_type(
     filmography_model: GraphDefinition,
-):
+) -> None:
     v = GraphValidator(filmography_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Movie", "title": "A", "year": 2020},
@@ -323,7 +339,7 @@ def test_validate_referential_integrity_wrong_source_type(
 # --- Validate cardinality tests ---
 
 
-def test_validate_cardinality_satisfied(full_model: GraphDefinition):
+def test_validate_cardinality_satisfied(full_model: GraphDefinition) -> None:
     v = GraphValidator(full_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Person", "name": "Alice", "age": 30},
@@ -347,7 +363,7 @@ def test_validate_cardinality_satisfied(full_model: GraphDefinition):
     assert result.is_valid
 
 
-def test_validate_cardinality_violation_too_few(full_model: GraphDefinition):
+def test_validate_cardinality_violation_too_few(full_model: GraphDefinition) -> None:
     v = GraphValidator(full_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Person", "name": "Alice", "age": 30},
@@ -694,7 +710,7 @@ def test_validate_entity_presence_required_relationship_type_missing():
 # --- Validate full graph tests ---
 
 
-def test_validate_full_graph_complete_valid(filmography_model: GraphDefinition):
+def test_validate_full_graph_complete_valid(filmography_model: GraphDefinition) -> None:
     v = GraphValidator(filmography_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Person", "name": "Alice", "age": 30},
@@ -727,7 +743,7 @@ def test_validate_full_graph_complete_valid(filmography_model: GraphDefinition):
 # --- Undirected relationship validation tests ---
 
 
-def test_undirected_same_type_forward_valid(social_model: GraphDefinition):
+def test_undirected_same_type_forward_valid(social_model: GraphDefinition) -> None:
     """Undirected same-type: forward direction is valid."""
     v = GraphValidator(social_model)
     nodes: list[dict[str, Any]] = [
@@ -745,7 +761,7 @@ def test_undirected_same_type_forward_valid(social_model: GraphDefinition):
     assert result.is_valid
 
 
-def test_undirected_same_type_reverse_valid(social_model: GraphDefinition):
+def test_undirected_same_type_reverse_valid(social_model: GraphDefinition) -> None:
     """Undirected same-type: reverse direction is also valid."""
     v = GraphValidator(social_model)
     nodes: list[dict[str, Any]] = [
@@ -765,7 +781,7 @@ def test_undirected_same_type_reverse_valid(social_model: GraphDefinition):
 
 def test_undirected_cross_type_forward_valid(
     cross_undirected_model: GraphDefinition,
-):
+) -> None:
     """Undirected cross-type: Person->Company (forward) is valid."""
     v = GraphValidator(cross_undirected_model)
     nodes: list[dict[str, Any]] = [
@@ -785,7 +801,7 @@ def test_undirected_cross_type_forward_valid(
 
 def test_undirected_cross_type_reverse_valid(
     cross_undirected_model: GraphDefinition,
-):
+) -> None:
     """Undirected cross-type: Company->Person (reversed) should also be valid."""
     v = GraphValidator(cross_undirected_model)
     nodes: list[dict[str, Any]] = [
@@ -805,7 +821,7 @@ def test_undirected_cross_type_reverse_valid(
 
 def test_undirected_cross_type_wrong_types_rejected(
     cross_undirected_model: GraphDefinition,
-):
+) -> None:
     """Undirected cross-type: neither direction matches (wrong types) is rejected."""
     v = GraphValidator(cross_undirected_model)
     nodes: list[dict[str, Any]] = [
@@ -824,7 +840,9 @@ def test_undirected_cross_type_wrong_types_rejected(
     assert any(e.code == "WRONG_ENDPOINT_TYPE" for e in result.errors)
 
 
-def test_directed_cross_type_reverse_rejected(filmography_model: GraphDefinition):
+def test_directed_cross_type_reverse_rejected(
+    filmography_model: GraphDefinition,
+) -> None:
     """Directed relationship: reverse direction is rejected."""
     v = GraphValidator(filmography_model)
     nodes: list[dict[str, Any]] = [
@@ -846,7 +864,7 @@ def test_directed_cross_type_reverse_rejected(filmography_model: GraphDefinition
 
 def test_undirected_cardinality_counts_both_directions(
     social_model: GraphDefinition,
-):
+) -> None:
     """Undirected cardinality counts both outgoing and incoming."""
     v = GraphValidator(social_model)
     nodes: list[dict[str, Any]] = [

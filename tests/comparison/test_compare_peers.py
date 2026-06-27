@@ -11,7 +11,7 @@ Coverage per spec:
 - Diff results never contain ``Severity.ERROR`` (``is_valid`` stays True).
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 from orthograph.comparison.engine import compare_definitions, compare_profiles
 from orthograph.diagnostics.classification import Severity
@@ -45,7 +45,7 @@ def _profile(*labels: str, **rel_types: RelationshipTypeProfile) -> GraphProfile
     )
 
 
-def _issue_codes(result) -> set[str]:
+def _issue_codes(result: Any) -> set[str]:
     return {i.code for i in result.issues}
 
 
@@ -610,7 +610,7 @@ def test_compare_profiles_no_error_severity_extended():
     _assert_no_error(compare_profiles(r1, r2))
 
 
-def _assert_no_error(result) -> None:
+def _assert_no_error(result: Any) -> None:
     for issue in result.issues:
         assert issue.severity != Severity.ERROR, (
             f"Diff comparison emitted ERROR: {issue}"
@@ -623,7 +623,9 @@ def _assert_no_error(result) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compare_profiles_filmography_identical(filmography_model: GraphDefinition):
+def test_compare_profiles_filmography_identical(
+    filmography_model: GraphDefinition,
+) -> None:
     """Identical profiles from filmography model produce zero diff issues."""
     # Build a profile consistent with the filmography model
     from orthograph.graph_profile.models import NodeTypeProfile, RelationshipTypeProfile
@@ -661,7 +663,9 @@ def test_compare_profiles_filmography_identical(filmography_model: GraphDefiniti
     assert result.is_valid is True
 
 
-def test_compare_definitions_filmography_identical(filmography_model: GraphDefinition):
+def test_compare_definitions_filmography_identical(
+    filmography_model: GraphDefinition,
+) -> None:
     """Same GraphDefinition compared against itself emits zero issues."""
     result = compare_definitions(filmography_model, filmography_model)
     assert result.issues == []

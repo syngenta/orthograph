@@ -63,26 +63,26 @@ def simple_yaml_file(tmp_path: Path, simple_yaml_content: str) -> Path:
 # --- YAML loading tests ---
 
 
-def test_yaml_load_from_string(simple_yaml_content: str):
+def test_yaml_load_from_string(simple_yaml_content: str) -> None:
     graph_definition = load_yaml_string(simple_yaml_content)
     assert isinstance(graph_definition, GraphDefinition)
     assert graph_definition.name == "Filmography"
     assert graph_definition.version == "1.0.0"
 
 
-def test_yaml_load_node_types(simple_yaml_content: str):
+def test_yaml_load_node_types(simple_yaml_content: str) -> None:
     graph_definition = load_yaml_string(simple_yaml_content)
     assert graph_definition.node_labels == {"Person", "Movie"}
 
 
-def test_yaml_node_uid_field(simple_yaml_content: str):
+def test_yaml_node_uid_field(simple_yaml_content: str) -> None:
     graph_definition = load_yaml_string(simple_yaml_content)
     person = graph_definition.get_node_type("Person")
     assert person is not None
     assert person.__uid_field__ == "name"
 
 
-def test_yaml_node_properties(simple_yaml_content: str):
+def test_yaml_node_properties(simple_yaml_content: str) -> None:
     graph_definition = load_yaml_string(simple_yaml_content)
     person = graph_definition.get_node_type("Person")
     assert person is not None
@@ -90,7 +90,7 @@ def test_yaml_node_properties(simple_yaml_content: str):
     assert props == {"name", "age", "email"}
 
 
-def test_yaml_required_vs_optional_properties(simple_yaml_content: str):
+def test_yaml_required_vs_optional_properties(simple_yaml_content: str) -> None:
     graph_definition = load_yaml_string(simple_yaml_content)
     person = graph_definition.get_node_type("Person")
     assert person is not None
@@ -100,12 +100,12 @@ def test_yaml_required_vs_optional_properties(simple_yaml_content: str):
     assert "email" not in required
 
 
-def test_yaml_load_relationship_types(simple_yaml_content: str):
+def test_yaml_load_relationship_types(simple_yaml_content: str) -> None:
     graph_definition = load_yaml_string(simple_yaml_content)
     assert graph_definition.relationship_labels == {"ACTED_IN", "DIRECTED"}
 
 
-def test_yaml_relationship_endpoints(simple_yaml_content: str):
+def test_yaml_relationship_endpoints(simple_yaml_content: str) -> None:
     graph_definition = load_yaml_string(simple_yaml_content)
     acted_in = graph_definition.get_relationship_types_by_label("ACTED_IN")[0]
     assert acted_in is not None
@@ -113,7 +113,7 @@ def test_yaml_relationship_endpoints(simple_yaml_content: str):
     assert acted_in.__target_label__ == "Movie"
 
 
-def test_yaml_relationship_cardinality(simple_yaml_content: str):
+def test_yaml_relationship_cardinality(simple_yaml_content: str) -> None:
     graph_definition = load_yaml_string(simple_yaml_content)
     acted_in = graph_definition.get_relationship_types_by_label("ACTED_IN")[0]
     assert acted_in is not None
@@ -121,7 +121,7 @@ def test_yaml_relationship_cardinality(simple_yaml_content: str):
     assert acted_in.__target_cardinality__ == CardinalitySpec(min=0, max=None)
 
 
-def test_yaml_relationship_default_cardinality(simple_yaml_content: str):
+def test_yaml_relationship_default_cardinality(simple_yaml_content: str) -> None:
     graph_definition = load_yaml_string(simple_yaml_content)
     directed = graph_definition.get_relationship_types_by_label("DIRECTED")[0]
     assert directed is not None
@@ -130,18 +130,18 @@ def test_yaml_relationship_default_cardinality(simple_yaml_content: str):
     assert directed.__target_cardinality__ == CardinalitySpec(min=0, max=None)
 
 
-def test_yaml_load_from_file(simple_yaml_file: Path):
+def test_yaml_load_from_file(simple_yaml_file: Path) -> None:
     graph_definition = load_yaml_file(simple_yaml_file)
     assert graph_definition.name == "Filmography"
     assert graph_definition.node_labels == {"Person", "Movie"}
 
 
-def test_yaml_load_nonexistent_file_raises(tmp_path: Path):
+def test_yaml_load_nonexistent_file_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         load_yaml_file(tmp_path / "nonexistent.yaml")
 
 
-def test_yaml_missing_name_raises_value_error():
+def test_yaml_missing_name_raises_value_error() -> None:
     content = """\
 node_types:
   Person:
@@ -152,7 +152,7 @@ node_types:
         load_yaml_string(content)
 
 
-def test_yaml_relationship_missing_source_raises_value_error():
+def test_yaml_relationship_missing_source_raises_value_error() -> None:
     content = """\
 name: "Test"
 node_types:
@@ -165,7 +165,7 @@ relationship_types:
         load_yaml_string(content)
 
 
-def test_yaml_relationship_missing_target_raises_value_error():
+def test_yaml_relationship_missing_target_raises_value_error() -> None:
     content = """\
 name: "Test"
 node_types:
@@ -181,7 +181,7 @@ relationship_types:
 # --- YAML with optional entities tests ---
 
 
-def test_yaml_optional_node_type():
+def test_yaml_optional_node_type() -> None:
     content = """\
 name: "Test"
 node_types:
@@ -207,7 +207,7 @@ relationship_types: []
 # --- YAML round-trip tests ---
 
 
-def test_yaml_save_and_load(tmp_path: Path):
+def test_yaml_save_and_load(tmp_path: Path) -> None:
     class A(NodeModel):
         __label__ = "A"
         __uid_field__ = "name"
@@ -249,7 +249,7 @@ def test_yaml_save_and_load(tmp_path: Path):
 # --- conditional cardinality must not crash YAML serialization ---
 
 
-def test_yaml_save_conditional_cardinality_uses_default_bound(tmp_path: Path):
+def test_yaml_save_conditional_cardinality_uses_default_bound(tmp_path: Path) -> None:
     """Serializing a RelationshipModel with ConditionalCardinality round-trips
     the full conditional rules (full round-trip of conditional cardinality)."""
 

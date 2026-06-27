@@ -1,6 +1,7 @@
 """Tests for orthograph.visualization.mermaid."""
 
 import pytest
+from pytest_mock import MockerFixture
 
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
@@ -79,7 +80,7 @@ def undirected_model() -> GraphDefinition:
 # ============================================================
 
 
-def test_mermaid_basic(graph_definition: GraphDefinition):
+def test_mermaid_basic(graph_definition: GraphDefinition) -> None:
     mermaid = model_to_mermaid(graph_definition)
     assert "graph TD" in mermaid
     assert "Person" in mermaid
@@ -88,35 +89,37 @@ def test_mermaid_basic(graph_definition: GraphDefinition):
     assert "DIRECTED" in mermaid
 
 
-def test_mermaid_directed_arrow(graph_definition: GraphDefinition):
+def test_mermaid_directed_arrow(graph_definition: GraphDefinition) -> None:
     mermaid = model_to_mermaid(graph_definition)
     assert "-->" in mermaid
 
 
-def test_mermaid_undirected_arrow(undirected_model: GraphDefinition):
+def test_mermaid_undirected_arrow(undirected_model: GraphDefinition) -> None:
     mermaid = model_to_mermaid(undirected_model)
     assert "---" in mermaid
 
 
-def test_mermaid_node_properties(graph_definition: GraphDefinition):
+def test_mermaid_node_properties(graph_definition: GraphDefinition) -> None:
     mermaid = model_to_mermaid(graph_definition)
     assert "name" in mermaid
     assert "age" in mermaid
 
 
-def test_mermaid_uid_field_highlighted(graph_definition: GraphDefinition):
+def test_mermaid_uid_field_highlighted(graph_definition: GraphDefinition) -> None:
     """UID fields should be marked with UID in the output."""
     mermaid = model_to_mermaid(graph_definition)
     assert "UID" in mermaid
 
 
-def test_mermaid_no_square_brackets_in_labels(graph_definition: GraphDefinition):
+def test_mermaid_no_square_brackets_in_labels(
+    graph_definition: GraphDefinition,
+) -> None:
     """Output should not contain [UID] since brackets break Mermaid syntax."""
     mermaid = model_to_mermaid(graph_definition)
     assert "[UID]" not in mermaid
 
 
-def test_mermaid_cardinality_labels():
+def test_mermaid_cardinality_labels() -> None:
     """Edges should show cardinality labels."""
     m = GraphDefinition(
         name="Card",
@@ -128,13 +131,13 @@ def test_mermaid_cardinality_labels():
     assert "0..*" in mermaid
 
 
-def test_mermaid_required_optional_markers(graph_definition: GraphDefinition):
+def test_mermaid_required_optional_markers(graph_definition: GraphDefinition) -> None:
     """Required and optional properties should be distinguished."""
     mermaid = model_to_mermaid(graph_definition)
     assert "name: str" in mermaid
 
 
-def test_mermaid_undirected_cross_type():
+def test_mermaid_undirected_cross_type() -> None:
     """Undirected cross-type relationship uses '---' arrow."""
     m = GraphDefinition(
         name="Cross",
@@ -148,7 +151,7 @@ def test_mermaid_undirected_cross_type():
     assert "COLLABORATES" in mermaid
 
 
-def test_mermaid_mixed_directed_and_undirected():
+def test_mermaid_mixed_directed_and_undirected() -> None:
     """Model with both directed and undirected uses correct arrows."""
     m = GraphDefinition(
         name="Mixed",
@@ -160,7 +163,7 @@ def test_mermaid_mixed_directed_and_undirected():
     assert "-->" in mermaid
 
 
-def test_mermaid_relationship_properties(graph_definition: GraphDefinition):
+def test_mermaid_relationship_properties(graph_definition: GraphDefinition) -> None:
     """Relationship properties should appear in the edge label."""
     mermaid = model_to_mermaid(graph_definition)
     assert "role: str" in mermaid
@@ -171,18 +174,18 @@ def test_mermaid_relationship_properties(graph_definition: GraphDefinition):
 # ============================================================
 
 
-def test_mermaid_ink_url_produces_valid_url():
+def test_mermaid_ink_url_produces_valid_url() -> None:
     url = _mermaid_ink_url("graph TD\n    A --> B")
     assert url.startswith("https://mermaid.ink/img/")
     assert len(url) > len("https://mermaid.ink/img/")
 
 
-def test_mermaid_ink_url_is_deterministic():
+def test_mermaid_ink_url_is_deterministic() -> None:
     graph = "graph TD\n    A --> B"
     assert _mermaid_ink_url(graph) == _mermaid_ink_url(graph)
 
 
-def test_mermaid_ink_url_uses_urlsafe_base64():
+def test_mermaid_ink_url_uses_urlsafe_base64() -> None:
     """URL should use urlsafe base64 (no + or / characters)."""
     url = _mermaid_ink_url("graph TD\n    A --> B")
     encoded_part = url.split("/img/")[1]
@@ -195,7 +198,7 @@ def test_mermaid_ink_url_uses_urlsafe_base64():
 # ============================================================
 
 
-def test_display_mermaid_with_string(mocker):
+def test_display_mermaid_with_string(mocker: MockerFixture) -> None:
     """display_mermaid accepts a raw Mermaid string."""
     mock_display = mocker.patch(
         "orthograph.visualization.mermaid.display",
@@ -221,7 +224,9 @@ def test_display_mermaid_with_string(mocker):
     mock_display.assert_called_once()
 
 
-def test_display_mermaid_with_model(mocker, graph_definition: GraphDefinition):
+def test_display_mermaid_with_model(
+    mocker: MockerFixture, graph_definition: GraphDefinition
+) -> None:
     """display_mermaid accepts a GraphDefinition and converts it."""
     mock_display = mocker.patch(
         "orthograph.visualization.mermaid.display",
@@ -245,7 +250,7 @@ def test_display_mermaid_with_model(mocker, graph_definition: GraphDefinition):
     mock_display.assert_called_once()
 
 
-def test_display_mermaid_rejects_unsupported_type():
+def test_display_mermaid_rejects_unsupported_type() -> None:
     """display_mermaid raises TypeError for unsupported input."""
     with pytest.raises(TypeError, match="Cannot render"):
         display_mermaid(42)  # type: ignore[arg-type]
@@ -297,7 +302,7 @@ class HasOutput(RelationshipModel):
     )
 
 
-def test_mermaid_conditional_cardinality_renders():
+def test_mermaid_conditional_cardinality_renders() -> None:
     """model_to_mermaid renders conditional cardinality without crashing."""
     m = GraphDefinition(
         name="ConditionalTest",
@@ -313,7 +318,7 @@ def test_mermaid_conditional_cardinality_renders():
     assert "{" in mermaid  # Conditional summary starts with {
 
 
-def test_mermaid_constant_cardinality_unchanged():
+def test_mermaid_constant_cardinality_unchanged() -> None:
     """Constant cardinality rendering in mermaid is unchanged (regression)."""
     m = GraphDefinition(
         name="ConstantTest",
@@ -326,7 +331,7 @@ def test_mermaid_constant_cardinality_unchanged():
     assert "0..*" in mermaid
 
 
-def test_mermaid_pipe_labels_contain_no_br_tags():
+def test_mermaid_pipe_labels_contain_no_br_tags() -> None:
     """Edge pipe labels must not contain <br> — Mermaid does not support HTML there."""
     m = GraphDefinition(
         name="BrTest",
@@ -342,7 +347,7 @@ def test_mermaid_pipe_labels_contain_no_br_tags():
         assert "<br>" not in label, f"Pipe label contains <br>: {label!r}"
 
 
-def test_mermaid_edge_label_parts_joined_with_space():
+def test_mermaid_edge_label_parts_joined_with_space() -> None:
     """Multi-part edge labels (name + props + cardinality) are joined with a space."""
     m = GraphDefinition(
         name="SepTest",
@@ -376,7 +381,9 @@ class CompanyKnowsCompany(RelationshipModel):
     __target_label__ = "Company"
 
 
-def test_mermaid_two_same_label_different_endpoint_types_render_as_distinct_edges():
+def test_mermaid_two_same_label_different_endpoint_types_render_as_distinct_edges() -> (
+    None
+):
     """Two same-label types with different endpoints render as distinct edges."""
     m = GraphDefinition(
         name="TwoShapes",

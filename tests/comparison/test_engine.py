@@ -82,7 +82,7 @@ def test_db_type_to_python_unknown():
 # --- Perfect match ---
 
 
-def test_compare_perfect_match(filmography_model: GraphDefinition):
+def test_compare_perfect_match(filmography_model: GraphDefinition) -> None:
     profile = _complete_profile(filmography_model)
     result = compare_profile_to_definition(profile, filmography_model)
     assert result.is_valid, [str(e) for e in result.errors]
@@ -93,7 +93,7 @@ def test_compare_perfect_match(filmography_model: GraphDefinition):
 
 def test_compare_missing_node_label(
     filmography_model: GraphDefinition,
-):
+) -> None:
     profile = _complete_profile(filmography_model)
     # Remove City from profile
     profiles = dict(profile.node_type_profiles)
@@ -115,7 +115,7 @@ def test_compare_missing_node_label(
 
 def test_compare_unexpected_node_label(
     filmography_model: GraphDefinition,
-):
+) -> None:
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.node_type_profiles)
     profiles["Animal"] = NodeTypeProfile(label="Animal", count=5)
@@ -139,7 +139,7 @@ def test_compare_unexpected_node_label(
 
 def test_compare_missing_rel_type(
     filmography_model: GraphDefinition,
-):
+) -> None:
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
     del profiles["Person:ACTED_IN:Movie"]
@@ -159,7 +159,7 @@ def test_compare_missing_rel_type(
 
 def test_compare_unexpected_rel_type(
     filmography_model: GraphDefinition,
-):
+) -> None:
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
     profiles["Person:FRIEND_OF:Person"] = RelationshipTypeProfile(
@@ -187,7 +187,7 @@ def test_compare_unexpected_rel_type(
 
 def test_compare_missing_required_property(
     filmography_model: GraphDefinition,
-):
+) -> None:
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.node_type_profiles)
     person = profiles["Person"]
@@ -204,7 +204,7 @@ def test_compare_missing_required_property(
 
 def test_compare_property_type_mismatch(
     filmography_model: GraphDefinition,
-):
+) -> None:
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.node_type_profiles)
     person = profiles["Person"]
@@ -226,7 +226,7 @@ def test_compare_property_type_mismatch(
 
 def test_compare_property_incomplete(
     filmography_model: GraphDefinition,
-):
+) -> None:
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.node_type_profiles)
     person = profiles["Person"]
@@ -248,7 +248,7 @@ def test_compare_property_incomplete(
 
 def test_compare_unexpected_property(
     filmography_model: GraphDefinition,
-):
+) -> None:
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.node_type_profiles)
     person = profiles["Person"]
@@ -272,7 +272,7 @@ def test_compare_unexpected_property(
 
 def test_compare_endpoint_mismatch_reclassifies(
     filmography_model: GraphDefinition,
-):
+) -> None:
     """A wrong endpoint is a different identity (address), so it
     reclassifies to MISSING_REL_TYPE + UNEXPECTED_REL_TYPE."""
     profile = _complete_profile(filmography_model)
@@ -296,7 +296,7 @@ def test_compare_endpoint_mismatch_reclassifies(
 
 def test_compare_cardinality_violation(
     filmography_model: GraphDefinition,
-):
+) -> None:
     profile = _complete_profile(filmography_model)
     profiles = dict(profile.rel_type_profiles)
     lives_in = profiles["Person:LIVES_IN:City"]
@@ -319,7 +319,7 @@ def test_compare_cardinality_violation(
 
 def test_compare_no_cardinality_stats_skipped(
     filmography_model: GraphDefinition,
-):
+) -> None:
     """When cardinality stats are None, no cardinality check is performed."""
     profile = _complete_profile(filmography_model)
     # _complete_profile already has cardinality_stats=None
@@ -330,7 +330,7 @@ def test_compare_no_cardinality_stats_skipped(
 # --- Undirected relationship endpoint validation tests ---
 
 
-def test_compare_undirected_cross_type_forward_valid():
+def test_compare_undirected_cross_type_forward_valid() -> None:
     """Undirected cross-type: forward source/target is valid."""
     from orthograph.graph_definition.models import NodeModel, RelationshipModel
 
@@ -360,7 +360,7 @@ def test_compare_undirected_cross_type_forward_valid():
     assert result.is_valid, [str(e) for e in result.errors]
 
 
-def test_compare_undirected_cross_type_reverse_valid():
+def test_compare_undirected_cross_type_reverse_valid() -> None:
     """Undirected cross-type: reversed source/target should also be valid."""
     from orthograph.graph_definition.models import NodeModel, RelationshipModel
 
@@ -431,7 +431,7 @@ def test_compare_undirected_cross_type_reverse_valid():
     assert not any(e.code == "INVALID_ENDPOINT" for e in result.errors)
 
 
-def test_compare_directed_cross_type_reverse_rejected():
+def test_compare_directed_cross_type_reverse_rejected() -> None:
     """Directed: reversed source/target is rejected (as a presence mismatch)."""
     from orthograph.graph_definition.models import NodeModel, RelationshipModel
 
@@ -518,7 +518,7 @@ def test_compare_directed_cross_type_reverse_rejected():
 
 def test_missing_node_label_does_not_emit_missing_rel_type(
     filmography_model: GraphDefinition,
-):
+) -> None:
     """A missing node label must produce exactly one MISSING_NODE_LABEL,
     zero MISSING_REL_TYPE for the same entity id."""
     profile = _complete_profile(filmography_model)
@@ -545,7 +545,7 @@ def test_missing_node_label_does_not_emit_missing_rel_type(
 
 def test_missing_rel_type_does_not_emit_missing_node_label(
     filmography_model: GraphDefinition,
-):
+) -> None:
     """A missing rel type must produce exactly one MISSING_REL_TYPE,
     zero MISSING_NODE_LABEL for the same entity id."""
     profile = _complete_profile(filmography_model)
@@ -571,7 +571,7 @@ def test_missing_rel_type_does_not_emit_missing_node_label(
 
 def test_unexpected_node_label_does_not_emit_unexpected_rel_type(
     filmography_model: GraphDefinition,
-):
+) -> None:
     """An unexpected node label must emit UNEXPECTED_NODE_LABEL, not
     UNEXPECTED_REL_TYPE at the same address."""
     profile = _complete_profile(filmography_model)
@@ -595,7 +595,7 @@ def test_unexpected_node_label_does_not_emit_unexpected_rel_type(
 
 def test_unexpected_rel_type_does_not_emit_unexpected_node_label(
     filmography_model: GraphDefinition,
-):
+) -> None:
     """An unexpected rel type must emit UNEXPECTED_REL_TYPE, not
     UNEXPECTED_NODE_LABEL at the same address."""
     profile = _complete_profile(filmography_model)
@@ -633,7 +633,7 @@ def test_unexpected_rel_type_does_not_emit_unexpected_node_label(
 
 def test_unexpected_node_label_properties_do_not_emit_unexpected_property(
     filmography_model: GraphDefinition,
-):
+) -> None:
     """Properties of an unexpected node label must not generate
     UNEXPECTED_PROPERTY issues."""
     profile = _complete_profile(filmography_model)
@@ -665,7 +665,7 @@ def test_unexpected_node_label_properties_do_not_emit_unexpected_property(
 
 def test_unexpected_rel_type_properties_do_not_emit_unexpected_property(
     filmography_model: GraphDefinition,
-):
+) -> None:
     """Properties of an unexpected relationship type must not generate
     UNEXPECTED_PROPERTY issues."""
     profile = _complete_profile(filmography_model)

@@ -67,7 +67,7 @@ def display_mermaid(obj: "GraphDefinition | str") -> None:
         )
 
     url = _mermaid_ink_url(mermaid_text)
-    display(Image(url=url))  # type: ignore[no-untyped-call]
+    display(Image(url=url))
 
 
 def model_to_mermaid(graph_definition: GraphDefinition) -> str:

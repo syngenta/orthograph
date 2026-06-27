@@ -144,32 +144,32 @@ def sample_result() -> ValidationResult:
 # ============================================================
 
 
-def test_model_to_text_header(graph_definition: GraphDefinition):
+def test_model_to_text_header(graph_definition: GraphDefinition) -> None:
     text = model_to_text(graph_definition)
     assert "Model: Film" in text
     assert "Version: 1.0" in text
 
 
-def test_model_to_text_node_types(graph_definition: GraphDefinition):
+def test_model_to_text_node_types(graph_definition: GraphDefinition) -> None:
     text = model_to_text(graph_definition)
     assert "Node Types" in text
     assert "Person" in text
     assert "Movie" in text
 
 
-def test_model_to_text_properties(graph_definition: GraphDefinition):
+def test_model_to_text_properties(graph_definition: GraphDefinition) -> None:
     text = model_to_text(graph_definition)
     assert "name: str (required) [UID]" in text
     assert "age: int (required)" in text
     assert "email: str (optional)" in text
 
 
-def test_model_to_text_uid_marked(graph_definition: GraphDefinition):
+def test_model_to_text_uid_marked(graph_definition: GraphDefinition) -> None:
     text = model_to_text(graph_definition)
     assert "[UID]" in text
 
 
-def test_model_to_text_relationship_types(graph_definition: GraphDefinition):
+def test_model_to_text_relationship_types(graph_definition: GraphDefinition) -> None:
     text = model_to_text(graph_definition)
     assert "Relationship Types" in text
     assert "ACTED_IN" in text
@@ -177,13 +177,13 @@ def test_model_to_text_relationship_types(graph_definition: GraphDefinition):
     assert "Movie" in text
 
 
-def test_model_to_text_cardinality(graph_definition: GraphDefinition):
+def test_model_to_text_cardinality(graph_definition: GraphDefinition) -> None:
     text = model_to_text(graph_definition)
     assert "0..*" in text
     assert "1..*" in text
 
 
-def test_model_to_text_relationship_direction():
+def test_model_to_text_relationship_direction() -> None:
     m = GraphDefinition(
         name="Test",
         node_types=[Person, Movie, City],
@@ -193,7 +193,7 @@ def test_model_to_text_relationship_direction():
     assert "---" in text
 
 
-def test_model_to_text_no_version():
+def test_model_to_text_no_version() -> None:
     m = GraphDefinition(
         name="NoVersion",
         node_types=[Person, Movie],
@@ -208,50 +208,52 @@ def test_model_to_text_no_version():
 # ============================================================
 
 
-def test_profile_to_text_header(sample_profile: GraphProfile):
+def test_profile_to_text_header(sample_profile: GraphProfile) -> None:
     text = profile_to_text(sample_profile)
     assert "Profile: test" in text
     assert "2026" in text
 
 
-def test_profile_to_text_node_counts(sample_profile: GraphProfile):
+def test_profile_to_text_node_counts(sample_profile: GraphProfile) -> None:
     text = profile_to_text(sample_profile)
     assert "Person (10 instances)" in text
     assert "Movie (5 instances)" in text
 
 
-def test_profile_to_text_property_completeness(sample_profile: GraphProfile):
+def test_profile_to_text_property_completeness(sample_profile: GraphProfile) -> None:
     text = profile_to_text(sample_profile)
     assert "name: 100% complete" in text
     assert "age: 80% complete" in text
     assert "(8/10)" in text
 
 
-def test_profile_to_text_observed_ratio_no_mandatory_tag(sample_profile: GraphProfile):
+def test_profile_to_text_observed_ratio_no_mandatory_tag(
+    sample_profile: GraphProfile,
+) -> None:
     """[mandatory]/[partial] tags replaced by observed ratio."""
     text = profile_to_text(sample_profile)
     assert "[mandatory]" not in text
     assert "[partial]" not in text
 
 
-def test_profile_to_text_observed_types(sample_profile: GraphProfile):
+def test_profile_to_text_observed_types(sample_profile: GraphProfile) -> None:
     text = profile_to_text(sample_profile)
     assert "types=[str]" in text
     assert "types=[int]" in text
 
 
-def test_profile_to_text_relationship_types(sample_profile: GraphProfile):
+def test_profile_to_text_relationship_types(sample_profile: GraphProfile) -> None:
     text = profile_to_text(sample_profile)
     assert "Person:ACTED_IN:Movie (12 instances)" in text
 
 
-def test_profile_to_text_relationship_endpoints(sample_profile: GraphProfile):
+def test_profile_to_text_relationship_endpoints(sample_profile: GraphProfile) -> None:
     text = profile_to_text(sample_profile)
     assert "source:" in text
     assert "target:" in text
 
 
-def test_profile_to_text_cardinality_stats(sample_profile: GraphProfile):
+def test_profile_to_text_cardinality_stats(sample_profile: GraphProfile) -> None:
     text = profile_to_text(sample_profile)
     assert "min=1" in text
     assert "max=4" in text
@@ -461,45 +463,45 @@ def test_profile_to_text_all_none_fields_no_crash():
 # ============================================================
 
 
-def test_result_to_text_fail(sample_result: ValidationResult):
+def test_result_to_text_fail(sample_result: ValidationResult) -> None:
     text = result_to_text(sample_result)
     assert "Validation: FAIL" in text
 
 
-def test_result_to_text_counts(sample_result: ValidationResult):
+def test_result_to_text_counts(sample_result: ValidationResult) -> None:
     text = result_to_text(sample_result)
     assert "Errors: 1" in text
     assert "Warnings: 1" in text
     assert "Total issues: 3" in text
 
 
-def test_result_to_text_severity_labels(sample_result: ValidationResult):
+def test_result_to_text_severity_labels(sample_result: ValidationResult) -> None:
     text = result_to_text(sample_result)
     assert "[ERROR]" in text
     assert "[WARNING]" in text
     assert "[INFO]" in text
 
 
-def test_result_to_text_issue_codes(sample_result: ValidationResult):
+def test_result_to_text_issue_codes(sample_result: ValidationResult) -> None:
     text = result_to_text(sample_result)
     assert "PROPERTY_INCOMPLETE" in text
     assert "MISSING_NODE_TYPE" in text
     assert "UNEXPECTED_PROPERTY" in text
 
 
-def test_result_to_text_grouped_by_entity(sample_result: ValidationResult):
+def test_result_to_text_grouped_by_entity(sample_result: ValidationResult) -> None:
     text = result_to_text(sample_result)
     assert "node:Person" in text
     assert "node:City" in text
 
 
-def test_result_to_text_context(sample_result: ValidationResult):
+def test_result_to_text_context(sample_result: ValidationResult) -> None:
     text = result_to_text(sample_result)
     assert "context:" in text
     assert "completeness" in text
 
 
-def test_result_to_text_valid():
+def test_result_to_text_valid() -> None:
     result = ValidationResult()
     text = result_to_text(result)
     assert "Validation: PASS" in text
@@ -553,7 +555,7 @@ class HasOutput(RelationshipModel):
     )
 
 
-def test_model_to_text_conditional_cardinality():
+def test_model_to_text_conditional_cardinality() -> None:
     """model_to_text renders conditional cardinality without crashing."""
     m = GraphDefinition(
         name="ConditionalTest",
@@ -567,7 +569,7 @@ def test_model_to_text_conditional_cardinality():
     assert "default:" in text  # Should show default spec
 
 
-def test_model_to_text_conditional_cardinality_includes_rules():
+def test_model_to_text_conditional_cardinality_includes_rules() -> None:
     """Conditional cardinality summary includes rules and default."""
     m = GraphDefinition(
         name="ConditionalTest",
@@ -580,7 +582,7 @@ def test_model_to_text_conditional_cardinality_includes_rules():
     assert "Sample" in text
 
 
-def test_model_to_text_constant_cardinality_unchanged():
+def test_model_to_text_constant_cardinality_unchanged() -> None:
     """Constant cardinality rendering is unchanged (regression)."""
     m = GraphDefinition(
         name="ConstantTest",
@@ -644,7 +646,7 @@ def _make_two_shape_profile() -> GraphProfile:
     )
 
 
-def test_profile_to_text_two_same_label_shapes_render_separately():
+def test_profile_to_text_two_same_label_shapes_render_separately() -> None:
     """Two same-label/different-endpoint shapes appear as two distinct entries."""
     text = profile_to_text(_make_two_shape_profile())
     # Both must appear as separate lines — not blended
@@ -656,19 +658,19 @@ def test_profile_to_text_two_same_label_shapes_render_separately():
     assert "Company" in text
 
 
-def test_profile_to_text_scalar_source_label():
+def test_profile_to_text_scalar_source_label() -> None:
     """profile_to_text shows scalar source_label for each profile."""
     text = profile_to_text(_make_two_shape_profile())
     assert "source:" in text
 
 
-def test_profile_to_text_scalar_target_label():
+def test_profile_to_text_scalar_target_label() -> None:
     """profile_to_text shows scalar target_label for each profile."""
     text = profile_to_text(_make_two_shape_profile())
     assert "target:" in text
 
 
-def test_profile_to_text_two_shapes_output_is_deterministic():
+def test_profile_to_text_two_shapes_output_is_deterministic() -> None:
     """Output ordering is stable across two calls."""
     p = _make_two_shape_profile()
     assert profile_to_text(p) == profile_to_text(p)
@@ -708,7 +710,7 @@ def _make_partitioned_profile() -> GraphProfile:
     )
 
 
-def test_profile_to_text_renders_target_partitioned_cardinality():
+def test_profile_to_text_renders_target_partitioned_cardinality() -> None:
     """The target partitioned breakdown renders with discriminator names visible."""
     text = profile_to_text(_make_partitioned_profile())
     assert (
@@ -720,19 +722,19 @@ def test_profile_to_text_renders_target_partitioned_cardinality():
     assert "target={type=split}: min=1.0, max=1.0, avg=1.00, sample_size=8" in text
 
 
-def test_profile_to_text_wildcard_source_renders_empty_map():
+def test_profile_to_text_wildcard_source_renders_empty_map() -> None:
     """The wildcard source endpoint renders as ``source={}``."""
     text = profile_to_text(_make_partitioned_profile())
     assert "source={} target={type=combine}" in text
 
 
-def test_profile_to_text_partitions_sorted_deterministically():
+def test_profile_to_text_partitions_sorted_deterministically() -> None:
     """Partitions are sorted by str(key) — ``combine`` before ``split``."""
     text = profile_to_text(_make_partitioned_profile())
     assert text.index("type=combine") < text.index("type=split")
 
 
-def test_profile_to_text_no_partition_section_when_both_none():
+def test_profile_to_text_no_partition_section_when_both_none() -> None:
     """Non-conditional rel types render no partition section (no regression)."""
     text = profile_to_text(sample_profile_no_partitions())
     assert "partitioned_cardinality" not in text
@@ -755,7 +757,7 @@ def sample_profile_no_partitions() -> GraphProfile:
     )
 
 
-def test_profile_to_text_renders_both_sides_when_present():
+def test_profile_to_text_renders_both_sides_when_present() -> None:
     """A both-endpoint conditional type renders both partition sections."""
     profile = GraphProfile(
         source="test",

@@ -38,7 +38,7 @@ def graph_definition() -> GraphDefinition:
 # --- Cypher merge node tests ---
 
 
-def test_cypher_merge_node_with_uid(graph_definition: GraphDefinition):
+def test_cypher_merge_node_with_uid(graph_definition: GraphDefinition) -> None:
     gen = CypherGenerator(graph_definition)
     query, params = gen.merge_node({"__label__": "Person", "name": "Alice", "age": 30})
     assert "MERGE" in query
@@ -47,7 +47,7 @@ def test_cypher_merge_node_with_uid(graph_definition: GraphDefinition):
     assert isinstance(params, dict)
 
 
-def test_cypher_merge_node_sets_properties(graph_definition: GraphDefinition):
+def test_cypher_merge_node_sets_properties(graph_definition: GraphDefinition) -> None:
     gen = CypherGenerator(graph_definition)
     query, params = gen.merge_node({"__label__": "Person", "name": "Alice", "age": 30})
     assert "SET" in query
@@ -56,7 +56,7 @@ def test_cypher_merge_node_sets_properties(graph_definition: GraphDefinition):
 
 def test_cypher_merge_node_without_uid_falls_back_to_create(
     graph_definition: GraphDefinition,
-):
+) -> None:
     gen = CypherGenerator(graph_definition)
     query, params = gen.create_node({"__label__": "Person", "name": "Alice", "age": 30})
     assert "CREATE" in query
@@ -66,7 +66,7 @@ def test_cypher_merge_node_without_uid_falls_back_to_create(
 # --- Cypher create relationship tests ---
 
 
-def test_cypher_create_relationship(graph_definition: GraphDefinition):
+def test_cypher_create_relationship(graph_definition: GraphDefinition) -> None:
     gen = CypherGenerator(graph_definition)
     query, params = gen.create_relationship(
         {
@@ -83,7 +83,7 @@ def test_cypher_create_relationship(graph_definition: GraphDefinition):
     assert "role" in query
 
 
-def test_cypher_merge_relationship(graph_definition: GraphDefinition):
+def test_cypher_merge_relationship(graph_definition: GraphDefinition) -> None:
     gen = CypherGenerator(graph_definition)
     query, params = gen.merge_relationship(
         {
@@ -99,7 +99,9 @@ def test_cypher_merge_relationship(graph_definition: GraphDefinition):
 # --- Cypher constraints tests ---
 
 
-def test_cypher_generate_uniqueness_constraints(graph_definition: GraphDefinition):
+def test_cypher_generate_uniqueness_constraints(
+    graph_definition: GraphDefinition,
+) -> None:
     gen = CypherGenerator(graph_definition)
     constraints = gen.generate_constraints()
     assert len(constraints) >= 1
@@ -111,7 +113,7 @@ def test_cypher_generate_uniqueness_constraints(graph_definition: GraphDefinitio
     assert "title" in constraint_text
 
 
-def test_cypher_constraint_is_valid_cypher(graph_definition: GraphDefinition):
+def test_cypher_constraint_is_valid_cypher(graph_definition: GraphDefinition) -> None:
     gen = CypherGenerator(graph_definition)
     constraints = gen.generate_constraints()
     for c in constraints:
@@ -121,7 +123,7 @@ def test_cypher_constraint_is_valid_cypher(graph_definition: GraphDefinition):
 # --- Cypher match pattern tests ---
 
 
-def test_cypher_match_node(graph_definition: GraphDefinition):
+def test_cypher_match_node(graph_definition: GraphDefinition) -> None:
     gen = CypherGenerator(graph_definition)
     query = gen.match_node(Person)
     assert "MATCH" in query
@@ -129,7 +131,7 @@ def test_cypher_match_node(graph_definition: GraphDefinition):
     assert "RETURN" in query
 
 
-def test_cypher_match_relationship_pattern(graph_definition: GraphDefinition):
+def test_cypher_match_relationship_pattern(graph_definition: GraphDefinition) -> None:
     gen = CypherGenerator(graph_definition)
     query = gen.match_relationship(ActedIn)
     assert "MATCH" in query
@@ -175,7 +177,7 @@ def undirected_model() -> GraphDefinition:
 
 def test_cypher_match_relationship_undirected_pattern(
     undirected_model: GraphDefinition,
-):
+) -> None:
     """Match query for undirected rel uses '-' instead of '->'."""
     gen = CypherGenerator(undirected_model)
     query = gen.match_relationship(FriendOf)
@@ -187,14 +189,18 @@ def test_cypher_match_relationship_undirected_pattern(
     assert "-(b:" in query or "]-(b:" in query
 
 
-def test_cypher_match_relationship_directed_pattern(graph_definition: GraphDefinition):
+def test_cypher_match_relationship_directed_pattern(
+    graph_definition: GraphDefinition,
+) -> None:
     """Match query for directed rel uses '->'."""
     gen = CypherGenerator(graph_definition)
     query = gen.match_relationship(ActedIn)
     assert "->" in query
 
 
-def test_cypher_create_undirected_relationship(undirected_model: GraphDefinition):
+def test_cypher_create_undirected_relationship(
+    undirected_model: GraphDefinition,
+) -> None:
     """CREATE for undirected rel emits '->' — CREATE/MERGE require a directed
     arrow in Cypher; undirected '-' is only valid in MATCH."""
     gen = CypherGenerator(undirected_model)
@@ -212,7 +218,9 @@ def test_cypher_create_undirected_relationship(undirected_model: GraphDefinition
     assert params["src_uid"] == "Alice"
 
 
-def test_cypher_merge_undirected_relationship(undirected_model: GraphDefinition):
+def test_cypher_merge_undirected_relationship(
+    undirected_model: GraphDefinition,
+) -> None:
     """MERGE for undirected rel emits '->' — same reason as CREATE."""
     gen = CypherGenerator(undirected_model)
     query, params = gen.merge_relationship(
@@ -229,7 +237,7 @@ def test_cypher_merge_undirected_relationship(undirected_model: GraphDefinition)
 
 def test_cypher_create_directed_relationship_still_uses_arrow(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """CREATE for directed rel still uses '->'."""
     gen = CypherGenerator(graph_definition)
     query, params = gen.create_relationship(
@@ -243,7 +251,7 @@ def test_cypher_create_directed_relationship_still_uses_arrow(
     assert "->" in query
 
 
-def test_cypher_match_undirected_cross_type(undirected_model: GraphDefinition):
+def test_cypher_match_undirected_cross_type(undirected_model: GraphDefinition) -> None:
     """Undirected cross-type match uses correct labels without arrow."""
     gen = CypherGenerator(undirected_model)
     query = gen.match_relationship(Collaborates)
@@ -257,7 +265,9 @@ def test_cypher_match_undirected_cross_type(undirected_model: GraphDefinition):
 _INJECTED_KEY = "x} ) DETACH DELETE n //"
 
 
-def test_merge_node_rejects_injected_property_key(graph_definition: GraphDefinition):
+def test_merge_node_rejects_injected_property_key(
+    graph_definition: GraphDefinition,
+) -> None:
     """An injected property key raises before any Cypher string is returned.
 
     The injected key is also undeclared on the model, so the model-property
@@ -268,7 +278,9 @@ def test_merge_node_rejects_injected_property_key(graph_definition: GraphDefinit
         gen.merge_node({"__label__": "Person", "name": "Alice", _INJECTED_KEY: 1})
 
 
-def test_create_node_rejects_injected_property_key(graph_definition: GraphDefinition):
+def test_create_node_rejects_injected_property_key(
+    graph_definition: GraphDefinition,
+) -> None:
     """An injected property key raises before any Cypher string is returned.
 
     The injected key is also undeclared on the model, so the model-property
@@ -279,7 +291,7 @@ def test_create_node_rejects_injected_property_key(graph_definition: GraphDefini
         gen.create_node({"__label__": "Person", "name": "Alice", _INJECTED_KEY: 1})
 
 
-def test_create_node_rejects_injected_label(graph_definition: GraphDefinition):
+def test_create_node_rejects_injected_label(graph_definition: GraphDefinition) -> None:
     """An injected label raises via the identifier guard (no model lookup here)."""
     gen = CypherGenerator(graph_definition)
     with pytest.raises(CypherIdentifierError, match="label"):
@@ -288,7 +300,7 @@ def test_create_node_rejects_injected_label(graph_definition: GraphDefinition):
 
 def test_create_relationship_rejects_injected_property_key(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """An injected relationship property key raises before any string is returned.
 
     The injected key is also undeclared on the model, so the model-property
@@ -347,7 +359,7 @@ class _InjectedRel(RelationshipModel):
     __target_label__ = "Tgt"
 
 
-def test_generate_constraints_rejects_injected_uid_field():
+def test_generate_constraints_rejects_injected_uid_field() -> None:
     """A malicious __uid_field__ is now caught at class-definition time.
 
     Before the fix, the CypherIdentifierError was raised inside generate_constraints.
@@ -365,7 +377,7 @@ def test_generate_constraints_rejects_injected_uid_field():
             name: str
 
 
-def test_match_node_rejects_injected_label():
+def test_match_node_rejects_injected_label() -> None:
     """A malicious __label__ on the node type raises via the identifier guard."""
     graph_definition = GraphDefinition(
         name="m", node_types=[_InjectedLabelNode], relationship_types=[]
@@ -375,7 +387,7 @@ def test_match_node_rejects_injected_label():
         gen.match_node(_InjectedLabelNode)
 
 
-def test_match_relationship_rejects_injected_relationship_type():
+def test_match_relationship_rejects_injected_relationship_type() -> None:
     """A malicious __label__ on the relationship type raises via the guard."""
     graph_definition = GraphDefinition(
         name="m",
@@ -397,7 +409,7 @@ class _NoUidNode(NodeModel):
     name: str
 
 
-def test_merge_node_without_uid_field_falls_back_through_merge_node():
+def test_merge_node_without_uid_field_falls_back_through_merge_node() -> None:
     """When the node type has no UID field, merge_node delegates to create_node."""
     graph_definition = GraphDefinition(
         name="m", node_types=[_NoUidNode], relationship_types=[]
@@ -411,14 +423,16 @@ def test_merge_node_without_uid_field_falls_back_through_merge_node():
 # --- Unknown label/relationship guards ---
 
 
-def test_merge_node_rejects_unknown_label(graph_definition: GraphDefinition):
+def test_merge_node_rejects_unknown_label(graph_definition: GraphDefinition) -> None:
     """A label with no matching node type raises before any query is built."""
     gen = CypherGenerator(graph_definition)
     with pytest.raises(CypherUnknownLabelError, match="Unknown node label"):
         gen.merge_node({"__label__": "Ghost", "name": "Alice"})
 
 
-def test_create_relationship_rejects_unknown_label(graph_definition: GraphDefinition):
+def test_create_relationship_rejects_unknown_label(
+    graph_definition: GraphDefinition,
+) -> None:
     """A relationship label with no matching type raises before any query is built."""
     gen = CypherGenerator(graph_definition)
     with pytest.raises(CypherUnknownLabelError, match="Unknown relationship label"):
@@ -438,7 +452,9 @@ def test_create_relationship_rejects_unknown_label(graph_definition: GraphDefini
 # string is produced. Declared-only payloads produce the same output as before.
 
 
-def test_merge_node_rejects_undeclared_property(graph_definition: GraphDefinition):
+def test_merge_node_rejects_undeclared_property(
+    graph_definition: GraphDefinition,
+) -> None:
     """merge_node with a property not declared on the model raises."""
     gen = CypherGenerator(graph_definition)
     with pytest.raises(CypherUnknownPropertyError, match="nickname"):
@@ -447,21 +463,25 @@ def test_merge_node_rejects_undeclared_property(graph_definition: GraphDefinitio
 
 def test_merge_node_undeclared_property_error_names_label(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """The error message names the offending key and the label."""
     gen = CypherGenerator(graph_definition)
     with pytest.raises(CypherUnknownPropertyError, match="Person"):
         gen.merge_node({"__label__": "Person", "name": "Alice", "nickname": "Al"})
 
 
-def test_create_node_rejects_undeclared_property(graph_definition: GraphDefinition):
+def test_create_node_rejects_undeclared_property(
+    graph_definition: GraphDefinition,
+) -> None:
     """create_node with a property not declared on the model raises."""
     gen = CypherGenerator(graph_definition)
     with pytest.raises(CypherUnknownPropertyError, match="nickname"):
         gen.create_node({"__label__": "Person", "name": "Alice", "nickname": "Al"})
 
 
-def test_merge_node_declared_properties_unchanged(graph_definition: GraphDefinition):
+def test_merge_node_declared_properties_unchanged(
+    graph_definition: GraphDefinition,
+) -> None:
     """merge_node with only declared properties produces the same output as before."""
     gen = CypherGenerator(graph_definition)
     query, params = gen.merge_node({"__label__": "Person", "name": "Alice", "age": 30})
@@ -473,7 +493,7 @@ def test_merge_node_declared_properties_unchanged(graph_definition: GraphDefinit
 
 def test_create_relationship_rejects_undeclared_property(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """A relationship payload with an undeclared property raises."""
     gen = CypherGenerator(graph_definition)
     with pytest.raises(CypherUnknownPropertyError, match="weight"):
@@ -490,7 +510,7 @@ def test_create_relationship_rejects_undeclared_property(
 
 def test_create_relationship_declared_property_unchanged(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """A relationship payload with only declared properties is accepted."""
     gen = CypherGenerator(graph_definition)
     query, params = gen.create_relationship(
@@ -527,7 +547,9 @@ class _InjectedLabelUidNode(NodeModel):
     name: str
 
 
-def test_match_by_uid_query_returns_typed_read(graph_definition: GraphDefinition):
+def test_match_by_uid_query_returns_typed_read(
+    graph_definition: GraphDefinition,
+) -> None:
     """match_by_uid_query(Person) returns a CYPHER CypherReadQuery whose Output
     is Person and whose build() parameterises the UID."""
     gen = CypherGenerator(graph_definition)
@@ -541,7 +563,7 @@ def test_match_by_uid_query_returns_typed_read(graph_definition: GraphDefinition
 
 def test_match_by_uid_query_references_only_model_identifiers(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """The generated query references only model identifiers (:Person, $name)."""
     gen = CypherGenerator(graph_definition)
     query = gen.match_by_uid_query(Person)
@@ -552,7 +574,7 @@ def test_match_by_uid_query_references_only_model_identifiers(
 
 def test_match_by_uid_query_passes_definition_time_validation(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """A generated query constructs without raising — proving the
     $param ↔ Params alignment holds for the synthesised class."""
     gen = CypherGenerator(graph_definition)
@@ -561,7 +583,7 @@ def test_match_by_uid_query_passes_definition_time_validation(
     assert isinstance(query, CypherReadQuery)
 
 
-def test_merge_query_returns_typed_write(graph_definition: GraphDefinition):
+def test_merge_query_returns_typed_write(graph_definition: GraphDefinition) -> None:
     """merge_query(Person) returns a CYPHER CypherWriteQuery merging by UID."""
     gen = CypherGenerator(graph_definition)
     query = gen.merge_query(Person)
@@ -573,7 +595,7 @@ def test_merge_query_returns_typed_write(graph_definition: GraphDefinition):
     assert params == {"name": "Alice", "age": 30, "email": None}
 
 
-def test_create_query_returns_typed_write(graph_definition: GraphDefinition):
+def test_create_query_returns_typed_write(graph_definition: GraphDefinition) -> None:
     """create_query(Person) returns a CYPHER CypherWriteQuery creating a node."""
     gen = CypherGenerator(graph_definition)
     query = gen.create_query(Person)
@@ -583,7 +605,9 @@ def test_create_query_returns_typed_write(graph_definition: GraphDefinition):
     assert ":Person" in cypher
 
 
-def test_delete_by_uid_query_produces_detach_delete(graph_definition: GraphDefinition):
+def test_delete_by_uid_query_produces_detach_delete(
+    graph_definition: GraphDefinition,
+) -> None:
     """delete_by_uid_query(Person) produces a DETACH DELETE with a parameterised UID."""
     gen = CypherGenerator(graph_definition)
     query = gen.delete_by_uid_query(Person)
@@ -596,7 +620,7 @@ def test_delete_by_uid_query_produces_detach_delete(graph_definition: GraphDefin
 
 def test_match_by_uid_query_materialize_maps_node_record(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """The read's materialize() maps a RETURN n record to the Output model."""
     gen = CypherGenerator(graph_definition)
     query = gen.match_by_uid_query(Person)
@@ -606,7 +630,9 @@ def test_match_by_uid_query_materialize_maps_node_record(
     assert result.age == 30
 
 
-def test_generated_queries_register_in_catalogue(graph_definition: GraphDefinition):
+def test_generated_queries_register_in_catalogue(
+    graph_definition: GraphDefinition,
+) -> None:
     """All four generated queries register and describe() with correct kinds."""
     gen = CypherGenerator(graph_definition)
     query_catalogue = QueryCatalogue()
@@ -628,7 +654,7 @@ def test_generated_queries_register_in_catalogue(graph_definition: GraphDefiniti
     assert read_desc.output_schema == Person.model_json_schema()
 
 
-def test_typed_queries_require_uid_field(graph_definition: GraphDefinition):
+def test_typed_queries_require_uid_field(graph_definition: GraphDefinition) -> None:
     """UID-keyed typed queries raise MissingUidFieldError for a UID-less node.
 
     The fault is a model-definition error (the node declares no UID field), not
@@ -648,7 +674,7 @@ def test_typed_queries_require_uid_field(graph_definition: GraphDefinition):
             method(_NoUidNodeT4)
 
 
-def test_create_query_works_without_uid_field():
+def test_create_query_works_without_uid_field() -> None:
     """create_query needs no UID and succeeds for a UID-less node type."""
     no_uid_model = GraphDefinition(
         name="m", node_types=[_NoUidNodeT4], relationship_types=[]
@@ -660,7 +686,7 @@ def test_create_query_works_without_uid_field():
     assert params == {"name": "x"}
 
 
-def test_typed_query_rejects_injected_label():
+def test_typed_query_rejects_injected_label() -> None:
     """An injected label is rejected by the identifier guard at synthesis time."""
     bad_model = GraphDefinition(
         name="m", node_types=[_InjectedLabelUidNode], relationship_types=[]
@@ -698,7 +724,7 @@ class _FakeResult:
 
 def test_create_query_materialize_reads_nodes_created(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """create_query's interpret_result reads nodes_created from the driver summary."""
     gen = CypherGenerator(graph_definition)
     query = gen.create_query(Person)
@@ -706,7 +732,9 @@ def test_create_query_materialize_reads_nodes_created(
     assert query.interpret_result(result) == 1
 
 
-def test_merge_query_materialize_reads_nodes_created(graph_definition: GraphDefinition):
+def test_merge_query_materialize_reads_nodes_created(
+    graph_definition: GraphDefinition,
+) -> None:
     """merge_query reports 0 created when MERGE matched an existing node."""
     gen = CypherGenerator(graph_definition)
     query = gen.merge_query(Person)
@@ -718,7 +746,7 @@ def test_merge_query_materialize_reads_nodes_created(graph_definition: GraphDefi
 
 def test_delete_by_uid_query_materialize_reads_nodes_deleted(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """delete_by_uid_query's interpret_result reads nodes_deleted from the summary."""
     gen = CypherGenerator(graph_definition)
     query = gen.delete_by_uid_query(Person)
@@ -726,7 +754,9 @@ def test_delete_by_uid_query_materialize_reads_nodes_deleted(
     assert query.interpret_result(result) == 1
 
 
-def test_materialize_accepts_mapping_shaped_result(graph_definition: GraphDefinition):
+def test_materialize_accepts_mapping_shaped_result(
+    graph_definition: GraphDefinition,
+) -> None:
     """A mapping carrying the counter key is accepted (test-double convenience)."""
     gen = CypherGenerator(graph_definition)
     create = gen.create_query(Person)
@@ -758,7 +788,9 @@ class _UnregisteredLabel(NodeModel):
     id: str
 
 
-def test_raw_merge_node_validates_against_model(graph_definition: GraphDefinition):
+def test_raw_merge_node_validates_against_model(
+    graph_definition: GraphDefinition,
+) -> None:
     """merge_node raises CypherModelValidationError if the produced Cypher
     does not pass model validation (unknown label in the output string)."""
     ghost_model = GraphDefinition(
@@ -775,7 +807,9 @@ def test_raw_merge_node_validates_against_model(graph_definition: GraphDefinitio
     assert "Ghost" in cypher  # model-consistent: Ghost is in ghost_model
 
 
-def test_model_validation_error_carries_issues(graph_definition: GraphDefinition):
+def test_model_validation_error_carries_issues(
+    graph_definition: GraphDefinition,
+) -> None:
     """CypherModelValidationError.issues lists the ValidationIssue objects."""
     # Build a model that only knows Person, then use a patched generator
     # whose _assert_valid we can trigger via a hand-crafted bad string.
@@ -789,7 +823,7 @@ def test_model_validation_error_carries_issues(graph_definition: GraphDefinition
     assert any("UnknownLabel" in issue.entity_id for issue in err.issues)
 
 
-def test_model_validation_error_in_match_node_on_unregistered_type():
+def test_model_validation_error_in_match_node_on_unregistered_type() -> None:
     """match_node raises CypherModelValidationError when the node type's label
     is not in the generator's own model."""
 
@@ -813,7 +847,7 @@ def test_model_validation_error_in_match_node_on_unregistered_type():
 
 def test_typed_match_by_uid_query_validates_against_model(
     graph_definition: GraphDefinition,
-):
+) -> None:
     """match_by_uid_query raises CypherModelValidationError before returning
     when the node type's label is not in the generator's model."""
 
@@ -830,7 +864,9 @@ def test_typed_match_by_uid_query_validates_against_model(
         gen._assert_valid("MATCH (n:Phantom {id: $id}) RETURN n")
 
 
-def test_model_validation_error_message_lists_issues(graph_definition: GraphDefinition):
+def test_model_validation_error_message_lists_issues(
+    graph_definition: GraphDefinition,
+) -> None:
     """The exception message names all offending identifiers."""
     gen = CypherGenerator(graph_definition)
     bad = "MATCH (x:NoSuchLabel {ghost_prop: $v}) RETURN x"
@@ -894,7 +930,7 @@ def audit_model() -> GraphDefinition:
 # ---- merge_node: label and property key injection ----
 
 
-def test_audit_merge_node_rejects_injected_label(audit_model: GraphDefinition):
+def test_audit_merge_node_rejects_injected_label(audit_model: GraphDefinition) -> None:
     """merge_node: injected label raises before any Cypher is produced."""
     gen = CypherGenerator(audit_model)
     # Unknown label → CypherUnknownLabelError (model guard fires first).
@@ -902,7 +938,9 @@ def test_audit_merge_node_rejects_injected_label(audit_model: GraphDefinition):
         gen.merge_node({"__label__": _INJECTION_LABEL, "uid": "x", "safe_prop": "y"})
 
 
-def test_audit_merge_node_rejects_injected_property_key(audit_model: GraphDefinition):
+def test_audit_merge_node_rejects_injected_property_key(
+    audit_model: GraphDefinition,
+) -> None:
     """merge_node: injected property key raises before any Cypher is produced."""
     gen = CypherGenerator(audit_model)
     with pytest.raises((CypherUnknownPropertyError, CypherIdentifierError)):
@@ -912,14 +950,16 @@ def test_audit_merge_node_rejects_injected_property_key(audit_model: GraphDefini
 # ---- create_node: label and property key injection ----
 
 
-def test_audit_create_node_rejects_injected_label(audit_model: GraphDefinition):
+def test_audit_create_node_rejects_injected_label(audit_model: GraphDefinition) -> None:
     """create_node: injected label raises before any Cypher is produced."""
     gen = CypherGenerator(audit_model)
     with pytest.raises((CypherUnknownPropertyError, CypherIdentifierError)):
         gen.create_node({"__label__": _INJECTION_LABEL, "uid": "x"})
 
 
-def test_audit_create_node_rejects_injected_property_key(audit_model: GraphDefinition):
+def test_audit_create_node_rejects_injected_property_key(
+    audit_model: GraphDefinition,
+) -> None:
     """create_node: injected property key raises before any Cypher is produced."""
     gen = CypherGenerator(audit_model)
     with pytest.raises((CypherUnknownPropertyError, CypherIdentifierError)):
@@ -933,7 +973,7 @@ def test_audit_create_node_rejects_injected_property_key(audit_model: GraphDefin
 
 def test_audit_create_relationship_rejects_injected_rel_type(
     audit_model: GraphDefinition,
-):
+) -> None:
     """create_relationship: injected relationship type raises before any Cypher."""
     gen = CypherGenerator(audit_model)
     with pytest.raises((CypherUnknownLabelError, CypherIdentifierError)):
@@ -948,7 +988,7 @@ def test_audit_create_relationship_rejects_injected_rel_type(
 
 def test_audit_create_relationship_rejects_injected_property_key(
     audit_model: GraphDefinition,
-):
+) -> None:
     """create_relationship: injected property key raises before any Cypher."""
     gen = CypherGenerator(audit_model)
     with pytest.raises((CypherUnknownPropertyError, CypherIdentifierError)):
@@ -964,7 +1004,7 @@ def test_audit_create_relationship_rejects_injected_property_key(
 
 def test_audit_merge_relationship_rejects_injected_rel_type(
     audit_model: GraphDefinition,
-):
+) -> None:
     """merge_relationship: injected relationship type raises before any Cypher."""
     gen = CypherGenerator(audit_model)
     with pytest.raises((CypherUnknownLabelError, CypherIdentifierError)):
@@ -979,7 +1019,7 @@ def test_audit_merge_relationship_rejects_injected_rel_type(
 
 def test_audit_merge_relationship_rejects_injected_property_key(
     audit_model: GraphDefinition,
-):
+) -> None:
     """merge_relationship: injected property key raises before any Cypher."""
     gen = CypherGenerator(audit_model)
     with pytest.raises((CypherUnknownPropertyError, CypherIdentifierError)):
@@ -1009,7 +1049,7 @@ class _InjectedAuditRelType(RelationshipModel):
     __target_label__ = "AuditNode"
 
 
-def test_audit_match_node_rejects_injected_label():
+def test_audit_match_node_rejects_injected_label() -> None:
     """match_node: malicious __label__ raises via identifier guard."""
     m = GraphDefinition(
         name="a", node_types=[_InjectedAuditLabel], relationship_types=[]
@@ -1019,7 +1059,7 @@ def test_audit_match_node_rejects_injected_label():
         gen.match_node(_InjectedAuditLabel)
 
 
-def test_audit_match_relationship_rejects_injected_rel_type():
+def test_audit_match_relationship_rejects_injected_rel_type() -> None:
     """match_relationship: injected rel-type label raises via identifier guard."""
     m = GraphDefinition(
         name="a",
@@ -1034,7 +1074,7 @@ def test_audit_match_relationship_rejects_injected_rel_type():
 # ---- generate_constraints: injected uid field ----
 
 
-def test_audit_generate_constraints_rejects_injected_uid_field():
+def test_audit_generate_constraints_rejects_injected_uid_field() -> None:
     """generate_constraints: malicious __uid_field__ is caught
     at definition time (E29 T1).
 
@@ -1062,7 +1102,7 @@ class _InjectedAuditTypedLabel(NodeModel):
     uid: str
 
 
-def test_audit_match_by_uid_query_rejects_injected_label():
+def test_audit_match_by_uid_query_rejects_injected_label() -> None:
     """match_by_uid_query: injected label raises before any typed query is returned."""
     m = GraphDefinition(
         name="a", node_types=[_InjectedAuditTypedLabel], relationship_types=[]
@@ -1072,7 +1112,7 @@ def test_audit_match_by_uid_query_rejects_injected_label():
         gen.match_by_uid_query(_InjectedAuditTypedLabel)
 
 
-def test_audit_merge_query_rejects_injected_label():
+def test_audit_merge_query_rejects_injected_label() -> None:
     """merge_query: injected label raises before any typed query is returned."""
     m = GraphDefinition(
         name="a", node_types=[_InjectedAuditTypedLabel], relationship_types=[]
@@ -1082,7 +1122,7 @@ def test_audit_merge_query_rejects_injected_label():
         gen.merge_query(_InjectedAuditTypedLabel)
 
 
-def test_audit_create_query_rejects_injected_label():
+def test_audit_create_query_rejects_injected_label() -> None:
     """create_query: injected label raises before any typed query is returned."""
     m = GraphDefinition(
         name="a", node_types=[_InjectedAuditTypedLabel], relationship_types=[]
@@ -1092,7 +1132,7 @@ def test_audit_create_query_rejects_injected_label():
         gen.create_query(_InjectedAuditTypedLabel)
 
 
-def test_audit_delete_by_uid_query_rejects_injected_label():
+def test_audit_delete_by_uid_query_rejects_injected_label() -> None:
     """delete_by_uid_query: injected label raises before any typed query is returned."""
     m = GraphDefinition(
         name="a", node_types=[_InjectedAuditTypedLabel], relationship_types=[]
@@ -1138,7 +1178,7 @@ class _RelWithNoUidTarget(RelationshipModel):
     __target_label__ = "NoUidTgt"
 
 
-def test_create_relationship_raises_when_source_has_no_uid_field():
+def test_create_relationship_raises_when_source_has_no_uid_field() -> None:
     """create_relationship raises MissingUidFieldError naming the relationship
     and 'source' when the source node type has no __uid_field__."""
     m = GraphDefinition(
@@ -1157,7 +1197,7 @@ def test_create_relationship_raises_when_source_has_no_uid_field():
         )
 
 
-def test_create_relationship_raises_when_target_has_no_uid_field():
+def test_create_relationship_raises_when_target_has_no_uid_field() -> None:
     """create_relationship raises MissingUidFieldError naming the relationship
     and 'target' when the target node type has no __uid_field__."""
     m = GraphDefinition(
@@ -1176,7 +1216,7 @@ def test_create_relationship_raises_when_target_has_no_uid_field():
         )
 
 
-def test_merge_relationship_raises_when_source_has_no_uid_field():
+def test_merge_relationship_raises_when_source_has_no_uid_field() -> None:
     """merge_relationship raises MissingUidFieldError naming 'source'."""
     m = GraphDefinition(
         name="m",
@@ -1194,7 +1234,7 @@ def test_merge_relationship_raises_when_source_has_no_uid_field():
         )
 
 
-def test_merge_relationship_raises_when_target_has_no_uid_field():
+def test_merge_relationship_raises_when_target_has_no_uid_field() -> None:
     """merge_relationship raises MissingUidFieldError naming 'target'."""
     m = GraphDefinition(
         name="m",
@@ -1249,7 +1289,7 @@ def multi_shape_gen_model() -> GraphDefinition:
 
 def test_create_relationship_multi_shape_with_labels(
     multi_shape_gen_model: GraphDefinition,
-):
+) -> None:
     """When __source_label__ and __target_label__ are in data, the correct shape
     is resolved and the query references the right endpoint labels."""
     gen = CypherGenerator(multi_shape_gen_model)
@@ -1269,7 +1309,7 @@ def test_create_relationship_multi_shape_with_labels(
 
 def test_create_relationship_multi_shape_person_person(
     multi_shape_gen_model: GraphDefinition,
-):
+) -> None:
     """Person-KNOWS->Person shape is resolved when labels are specified."""
     gen = CypherGenerator(multi_shape_gen_model)
     query, params = gen.create_relationship(
@@ -1287,7 +1327,7 @@ def test_create_relationship_multi_shape_person_person(
 
 def test_create_relationship_multi_shape_ambiguous_raises(
     multi_shape_gen_model: GraphDefinition,
-):
+) -> None:
     # Multiple shapes for same label without endpoint hints → ambiguous error.
     gen = CypherGenerator(multi_shape_gen_model)
     with pytest.raises(CypherUnknownLabelError, match="ambiguous"):

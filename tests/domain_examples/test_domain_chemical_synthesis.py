@@ -112,7 +112,7 @@ def chemistry_model() -> GraphDefinition:
 # --- Chemistry domain model tests ---
 
 
-def test_chemistry_model_structure(chemistry_model: GraphDefinition):
+def test_chemistry_model_structure(chemistry_model: GraphDefinition) -> None:
     assert chemistry_model.name == "Network_of_Organic_Chemistry"
     assert chemistry_model.node_labels == {
         "Molecule",
@@ -130,7 +130,7 @@ def test_chemistry_model_structure(chemistry_model: GraphDefinition):
     }
 
 
-def test_chemistry_valid_graph(chemistry_model: GraphDefinition):
+def test_chemistry_valid_graph(chemistry_model: GraphDefinition) -> None:
     v = GraphValidator(chemistry_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Reaction", "uid": "R1", "source": "Lab1", "external_id": "EXT1"},
@@ -153,7 +153,7 @@ def test_chemistry_valid_graph(chemistry_model: GraphDefinition):
     assert result.is_valid, [str(e) for e in result.errors]
 
 
-def test_chemistry_invalid_data(chemistry_model: GraphDefinition):
+def test_chemistry_invalid_data(chemistry_model: GraphDefinition) -> None:
     v = GraphValidator(chemistry_model)
     nodes: list[dict[str, Any]] = [
         {"__label__": "Molecule", "uid": "M1"},
@@ -164,7 +164,7 @@ def test_chemistry_invalid_data(chemistry_model: GraphDefinition):
     assert len(result.errors) >= 2
 
 
-def test_chemistry_enum_generation(chemistry_model: GraphDefinition):
+def test_chemistry_enum_generation(chemistry_model: GraphDefinition) -> None:
     node_enum = chemistry_model.get_node_label_enum()
     assert node_enum.Molecule.value == "Molecule"
     rel_enum = chemistry_model.get_relationship_label_enum()
@@ -174,7 +174,9 @@ def test_chemistry_enum_generation(chemistry_model: GraphDefinition):
 # --- YAML ---
 
 
-def test_chemistry_yaml_roundtrip(chemistry_model: GraphDefinition, tmp_path):
+def test_chemistry_yaml_roundtrip(
+    chemistry_model: GraphDefinition, tmp_path: Any
+) -> None:
     path = tmp_path / "chemistry.yaml"
     save_yaml_file(chemistry_model, path)
     loaded = load_yaml_file(path)
@@ -187,7 +189,7 @@ def test_chemistry_yaml_roundtrip(chemistry_model: GraphDefinition, tmp_path):
 # --- Cypher ---
 
 
-def test_cypher_generate_full_workflow(chemistry_model: GraphDefinition):
+def test_cypher_generate_full_workflow(chemistry_model: GraphDefinition) -> None:
     gen = CypherGenerator(chemistry_model)
     constraints = gen.generate_constraints()
     assert len(constraints) >= 4
@@ -201,14 +203,14 @@ def test_cypher_generate_full_workflow(chemistry_model: GraphDefinition):
 # --- Mermaid ---
 
 
-def test_chemistry_mermaid(chemistry_model: GraphDefinition):
+def test_chemistry_mermaid(chemistry_model: GraphDefinition) -> None:
     mermaid = model_to_mermaid(chemistry_model)
     assert "graph TD" in mermaid
     assert "Molecule" in mermaid
     assert "REACTANT" in mermaid
 
 
-def test_chemistry_render_dispatcher(chemistry_model: GraphDefinition):
+def test_chemistry_render_dispatcher(chemistry_model: GraphDefinition) -> None:
     mermaid = render_model(chemistry_model, fmt="mermaid")
     assert "graph TD" in mermaid
     text = render_model(chemistry_model)
@@ -219,13 +221,13 @@ def test_chemistry_render_dispatcher(chemistry_model: GraphDefinition):
 # --- NetworkX ---
 
 
-def test_chemistry_schema_to_networkx(chemistry_model: GraphDefinition):
+def test_chemistry_schema_to_networkx(chemistry_model: GraphDefinition) -> None:
     g = schema_to_networkx(chemistry_model)
     assert len(g.nodes) == 5
     assert len(g.edges) == 5
 
 
-def test_chemistry_inspect_and_validate_nx(chemistry_model: GraphDefinition):
+def test_chemistry_inspect_and_validate_nx(chemistry_model: GraphDefinition) -> None:
     """End-to-end: build nx graph, inspect, validate against model."""
     import networkx as nx
 

@@ -264,7 +264,9 @@ def test_views_module_imports_no_backend():
     )
 
 
-def test_definition_view_filmography_node_labels(filmography_model: GraphDefinition):
+def test_definition_view_filmography_node_labels(
+    filmography_model: GraphDefinition,
+) -> None:
     """node_labels() returns all three node labels from the filmography model."""
     view = DefinitionView(filmography_model)
     assert view.node_labels() == {"Person", "Movie", "City"}
@@ -272,7 +274,7 @@ def test_definition_view_filmography_node_labels(filmography_model: GraphDefinit
 
 def test_definition_view_filmography_relationship_types(
     filmography_model: GraphDefinition,
-):
+) -> None:
     """relationship_types() returns all three rel identity keys from the model."""
     view = DefinitionView(filmography_model)
     assert view.relationship_types() == {
@@ -284,7 +286,7 @@ def test_definition_view_filmography_relationship_types(
 
 def test_definition_view_filmography_node_properties_person(
     filmography_model: GraphDefinition,
-):
+) -> None:
     """node_properties() returns correct TypeInfo for the filmography Person type."""
     view = DefinitionView(filmography_model)
     props = view.node_properties("Person")

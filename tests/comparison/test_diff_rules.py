@@ -198,8 +198,8 @@ def _prof_view(gp: GraphProfile) -> ProfileView:
 
 
 def _ctx(
-    left=None,
-    right=None,
+    left: Any = None,
+    right: Any = None,
     address: str = "SomeLabel",
     extra: dict[str, Any] | None = None,
     *,
@@ -218,8 +218,8 @@ def _ctx(
 
 
 def _pctx(
-    left=None,
-    right=None,
+    left: Any = None,
+    right: Any = None,
     address: str = "SomeLabel",
     extra: dict[str, Any] | None = None,
     *,

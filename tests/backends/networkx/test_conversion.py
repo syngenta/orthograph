@@ -25,7 +25,7 @@ def graph_definition() -> GraphDefinition:
     )
 
 
-def test_schema_to_networkx_convert(graph_definition: GraphDefinition):
+def test_schema_to_networkx_convert(graph_definition: GraphDefinition) -> None:
     g = schema_to_networkx(graph_definition)
     assert isinstance(g, nx.MultiDiGraph)
     assert "Person" in g.nodes
@@ -34,14 +34,14 @@ def test_schema_to_networkx_convert(graph_definition: GraphDefinition):
 
 def test_schema_to_networkx_edges_are_relationship_types(
     graph_definition: GraphDefinition,
-):
+) -> None:
     g = schema_to_networkx(graph_definition)
     edge_labels = {data["label"] for _, _, data in g.edges(data=True)}
     assert "ACTED_IN" in edge_labels
     assert "DIRECTED" in edge_labels
 
 
-def test_schema_to_networkx_node_attributes(graph_definition: GraphDefinition):
+def test_schema_to_networkx_node_attributes(graph_definition: GraphDefinition) -> None:
     g = schema_to_networkx(graph_definition)
     assert g.nodes["Person"]["uid_field"] == "name"
     assert "name" in g.nodes["Person"]["properties"]
@@ -81,7 +81,7 @@ def undirected_model() -> GraphDefinition:
 
 def test_schema_to_networkx_undirected_edge_metadata(
     undirected_model: GraphDefinition,
-):
+) -> None:
     """Undirected relationships store directed=False in edge metadata."""
     g = schema_to_networkx(undirected_model)
     edge_data = [data for _, _, data in g.edges(data=True)]
@@ -90,7 +90,9 @@ def test_schema_to_networkx_undirected_edge_metadata(
     assert friend_of_edges[0]["directed"] is False
 
 
-def test_schema_to_networkx_directed_edge_metadata(graph_definition: GraphDefinition):
+def test_schema_to_networkx_directed_edge_metadata(
+    graph_definition: GraphDefinition,
+) -> None:
     """Directed relationships store directed=True in edge metadata."""
     g = schema_to_networkx(graph_definition)
     edge_data = [data for _, _, data in g.edges(data=True)]
@@ -101,7 +103,7 @@ def test_schema_to_networkx_directed_edge_metadata(graph_definition: GraphDefini
 
 def test_schema_to_networkx_undirected_cross_type(
     undirected_model: GraphDefinition,
-):
+) -> None:
     """Undirected cross-type relationship connects correct nodes."""
     g = schema_to_networkx(undirected_model)
     collab_edges = [
