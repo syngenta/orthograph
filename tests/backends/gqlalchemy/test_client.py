@@ -323,20 +323,33 @@ class TestValidateDatabase:
         from orthograph.backends.gqlalchemy.client import GqlAlchemyClient
 
         expected = ValidationResult()
+        profile = MagicMock()
+        inspector = MagicMock()
+        inspector.return_value.inspect.return_value = profile
         mock_db._driver = MagicMock()
         client = GqlAlchemyClient(
             graph_definition=graph_definition, db=mock_db, backend="neo4j"
         )
 
-        with patch(
-            "orthograph.backends.gqlalchemy.client._database_validate",
-            return_value=expected,
-        ) as mock_validate:
+        with (
+            patch(
+                "orthograph.backends.gqlalchemy.client.loader.load_inspector",
+                return_value=inspector,
+            ) as mock_load,
+            patch(
+                "orthograph.backends.gqlalchemy.client.compare_profile_to_definition",
+                return_value=expected,
+            ) as mock_compare,
+        ):
             result = client.validate_database()
 
         assert result is expected
-        mock_validate.assert_called_once_with(
-            "neo4j", mock_db._driver, graph_definition
+        mock_load.assert_called_once_with(name="neo4j")
+        inspector.return_value.inspect.assert_called_once_with(
+            connection=mock_db._driver
+        )
+        mock_compare.assert_called_once_with(
+            profile=profile, definition=graph_definition
         )
 
     def test_default_backend_is_memgraph(
@@ -347,14 +360,18 @@ class TestValidateDatabase:
         mock_db._driver = MagicMock()
         client = GqlAlchemyClient(graph_definition=graph_definition, db=mock_db)
 
-        with patch(
-            "orthograph.backends.gqlalchemy.client._database_validate",
-            return_value=ValidationResult(),
-        ) as mock_validate:
+        with (
+            patch(
+                "orthograph.backends.gqlalchemy.client.loader.load_inspector",
+            ) as mock_load,
+            patch(
+                "orthograph.backends.gqlalchemy.client.compare_profile_to_definition",
+                return_value=ValidationResult(),
+            ),
+        ):
             client.validate_database()
 
-        backend_arg = mock_validate.call_args.args[0]
-        assert backend_arg == "memgraph"
+        mock_load.assert_called_once_with(name="memgraph")
 
     def test_uses_existing_driver_attribute(
         self, graph_definition: GraphDefinition, mock_db: MagicMock
@@ -362,17 +379,26 @@ class TestValidateDatabase:
         from orthograph.backends.gqlalchemy.client import GqlAlchemyClient
 
         existing_driver = MagicMock()
+        inspector = MagicMock()
         mock_db._driver = existing_driver
         client = GqlAlchemyClient(graph_definition=graph_definition, db=mock_db)
 
-        with patch(
-            "orthograph.backends.gqlalchemy.client._database_validate",
-            return_value=ValidationResult(),
-        ) as mock_validate:
+        with (
+            patch(
+                "orthograph.backends.gqlalchemy.client.loader.load_inspector",
+                return_value=inspector,
+            ),
+            patch(
+                "orthograph.backends.gqlalchemy.client.compare_profile_to_definition",
+                return_value=ValidationResult(),
+            ),
+        ):
             client.validate_database()
 
         # The existing driver is reused; no new connection is opened.
-        assert mock_validate.call_args.args[1] is existing_driver
+        inspector.return_value.inspect.assert_called_once_with(
+            connection=existing_driver
+        )
         mock_db.new_connection.assert_not_called()
 
     def test_falls_back_to_new_connection_when_no_driver(
@@ -382,17 +408,24 @@ class TestValidateDatabase:
 
         mock_db._driver = None
         new_driver = MagicMock()
+        inspector = MagicMock()
         mock_db.new_connection = MagicMock(return_value=new_driver)
         client = GqlAlchemyClient(graph_definition=graph_definition, db=mock_db)
 
-        with patch(
-            "orthograph.backends.gqlalchemy.client._database_validate",
-            return_value=ValidationResult(),
-        ) as mock_validate:
+        with (
+            patch(
+                "orthograph.backends.gqlalchemy.client.loader.load_inspector",
+                return_value=inspector,
+            ),
+            patch(
+                "orthograph.backends.gqlalchemy.client.compare_profile_to_definition",
+                return_value=ValidationResult(),
+            ),
+        ):
             client.validate_database()
 
         mock_db.new_connection.assert_called_once()
-        assert mock_validate.call_args.args[1] is new_driver
+        inspector.return_value.inspect.assert_called_once_with(connection=new_driver)
 
     def test_returns_validation_result(
         self, graph_definition: GraphDefinition, mock_db: MagicMock
@@ -402,9 +435,14 @@ class TestValidateDatabase:
         mock_db._driver = MagicMock()
         client = GqlAlchemyClient(graph_definition=graph_definition, db=mock_db)
 
-        with patch(
-            "orthograph.backends.gqlalchemy.client._database_validate",
-            return_value=ValidationResult(),
+        with (
+            patch(
+                "orthograph.backends.gqlalchemy.client.loader.load_inspector",
+            ),
+            patch(
+                "orthograph.backends.gqlalchemy.client.compare_profile_to_definition",
+                return_value=ValidationResult(),
+            ),
         ):
             result = client.validate_database()
 

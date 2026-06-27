@@ -1,4 +1,4 @@
-"""Tests for orthograph.api.visualization.
+"""Tests for orthograph.rendering.
 
 Covers render_model, render_profile, render_result, and display.
 """
@@ -8,12 +8,6 @@ from unittest.mock import patch
 
 import pytest
 
-from orthograph.api.visualization import (
-    display,
-    render_model,
-    render_profile,
-    render_result,
-)
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
@@ -21,6 +15,12 @@ from orthograph.graph_profile.models import (
     GraphProfile,
     NodeTypeProfile,
     PropertyProfile,
+)
+from orthograph.rendering import (
+    display,
+    render_model,
+    render_profile,
+    render_result,
 )
 from orthograph.visualization.formats import RenderFormat
 
@@ -98,24 +98,24 @@ def test_render_model_default_is_text(graph_definition: GraphDefinition) -> None
 
 
 def test_render_model_text_explicit(graph_definition: GraphDefinition) -> None:
-    assert render_model(graph_definition, format=RenderFormat.TEXT) == render_model(
+    assert render_model(graph_definition, fmt=RenderFormat.TEXT) == render_model(
         graph_definition
     )
 
 
 def test_render_model_mermaid_enum(graph_definition: GraphDefinition) -> None:
-    out = render_model(graph_definition, format=RenderFormat.MERMAID)
+    out = render_model(graph_definition, fmt=RenderFormat.MERMAID)
     assert "graph TD" in out
 
 
 def test_render_model_mermaid_string(graph_definition: GraphDefinition) -> None:
-    out = render_model(graph_definition, format="mermaid")
+    out = render_model(graph_definition, fmt="mermaid")
     assert "graph TD" in out
 
 
 def test_render_model_invalid_format_raises(graph_definition: GraphDefinition) -> None:
     with pytest.raises(ValueError):
-        render_model(graph_definition, format="html")
+        render_model(graph_definition, fmt="html")
 
 
 # ---------------------------------------------------------------------------
@@ -130,21 +130,21 @@ def test_render_profile_default_is_text(profile: GraphProfile) -> None:
 
 
 def test_render_profile_text_explicit(profile: GraphProfile) -> None:
-    assert render_profile(profile, format=RenderFormat.TEXT) == render_profile(profile)
+    assert render_profile(profile, fmt=RenderFormat.TEXT) == render_profile(profile)
 
 
 def test_render_profile_string_coercion(profile: GraphProfile) -> None:
-    assert render_profile(profile, format="text") == render_profile(profile)
+    assert render_profile(profile, fmt="text") == render_profile(profile)
 
 
 def test_render_profile_mermaid_raises(profile: GraphProfile) -> None:
     with pytest.raises(ValueError, match="only supports"):
-        render_profile(profile, format=RenderFormat.MERMAID)
+        render_profile(profile, fmt=RenderFormat.MERMAID)
 
 
 def test_render_profile_invalid_format_raises(profile: GraphProfile) -> None:
     with pytest.raises(ValueError):
-        render_profile(profile, format="dot")
+        render_profile(profile, fmt="dot")
 
 
 # ---------------------------------------------------------------------------
@@ -158,11 +158,11 @@ def test_render_result_default_is_text(result: ValidationResult) -> None:
 
 
 def test_render_result_text_explicit(result: ValidationResult) -> None:
-    assert render_result(result, format=RenderFormat.TEXT) == render_result(result)
+    assert render_result(result, fmt=RenderFormat.TEXT) == render_result(result)
 
 
 def test_render_result_string_coercion(result: ValidationResult) -> None:
-    assert render_result(result, format="text") == render_result(result)
+    assert render_result(result, fmt="text") == render_result(result)
 
 
 def test_render_result_shows_pass_for_valid() -> None:
@@ -171,7 +171,7 @@ def test_render_result_shows_pass_for_valid() -> None:
 
 def test_render_result_mermaid_raises(result: ValidationResult) -> None:
     with pytest.raises(ValueError, match="only supports"):
-        render_result(result, format=RenderFormat.MERMAID)
+        render_result(result, fmt=RenderFormat.MERMAID)
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +182,6 @@ def test_render_result_mermaid_raises(result: ValidationResult) -> None:
 def test_display_delegates_to_display_mermaid(
     graph_definition: GraphDefinition,
 ) -> None:
-    with patch("orthograph.api.visualization.display_mermaid") as mock_display:
+    with patch("orthograph.rendering.display_mermaid") as mock_display:
         display(graph_definition)
     mock_display.assert_called_once_with(obj=graph_definition)

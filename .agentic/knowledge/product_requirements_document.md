@@ -294,7 +294,7 @@ execution.
 8. **YAML sufficient for the common case.** A consuming application can define schema and Cypher query catalogue in YAML alone, without Python class definitions.
 9. **Runtime configurability over compile-time rigidity.** External YAML, dynamic class generation, runtime validation preferred over patterns requiring code changes for schema updates.
 10. **Two input modes where applicable.** Class-based (Python) and config-based (YAML) for schema definitions and Cypher query catalogues. Python-only for GQLAlchemy query catalogues (builder expressions are inherently code).
-11. **Backends are isolated.** Importing one backend never pulls in dependencies of another. Each independently installable. No `backends/<X>` imports `backends/<Y>` (enforced by `tests/test_architecture.py`).
+11. **Backends are isolated.** Importing one backend never pulls in dependencies of another. Each DB/ORM backend independently installable via its own pip extra (`neo4j`, `networkx`, `gqlalchemy`, `memgraph`). The Cypher parser (`graphglot`) is a **core** dependency — it is always present because `orthograph.queries` is part of the root surface (ADR-040). No `backends/<X>` imports `backends/<Y>` (enforced by `tests/test_architecture.py`).
 12. **Tests are the specification.** Any feature without tests is not done.
 13. **Connections are never owned.** Database drivers and sessions are passed in by the caller. Orthograph never stores, pools, or manages connection lifecycle as instance state. Inspectors are stateless — `inspect(self, connection)`.
 
@@ -326,9 +326,13 @@ side, `graph_profile/` is the observed side, `comparison/` is the cross-layer
 activity that reconciles them, `diagnostics/` is the shared result currency
 (`ValidationIssue`, `ValidationResult`, `Severity`), and `cypher/` is the
 top-level Cypher language tool. Vendor backends live in vendor-isolated
-`backends/<vendor>/` packages. Consumers reach all of this only through the
-vendor-free `orthograph.api` surface (`api.model`, `api.database`,
-`api.visualization`).
+`backends/<vendor>/` packages. Consumers reach all of this through the
+vendor-free `orthograph.api` surface: seven intent-named modules
+(`definition`, `profile`, `compare`, `queries`, `execution`,
+`discovery`, `rendering`). All seven are also accessible directly at the
+`orthograph` root (e.g. `orthograph.profile.inspect(...)`) — `api/` remains
+the single curated chokepoint (ADR-040). The legacy `model`/`database` modules
+were removed (E55, clean break — no shims).
 
 #### Database Profiling & Inspection
 
@@ -339,8 +343,8 @@ Point-in-time structural analysis of live databases and in-memory graphs.
 - **[Memgraph Inspector](../../src/orthograph/backends/memgraph/inspector.py)** — live inspection via Memgraph schema procedures
 - **[NetworkX Inspector](../../src/orthograph/backends/networkx/inspector.py)** — in-memory graph profiling
 - **[GraphProfile](../../src/orthograph/graph_profile/models.py)** — frozen Pydantic model: node/relationship type profiles, property completeness, cardinality statistics, constraints, metadata
-- **[compare()](../../src/orthograph/comparison/engine.py)** — compares a GraphDefinition against a GraphProfile, returns a categorised `ValidationResult` with findings explicitly classified by severity: **breaking** (schema violation that will cause runtime failures), **warning** (likely drift or degraded quality), or **informational** (observable difference that does not block runtime). The `ValidationResult` is structured data intended to be consumed by CI pipelines, release gates, and developer tooling; surfacing and orchestration (CLI, scheduled jobs) is the consuming application's responsibility. Reachable via `api.database.validate`.
-- **Version-to-version comparison** *(planned, not yet implemented)* — compare two `GraphDefinition` snapshots (model-vs-model) or two `GraphProfile` snapshots (profile-vs-profile, e.g. staging vs production) and produce a diff of added/removed/changed labels, relationship types, properties, and cardinalities. Framed as drift-between-versions analysis, not migration; never applies changes to a database (constraint #4).
+- **[compare()](../../src/orthograph/comparison/engine.py)** — compares a GraphDefinition against a GraphProfile, returns a categorised `ValidationResult` with findings explicitly classified by severity: **breaking** (schema violation that will cause runtime failures), **warning** (likely drift or degraded quality), or **informational** (observable difference that does not block runtime). The `ValidationResult` is structured data intended to be consumed by CI pipelines, release gates, and developer tooling; surfacing and orchestration (CLI, scheduled jobs) is the consuming application's responsibility. Reachable via `api.compare.profile_to_definition`.
+- **Version-to-version comparison** — compare two `GraphDefinition` snapshots (definition-vs-definition, version drift, US 30) or two `GraphProfile` snapshots (profile-vs-profile, e.g. staging vs production, US 31) and produce a diff of added/removed/changed labels, relationship types, properties, and cardinalities. Framed as drift-between-versions analysis, not migration; never applies changes to a database (constraint #4). Reachable via `api.compare.definitions` and `api.compare.profiles`.
 - Inspired by [SODA](https://soda.io/) for data quality assessment — point-in-time profiling, not a monitoring platform
 
 #### Query Governance — Cypher
@@ -354,7 +358,7 @@ executing the query.
 - **[validate_query_catalogue() / validate_query_catalogue_against_profile()](../../src/orthograph/cypher/validation.py)** — drift detection: validate every query in a catalogue against the graph definition (query-set ↔ definition), or against both the definition and a live-DB `GraphProfile` in one pass (query-set + DB-schema ↔ definition). Statically-uninspectable queries are reported as `QUERY_UNVERIFIABLE` (INFO), never silently passed.
 
 > **Consumer entry point.** `validate_query`, `validate_query_catalogue`, and
-> `validate_query_catalogue_against_profile` are part of the `orthograph.api.model`
+> `validate_query_catalogue_against_profile` are part of the `orthograph.api.queries`
 > surface. Consumers import them from there; the `orthograph.cypher.*` paths are
 > the underlying implementation and remain available for advanced use.
 
@@ -393,7 +397,7 @@ consumption.
 
 ## Implementation Decisions
 
-1. **Two distinct validation engines.** `GraphValidator` (graph_definition) validates raw in-memory data records. `compare()` (`comparison/`) validates aggregated database profiles. These serve different use cases and remain separate. They surface as two distinct `api` verbs: `api.model.validate` (in-memory data) and `api.database.validate` (live DB vs model).
+1. **Two distinct validation engines.** `GraphValidator` (graph_definition) validates raw in-memory data records. `compare()` (`comparison/`) validates aggregated database profiles. These serve different use cases and remain separate. They surface as two distinct `api` verbs: `api.graph_definition.validate_data` (in-memory data) and `api.compare.profile_to_definition` (live DB vs definition).
 
 2. **Query Catalogue as registry pattern.** Both Cypher and GQLAlchemy catalogues share a common registry interface (register, lookup, validate, execute-with-validation) but differ in serialisation: Cypher supports YAML + Python; GQLAlchemy is Python-only.
 

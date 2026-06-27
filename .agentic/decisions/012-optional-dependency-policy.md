@@ -1,10 +1,22 @@
 # ADR-012: Optional-Dependency Policy — Declare Once, Probe, Fail Loud
 
 **Date:** 2026-06-11
-**Status:** Accepted
+**Status:** Accepted (graphglot promoted to core by ADR-040, 2026-06-26)
 **Category:** architecture / backend isolation
 **Supersedes:** `knowledge/extension-contract.md` (retired — its inspector-ABC and
 GraphProfile reference content moves into this ADR and ADR-011/ADR-003)
+
+> **Amendment — ADR-040 (2026-06-26).** `graphglot` (the Cypher parser,
+> previously the `cypher` extra) is now a **core dependency**. The root
+> `orthograph` package eagerly promotes `orthograph.api.queries` to the root
+> surface; making `graphglot` optional would mean `import orthograph` could
+> raise `ModuleNotFoundError` on a core-only install. The `cypher` extra
+> becomes an empty backward-compat alias — existing `pip install
+> orthograph[cypher]` invocations continue to work but install nothing new.
+> DB/ORM vendors (`neo4j`, `networkx`, `gqlalchemy`) remain optional and
+> deferred. The "never pay for what you don't use" principle now applies to
+> *database drivers*, not to the in-tree Cypher language tool which is always
+> present as part of the core contract surface.
 
 > **Forward note (ADR-017, 2026-06-12).** Path references in this ADR
 > (`profile/validation.py`, `validate_profile`, `core/…`) are as of its date.

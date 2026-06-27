@@ -1,35 +1,23 @@
 """Single authority for optional-dependency availability.
 
-All optional backends are declared in ``_BACKENDS``. Use ``require`` to raise
-on a missing dependency, or ``is_available`` for a non-raising probe.
+The full backend registry lives in :mod:`orthograph.backends.registry`.
+This module exposes the public ``require`` / ``is_available`` API.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import sys
-from typing import Literal
+
+from orthograph.backends.registry import BACKENDS, Kind
 
 
-Kind = Literal["db-driver", "orm", "in-memory", "tool"]
+# Re-export Kind for backward compatibility
+__all__ = ["Kind", "MissingDependencyError", "is_available", "require"]
 
 
 class MissingDependencyError(ImportError):
     """Raised when an optional dependency required for a backend is absent."""
-
-
-# name -> (pip-extra, kind, probe-modules)
-#
-# ``memgraph`` deliberately shares the neo4j Bolt driver (documented in
-# pyproject.toml); both probe the ``neo4j`` package.
-_BACKENDS: dict[str, tuple[str, Kind, tuple[str, ...]]] = {
-    "neo4j": ("neo4j", "db-driver", ("neo4j",)),
-    "memgraph": ("memgraph", "db-driver", ("neo4j",)),
-    "networkx": ("networkx", "in-memory", ("networkx",)),
-    "gqlalchemy": ("gqlalchemy", "orm", ("gqlalchemy",)),
-    "cypher": ("cypher", "tool", ("graphglot",)),
-    "ipython": ("notebook", "tool", ("IPython",)),
-}
 
 
 def _module_present(name: str) -> bool:
@@ -55,11 +43,10 @@ def is_available(name: str) -> bool:
 
     Unknown names return ``False``.
     """
-    entry = _BACKENDS.get(name)
+    entry = BACKENDS.get(name)
     if entry is None:
         return False
-    _, _, modules = entry
-    return _probe(modules)
+    return _probe(entry.probe_modules)
 
 
 def require(name: str) -> None:
@@ -71,15 +58,14 @@ def require(name: str) -> None:
         If ``name`` is unknown or its probe modules are not importable.
         The error message includes the pip install command.
     """
-    entry = _BACKENDS.get(name)
+    entry = BACKENDS.get(name)
     if entry is None:
         raise MissingDependencyError(
-            f"Unknown backend {name!r}. Known backends: {', '.join(sorted(_BACKENDS))}."
+            f"Unknown backend {name!r}. Known backends: {', '.join(sorted(BACKENDS))}."
         )
-    extra, _, modules = entry
-    if not _probe(modules):
-        missing = ", ".join(m for m in modules if not _module_present(m))
+    if not _probe(entry.probe_modules):
+        missing = ", ".join(m for m in entry.probe_modules if not _module_present(m))
         raise MissingDependencyError(
             f"The {name!r} backend requires the {missing} package, which is not "
-            f"installed. Install it with: pip install orthograph[{extra}]"
+            f"installed. Install it with: pip install orthograph[{entry.pip_extra}]"
         )

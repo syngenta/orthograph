@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from orthograph.api.database import validate as _database_validate
+from orthograph.backends import loader
 from orthograph.backends.gqlalchemy.codegen import (
     GqlAlchemySchema,
     generate_gqlalchemy_classes,
 )
+from orthograph.comparison.engine import compare_profile_to_definition
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.validation import GraphValidator
@@ -142,4 +143,8 @@ class GqlAlchemyClient:
         driver = getattr(self._db, "_driver", None)
         if driver is None:
             driver = self._db.new_connection()
-        return _database_validate(self._backend, driver, self._graph_data_model)
+        inspector_cls = loader.load_inspector(name=self._backend)
+        profile = inspector_cls().inspect(connection=driver)
+        return compare_profile_to_definition(
+            profile=profile, definition=self._graph_data_model
+        )

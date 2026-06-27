@@ -6,7 +6,6 @@ from typing import Any, Optional
 
 import pytest
 
-from orthograph.api.visualization import render_model
 from orthograph.backends.networkx.conversion import schema_to_networkx
 from orthograph.backends.networkx.inspector import NetworkxInspector
 from orthograph.comparison.engine import compare_profile_to_definition
@@ -18,6 +17,7 @@ from orthograph.graph_definition.models import (
 )
 from orthograph.graph_definition.validation import GraphValidator
 from orthograph.io.yaml import load_yaml_file, save_yaml_file
+from orthograph.rendering import render_model
 from orthograph.visualization.mermaid import model_to_mermaid
 
 
@@ -209,7 +209,7 @@ def test_chemistry_mermaid(chemistry_model: GraphDefinition):
 
 
 def test_chemistry_render_dispatcher(chemistry_model: GraphDefinition):
-    mermaid = render_model(chemistry_model, format="mermaid")
+    mermaid = render_model(chemistry_model, fmt="mermaid")
     assert "graph TD" in mermaid
     text = render_model(chemistry_model)
     assert "Model:" in text

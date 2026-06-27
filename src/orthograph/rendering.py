@@ -1,4 +1,4 @@
-"""Public visualization API — render orthograph objects as text or diagrams.
+"""Render orthograph objects as text or diagrams.
 
 * ``render_model``   — :class:`GraphDefinition` → text or Mermaid.
 * ``render_profile`` — :class:`GraphProfile` → text only.
@@ -7,10 +7,10 @@
 
 Example::
 
-    from orthograph.api import database, visualization
+    import orthograph
 
-    profile = database.inspect("neo4j", driver)
-    print(visualization.render_profile(profile))
+    p = orthograph.profile.inspect_neo4j(driver)
+    print(orthograph.rendering.render_profile(p))
 
 ``RenderFormat`` values are also accepted as strings (``"text"``, ``"mermaid"``).
 """
@@ -23,28 +23,30 @@ from orthograph.visualization.mermaid import display_mermaid, model_to_mermaid
 from orthograph.visualization.text import model_to_text, profile_to_text, result_to_text
 
 
+__all__ = ["render_model", "render_profile", "render_result", "display", "RenderFormat"]
+
+
 def render_model(
-    graph_definition: GraphDefinition,
-    *,
-    format: RenderFormat | str = RenderFormat.TEXT,  # noqa: A002
+    definition: GraphDefinition, *, fmt: RenderFormat | str = RenderFormat.TEXT
 ) -> str:
     """Render a :class:`GraphDefinition` as text or a Mermaid diagram.
 
     Parameters
     ----------
-    format:
+    definition:  :class:`GraphDefinition`
+    fmt:
         ``RenderFormat.TEXT`` (default) or ``RenderFormat.MERMAID``.
 
     Raises
     ------
     ValueError
-        If ``format`` is unrecognised or not supported by this renderer.
+        If ``fmt`` is unrecognised or not supported by this renderer.
     """
-    fmt = RenderFormat(format)
+    fmt = RenderFormat(fmt)
     if fmt is RenderFormat.TEXT:
-        return model_to_text(graph_definition=graph_definition)
+        return model_to_text(graph_definition=definition)
     if fmt is RenderFormat.MERMAID:
-        return model_to_mermaid(graph_definition=graph_definition)
+        return model_to_mermaid(graph_definition=definition)
     raise ValueError(
         f"render_model does not support {fmt.value!r}. "
         f"Supported: {[RenderFormat.TEXT.value, RenderFormat.MERMAID.value]}"
@@ -52,9 +54,7 @@ def render_model(
 
 
 def render_profile(
-    profile: GraphProfile,
-    *,
-    format: RenderFormat | str = RenderFormat.TEXT,  # noqa: A002
+    profile: GraphProfile, *, fmt: RenderFormat | str = RenderFormat.TEXT
 ) -> str:
     """Render a :class:`GraphProfile` as text.
 
@@ -63,9 +63,9 @@ def render_profile(
     Raises
     ------
     ValueError
-        If ``format`` is not ``RenderFormat.TEXT``.
+        If ``fmt`` is not ``RenderFormat.TEXT``.
     """
-    fmt = RenderFormat(format)
+    fmt = RenderFormat(fmt)
     if fmt is RenderFormat.TEXT:
         return profile_to_text(profile=profile)
     raise ValueError(
@@ -74,9 +74,7 @@ def render_profile(
 
 
 def render_result(
-    result: ValidationResult,
-    *,
-    format: RenderFormat | str = RenderFormat.TEXT,  # noqa: A002
+    validation_result: ValidationResult, *, fmt: RenderFormat | str = RenderFormat.TEXT
 ) -> str:
     """Render a :class:`ValidationResult` as text.
 
@@ -85,20 +83,20 @@ def render_result(
     Raises
     ------
     ValueError
-        If ``format`` is not ``RenderFormat.TEXT``.
+        If ``fmt`` is not ``RenderFormat.TEXT``.
     """
-    fmt = RenderFormat(format)
+    fmt = RenderFormat(fmt)
     if fmt is RenderFormat.TEXT:
-        return result_to_text(result=result)
+        return result_to_text(result=validation_result)
     raise ValueError(
         f"render_result only supports {RenderFormat.TEXT.value!r}, got {fmt.value!r}."
     )
 
 
-def display(graph_definition: GraphDefinition) -> None:
+def display(definition: GraphDefinition) -> None:
     """Display a :class:`GraphDefinition` Mermaid diagram inline (Jupyter).
 
     Requires the ``notebook`` extra (IPython); raises
     :class:`~orthograph.dependencies.MissingDependencyError` if IPython is absent.
     """
-    display_mermaid(obj=graph_definition)
+    display_mermaid(obj=definition)

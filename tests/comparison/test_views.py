@@ -238,14 +238,19 @@ def test_profile_view_relationship_properties_absent_type_returns_empty():
 
 
 def test_views_module_imports_no_backend():
-    """views.py imports no backend (neo4j/memgraph/networkx/gqlalchemy) modules."""
+    """views.py imports no DB-vendor (neo4j/memgraph/networkx/gqlalchemy) modules.
+
+    Matches on root package name (``m.split('.')[0]``) so that
+    ``graphglot.dialect.neo4j`` (the Cypher parser's Neo4j dialect, a core dep)
+    is not falsely flagged as the ``neo4j`` database driver.
+    """
     import subprocess
     import sys
 
     code = (
         "import sys, orthograph.comparison.views; "
-        "b = ('neo4j', 'memgraph', 'networkx', 'gqlalchemy'); "
-        "found = [m for m in sys.modules if any(x in m for x in b)]; "
+        "b = {'neo4j', 'memgraph', 'networkx', 'gqlalchemy'}; "
+        "found = [m for m in sys.modules if m.split('.')[0] in b]; "
         "print(found)"
     )
     result = subprocess.run(

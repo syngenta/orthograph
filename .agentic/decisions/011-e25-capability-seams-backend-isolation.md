@@ -1,8 +1,17 @@
 # ADR-011: E25 Capability Seams and Backend Isolation
 
 **Date:** 2026-06-11
-**Status:** Accepted
+**Status:** Accepted (invariant 4 amended by ADR-040, 2026-06-26)
 **Category:** architecture / backend isolation
+
+> **Amendment — ADR-040 (2026-06-26).** Invariant 4 ("no re-exports in any
+> `__init__.py`") has been refined from a *syntactic* ban into a *semantic*
+> rule: the root `orthograph/__init__.py` is now permitted to contain
+> `from orthograph.api import …` — a managed, eager promotion of the curated
+> `api/` chokepoint to the package root. All other `__init__.py` files remain
+> import-free. The root may only delegate to `orthograph.api.*`; any other
+> import source remains a violation. See ADR-040 for the full rationale and
+> the updated `tests/test_architecture.py` enforcement.
 
 ## Context
 

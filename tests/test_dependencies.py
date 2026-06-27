@@ -3,12 +3,13 @@
 import pytest
 
 import orthograph.dependencies as dependencies
+from orthograph.backends.registry import BACKENDS
 from orthograph.dependencies import MissingDependencyError
 
 
 def test_known_backends_are_declared() -> None:
     for name in ("neo4j", "memgraph", "networkx", "gqlalchemy", "cypher"):
-        assert name in dependencies._BACKENDS
+        assert name in BACKENDS
 
 
 def test_is_available_unknown_is_false() -> None:
@@ -45,6 +46,6 @@ def test_require_missing_dependency_names_the_extra(
 
 def test_memgraph_shares_neo4j_driver_probe() -> None:
     # Both memgraph and neo4j probe the neo4j package (documented shared driver).
-    _, _, neo4j_probes = dependencies._BACKENDS["neo4j"]
-    _, _, memgraph_probes = dependencies._BACKENDS["memgraph"]
+    neo4j_probes = BACKENDS["neo4j"].probe_modules
+    memgraph_probes = BACKENDS["memgraph"].probe_modules
     assert memgraph_probes == neo4j_probes == ("neo4j",)

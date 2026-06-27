@@ -9,13 +9,15 @@ Invariants enforced:
      ``comparison/``, ``catalogue/``, ``cypher/``, ``diagnostics/``)
      contain no top-level graph-DB vendor import (``neo4j``, ``networkx``,
      ``gqlalchemy``).
-  3. ``api/`` contains no top-level concrete-backend import (the sanctioned
-     lazy ``importlib``-free thunks live in ``backends/loader.py``, inside
-     function bodies, invisible to top-level-only walking).
+  3. The seven root capability modules (``definition.py``, ``profile.py``,
+     ``compare.py``, ``queries.py``, ``execution.py``, ``discovery.py``,
+     ``rendering.py``) contain no top-level direct ``orthograph.backends.*``
+     import beyond the sanctioned ``orthograph.backends.loader`` seam.
   4. No ``__init__.py`` under ``src/orthograph/`` contains a convenience
-     re-export (any ``import`` or ``from … import`` statement), with the single
-     sanctioned exception of ``import importlib.metadata`` in the top-level
-     ``orthograph/__init__.py``.
+     re-export (any ``import`` or ``from … import`` statement), with the
+     sanctioned exceptions in the top-level ``orthograph/__init__.py``:
+     ``import importlib.metadata`` and
+     ``from orthograph import <capability-module-name>``.
   5. ``diagnostics/`` imports no other ``orthograph`` domain package — it is
      the shared result currency that everything else depends on, so its
      dependency edge must point nowhere in the domain.
@@ -71,9 +73,19 @@ DOMAIN_PACKAGES = (
     "catalogue",
     "cypher",
     "backends",
-    "api",
     "io",
     "visualization",
+)
+
+# The seven root capability modules (ADR-041).
+ROOT_CAPABILITY_MODULES = (
+    "definition",
+    "profile",
+    "compare",
+    "queries",
+    "execution",
+    "discovery",
+    "rendering",
 )
 
 
@@ -192,54 +204,74 @@ def test_vendor_free_layers_have_no_vendor_imports() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — api/ has no top-level concrete-backend import
+# Test 3 — root capability modules have no top-level concrete-backend import
 # ---------------------------------------------------------------------------
 
 
-def test_api_has_no_top_level_backend_import() -> None:
-    """No ``api/*.py`` may have a top-level import of ``orthograph.backends.*``.
+def test_root_capability_modules_have_no_top_level_backend_import() -> None:
+    """No root capability module may have a top-level import of
+    ``orthograph.backends.*`` (beyond the sanctioned ``loader`` seam).
 
-    The only sanctioned way to reach a concrete backend from ``api/`` is
+    The only sanctioned way to reach a concrete backend is via
     ``orthograph.backends.loader`` — which itself performs deferred imports
     inside function bodies (thunks), not at module top.  Because this test
     walks only top-level statements, those thunks are invisible here, and
-    ``database.py``'s ``from orthograph.backends import loader`` (which
-    imports the *loader module*, not a concrete backend) correctly passes.
+    ``from orthograph.backends import loader`` correctly passes.
     """
     violations: list[str] = []
 
-    api_dir = PKG_ROOT / "api"
-    for py_file in api_dir.glob("*.py"):
-        for module_name, lineno in _top_level_imports(py_file):
-            if module_name.startswith("orthograph.backends."):
+    for module_name in ROOT_CAPABILITY_MODULES:
+        py_file = PKG_ROOT / f"{module_name}.py"
+        if not py_file.exists():
+            continue
+        for imported, lineno in _top_level_imports(py_file):
+            if imported.startswith("orthograph.backends."):
                 rel = py_file.relative_to(PKG_ROOT.parent.parent)
                 violations.append(
-                    f"  {rel}:{lineno} — api/ has top-level backend import "
-                    f"'{module_name}'"
+                    f"  {rel}:{lineno} — root capability module has top-level "
+                    f"backend import '{imported}'"
                 )
 
     assert not violations, (
-        "api/ top-level backend import violations found:\n" + "\n".join(violations)
+        "Root capability module top-level backend import violations found:\n"
+        + "\n".join(violations)
     )
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — no re-exports in any __init__.py
+# Test 4 — no re-exports in any __init__.py (semantic rule)
+#
+# Policy (ADR-041):
+#   • The root orthograph/__init__.py may:
+#       – import importlib.metadata  (for __version__)
+#       – from orthograph import <capability-module>  (submodule promotions)
+#   • Every OTHER __init__.py under src/orthograph/ must remain import-free.
+#   • No __init__.py may import directly from a deep orthograph sub-package
+#     (e.g. graph_definition, cypher, backends).
+#
+# The key principle: the seven root capability modules are the single curated
+# exposure surface; the root __init__ promotes them as attributes and nothing
+# else.
 # ---------------------------------------------------------------------------
 
 
 def test_no_reexports_in_init_files() -> None:
-    """No ``__init__.py`` under ``src/orthograph/`` may contain a re-export.
+    """Enforce the semantic re-export policy (ADR-041).
 
-    A re-export is any ``import`` or ``from … import`` statement at the module
-    level.  The single sanctioned exception is the top-level
-    ``orthograph/__init__.py``, which is allowed to contain exactly one
-    ``import importlib.metadata`` statement (needed for the ``__version__``
-    machinery).
+    For the root ``orthograph/__init__.py``:
+
+    * ``import importlib.metadata`` is allowed (``__version__`` machinery).
+    * ``from orthograph import <name>`` is allowed when ``<name>`` is one of
+      the seven root capability modules — the managed submodule promotion.
+    * Any other import is a violation.
+
+    For every other ``__init__.py``:
+
+    * Zero imports of any kind — unchanged from the original invariant.
     """
-    # The one allowed non-docstring statement in the top-level __init__.py
     TOPLEVEL_INIT = PKG_ROOT / "__init__.py"
-    ALLOWED_TOPLEVEL_MODULE = "importlib.metadata"
+    ALLOWED_TOPLEVEL_BARE_IMPORT = "importlib.metadata"
+    ALLOWED_TOPLEVEL_FROM_MODULE = "orthograph"
 
     violations: list[str] = []
 
@@ -255,27 +287,55 @@ def test_no_reexports_in_init_files() -> None:
         for node in tree.body:
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    # Allow importlib.metadata in the top-level __init__ only
                     if (
                         init_file == TOPLEVEL_INIT
-                        and alias.name == ALLOWED_TOPLEVEL_MODULE
+                        and alias.name == ALLOWED_TOPLEVEL_BARE_IMPORT
                     ):
                         continue
                     violations.append(
-                        f"  {rel}:{node.lineno} — re-export via 'import {alias.name}'"
+                        f"  {rel}:{node.lineno} — disallowed 'import {alias.name}'"
                     )
-            elif isinstance(node, ast.ImportFrom):
-                # All from-imports in __init__.py are forbidden re-exports
-                module = node.module or ""
-                names = ", ".join(a.name for a in node.names)
-                violations.append(
-                    f"  {rel}:{node.lineno} — re-export via "
-                    f"'from {module} import {names}'"
-                )
 
-    assert not violations, "__init__.py re-export violations found:\n" + "\n".join(
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                names = [a.name for a in node.names]
+                names_str = ", ".join(names)
+                if init_file == TOPLEVEL_INIT:
+                    if module == ALLOWED_TOPLEVEL_FROM_MODULE and all(
+                        n in ROOT_CAPABILITY_MODULES for n in names
+                    ):
+                        # Allowed: root promotes only the seven capability modules
+                        continue
+                    violations.append(
+                        f"  {rel}:{node.lineno} — root __init__ may only do "
+                        f"'from orthograph import <capability-module>', got "
+                        f"'from {module} import {names_str}'"
+                    )
+                else:
+                    violations.append(
+                        f"  {rel}:{node.lineno} — re-export in non-root __init__ via "
+                        f"'from {module} import {names_str}'"
+                    )
+
+    assert not violations, "__init__.py policy violations found:\n" + "\n".join(
         violations
     )
+
+
+def test_root_surface_is_real_root_modules() -> None:
+    """Every name the root promotes must resolve to a real ``orthograph.<name>``
+    module (not a deep sub-package).
+
+    Ensures the root cannot silently acquire a deep re-export.
+    """
+    import orthograph
+
+    for name in orthograph.__all__:
+        mod = getattr(orthograph, name)
+        assert mod.__name__ == f"orthograph.{name}", (
+            f"orthograph.{name} resolves to '{mod.__name__}', "
+            f"expected 'orthograph.{name}'"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -145,16 +145,18 @@ def _compare_views(
 
 def compare_profile_to_definition(
     profile: GraphProfile,
-    graph_definition: GraphDefinition,
+    definition: GraphDefinition,
     rules: Sequence[Rule] | None = None,
 ) -> ValidationResult:
-    """Check whether *profile* satisfies the constraints in *graph_definition*.
+    """Check whether *profile* satisfies the constraints in *definition*.
 
     This is a direct rename of the former ``compare`` function; behaviour and
     emitted codes/severities are identical.
 
     Parameters
     ----------
+    profile:
+    definition:
     rules:
         Rule set to apply.  Defaults to
         :func:`~orthograph.comparison.rules.standard_rules`.
@@ -175,9 +177,7 @@ def compare_profile_to_definition(
     callers who think in terms of "does my profile satisfy this definition?".
     """
     active = rules if rules is not None else standard_rules()
-    return _compare_views(
-        DefinitionView(graph_definition), ProfileView(profile), active
-    )
+    return _compare_views(DefinitionView(definition), ProfileView(profile), active)
 
 
 def compare_profiles(

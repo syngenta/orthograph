@@ -28,7 +28,6 @@ from typing import Any
 
 import pytest
 
-from orthograph.api.model import load_query_catalogue
 from orthograph.cypher.bindings import NoIdentifiers
 from orthograph.cypher.query import CypherQuery
 from orthograph.cypher.query_execution import (
@@ -40,6 +39,9 @@ from orthograph.cypher.query_execution import (
 from orthograph.cypher.validation import validate_query_catalogue
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
+from orthograph.io.query_catalogue_yaml import (
+    load_query_catalogue_string as load_query_catalogue,
+)
 from orthograph.query.catalogue import QueryCatalogue
 
 

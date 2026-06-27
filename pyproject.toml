@@ -28,10 +28,14 @@ classifiers = [
 #  Dependencies
 # --------------------------------------------------------------------------- #
 
-# Core: the minimum needed to define models, validate data, and load YAML configs
+# Core: the minimum needed to define models, validate data, load YAML configs,
+# and author/validate Cypher queries. graphglot (the Cypher parser) is a core
+# dependency because the public API surface (orthograph.queries) is always
+# present at the root namespace. See ADR-040.
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
+    "graphglot>=0.9",
 ]
 
 [project.optional-dependencies]
@@ -41,10 +45,9 @@ networkx = [
     "networkx>=3.0",
 ]
 
-# Language tool: Cypher query parsing and validation (graphglot parser)
-cypher = [
-    "graphglot>=0.9",
-]
+# Language tool: backward-compat alias — graphglot is now a core dependency.
+# Installing orthograph[cypher] still works but adds no new packages.
+cypher = []
 
 # Backend: Neo4j database inspection and result validation
 neo4j = [

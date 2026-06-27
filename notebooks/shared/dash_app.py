@@ -24,22 +24,17 @@ The UI has three tabs:
 3. **Cardinality** — degree distribution per relationship type (when available).
 """
 
-from __future__ import annotations
+import dash
 
-from typing import TYPE_CHECKING
+from orthograph.graph_profile.models import GraphProfile
 
-
-if TYPE_CHECKING:
-    import dash
-
-    from orthograph.graph_profile.models import GraphProfile
 
 # ---------------------------------------------------------------------------
 # Layout helpers
 # ---------------------------------------------------------------------------
 
 
-def _overview_tab(profile: "GraphProfile"):
+def _overview_tab(profile: GraphProfile):
     """Return the content for the Overview tab."""
     import dash_bootstrap_components as dbc
     from dash import dash_table, dcc, html
@@ -214,7 +209,7 @@ def _property_tab(profile: "GraphProfile"):
     )
 
 
-def _cardinality_tab(profile: "GraphProfile"):
+def _cardinality_tab(profile: GraphProfile):
     """Return the content for the Cardinality tab."""
     from dash import dcc, html
 
@@ -358,7 +353,7 @@ def create_app(
 # ---------------------------------------------------------------------------
 
 
-def create_app_from_profile(profile: "GraphProfile", **kwargs) -> dash.Dash:
+def create_app_from_profile(profile: GraphProfile, **kwargs) -> dash.Dash:
     """Convenience alias — same as :func:`create_app`."""
     return create_app(profile, **kwargs)
 
@@ -395,22 +390,22 @@ def create_app_from_connection(
     if backend == "neo4j":
         from neo4j import GraphDatabase
 
-        from orthograph.api.database import inspect
+        from orthograph.profile import inspect_neo4j
 
         driver = GraphDatabase.driver(uri, auth=(username, password))
         try:
-            profile = inspect("neo4j", driver)
+            profile = inspect_neo4j(driver)
         finally:
             driver.close()
 
     elif backend == "memgraph":
         from gqlalchemy import Memgraph
 
-        from orthograph.api.database import inspect
+        from orthograph.profile import inspect_memgraph
 
         host, _, port = uri.replace("bolt://", "").partition(":")
         mg = Memgraph(host=host, port=int(port) if port else 7687)
-        profile = inspect("memgraph", mg)
+        profile = inspect_memgraph(mg)
 
     else:
         raise ValueError(f"Unknown backend {backend!r}. Use 'neo4j' or 'memgraph'.")

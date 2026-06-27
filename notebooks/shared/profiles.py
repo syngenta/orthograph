@@ -32,10 +32,10 @@ Pydantic (``model_dump_json`` / ``model_validate_json``) with no extra
 dependencies and an exact round-trip.  The pre-serialised fixtures live in
 ``notebooks/data/*.json``.
 
-Note: ``orthograph.api.model`` currently has ``load``/``save`` only for
-``GraphDefinition`` (YAML-backed).  Profile save/load is not yet in the
+Note: ``orthograph.api.definition`` currently has ``load_from_file``/``save_to_file``
+only for ``GraphDefinition`` (YAML-backed).  Profile save/load is not yet in the
 public API; the helpers below are notebook-local utilities.  When profile
-persistence is promoted to ``api.model``, the format decision (JSON vs YAML)
+persistence is promoted to ``api.definition``, the format decision (JSON vs YAML)
 should be made there.
 
 save_profile_json(profile, path)

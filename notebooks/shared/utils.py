@@ -9,7 +9,7 @@ Includes:
 import os
 from pathlib import Path
 
-from orthograph.api.database import inspect
+from orthograph.profile import inspect_neo4j
 
 
 # ============================================================================
@@ -174,7 +174,7 @@ def extract_profile(driver):
     Returns:
         GraphProfile object
     """
-    return inspect("neo4j", driver)
+    return inspect_neo4j(driver)
 
 
 def display_profile_summary(profile) -> None:
