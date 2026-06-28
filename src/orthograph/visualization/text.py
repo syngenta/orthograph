@@ -7,6 +7,7 @@ from orthograph.graph_profile.models import (
     BoundedDistribution,
     GraphProfile,
     PartitionedCardinalityRow,
+    PropertyProfile,
 )
 
 
@@ -103,6 +104,49 @@ def _format_value_distribution(dist: BoundedDistribution) -> str:
     return f"[{pairs}{suffix}]"
 
 
+def _render_property_profiles(
+    props: dict[str, PropertyProfile], *, header: str, indent: str = "      "
+) -> list[str]:
+    """Render property profiles (node or relationship) as indented lines.
+
+    Renders completeness %, constraint tags, observed types, and value
+    distribution for each property profile.  Returns lines including the
+    header.
+
+    Parameters
+    ----------
+    props
+        Dict of property_name → PropertyProfile (same shape for nodes/rels).
+    header
+        Header line (e.g., ``"    node_properties:"``).
+    indent
+        Indent string for per-property lines (default ``"      "``).
+    """
+    lines: list[str] = [header]
+    for prop_name, pp in props.items():
+        pct = f"{pp.completeness:.0%}"
+        types_str = ", ".join(pp.observed_types) if pp.observed_types else "n/a"
+        constraint_tag = (
+            " [constrained]"
+            if pp.constraint_required is True
+            else " [unconstrained]"
+            if pp.constraint_required is False
+            else ""
+        )
+        dist_str = (
+            f" values={_format_value_distribution(pp.value_distribution)}"
+            if pp.value_distribution is not None
+            and pp.value_distribution.histogram is not None
+            else ""
+        )
+        lines.append(
+            f"{indent}{prop_name}: {pct} complete "
+            f"({pp.present_count}/{pp.total_count})"
+            f"{constraint_tag} types=[{types_str}]{dist_str}"
+        )
+    return lines
+
+
 def _render_partitioned_cardinality(
     side: str, rows: list[PartitionedCardinalityRow]
 ) -> list[str]:
@@ -157,28 +201,9 @@ def profile_to_text(profile: GraphProfile) -> str:
     for label, ntp in profile.node_type_profiles.items():
         lines.append(f"  {label} ({ntp.count} instances)")
         if ntp.property_profiles:
-            lines.append("    node_properties:")
-            for prop_name, pp in ntp.property_profiles.items():
-                pct = f"{pp.completeness:.0%}"
-                types_str = ", ".join(pp.observed_types) if pp.observed_types else "n/a"
-                constraint_tag = (
-                    " [constrained]"
-                    if pp.constraint_required is True
-                    else " [unconstrained]"
-                    if pp.constraint_required is False
-                    else ""
-                )
-                dist_str = (
-                    f" values={_format_value_distribution(pp.value_distribution)}"
-                    if pp.value_distribution is not None
-                    and pp.value_distribution.histogram is not None
-                    else ""
-                )
-                lines.append(
-                    f"      {prop_name}: {pct} complete "
-                    f"({pp.present_count}/{pp.total_count})"
-                    f"{constraint_tag} types=[{types_str}]{dist_str}"
-                )
+            lines += _render_property_profiles(
+                ntp.property_profiles, header="    node_properties:"
+            )
         lines.append("")
 
     # --- Relationship types ---
@@ -190,28 +215,9 @@ def profile_to_text(profile: GraphProfile) -> str:
         lines.append(f"    source: {rtp.source_label}")
         lines.append(f"    target: {rtp.target_label}")
         if rtp.property_profiles:
-            lines.append("    relationship_properties:")
-            for prop_name, pp in rtp.property_profiles.items():
-                pct = f"{pp.completeness:.0%}"
-                types_str = ", ".join(pp.observed_types) if pp.observed_types else "n/a"
-                constraint_tag = (
-                    " [constrained]"
-                    if pp.constraint_required is True
-                    else " [unconstrained]"
-                    if pp.constraint_required is False
-                    else ""
-                )
-                dist_str = (
-                    f" values={_format_value_distribution(pp.value_distribution)}"
-                    if pp.value_distribution is not None
-                    and pp.value_distribution.histogram is not None
-                    else ""
-                )
-                lines.append(
-                    f"      {prop_name}: {pct} complete "
-                    f"({pp.present_count}/{pp.total_count})"
-                    f"{constraint_tag} types=[{types_str}]{dist_str}"
-                )
+            lines += _render_property_profiles(
+                rtp.property_profiles, header="    relationship_properties:"
+            )
         if rtp.cardinality_stats:
             cs = rtp.cardinality_stats
             mean_str = f"{cs.mean:.1f}" if cs.mean is not None else "n/a"

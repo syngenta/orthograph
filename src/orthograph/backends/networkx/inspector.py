@@ -321,10 +321,10 @@ def _conditional_sides(
     if not rel_type.__directed__:
         return []
     sides: list[tuple[ConditionalCardinality, str]] = []
-    src_card = rel_type.__source_cardinality__
+    src_card = rel_type.source_cardinality()
     if isinstance(src_card, ConditionalCardinality):
         sides.append((src_card, "source"))
-    tgt_card = rel_type.__target_cardinality__
+    tgt_card = rel_type.target_cardinality()
     if isinstance(tgt_card, ConditionalCardinality):
         sides.append((tgt_card, "target"))
     return sides

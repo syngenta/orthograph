@@ -17,7 +17,17 @@ the union address space and applies the supplied rule set.
 from collections.abc import Sequence
 
 from orthograph.comparison.diff_rules import diff_rules
-from orthograph.comparison.rules import Rule, RuleContext, standard_rules
+from orthograph.comparison.rules import (
+    ADDR_NODE_LABEL,
+    ADDR_REL_TYPE,
+    ADDRESS_TYPE,
+    ENTITY_TYPE,
+    LABEL,
+    PROP_NAME,
+    Rule,
+    RuleContext,
+    standard_rules,
+)
 from orthograph.comparison.type_mapping import db_type_to_python as db_type_to_python
 from orthograph.comparison.views import DefinitionView, GraphView, ProfileView
 from orthograph.diagnostics.classification import EntityType
@@ -38,8 +48,9 @@ def _compare_views(
 ) -> ValidationResult:
     """Walk the union address space of two views and apply every rule.
 
-    This is the single five-pass loop shared by all three public comparison
-    functions.  Rules are self-selecting: each rule inspects ``context.left``
+    This is the single four-pass loop shared by all three public comparison
+    functions (node-label, rel-type, node-property, rel-property addresses).
+    Rules are self-selecting: each rule inspects ``context.left``
     / ``context.right`` and ``context.extra``, and returns early when the
     address is not its concern.
     """
@@ -64,7 +75,7 @@ def _compare_views(
                 address=label,
                 left=left_graph.node_at(label),
                 right=right_graph.node_at(label),
-                extra={"address_type": "node_label"},
+                extra={ADDRESS_TYPE: ADDR_NODE_LABEL},
             )
         )
 
@@ -82,7 +93,7 @@ def _compare_views(
                 address=rt,
                 left=left_graph.relationship_at(rt),
                 right=right_graph.relationship_at(rt),
-                extra={"address_type": "rel_type"},
+                extra={ADDRESS_TYPE: ADDR_REL_TYPE},
             )
         )
 
@@ -105,9 +116,9 @@ def _compare_views(
                     left=left_props.get(prop_name),
                     right=right_props.get(prop_name),
                     extra={
-                        "label": label,
-                        "prop_name": prop_name,
-                        "entity_type": EntityType.NODE,
+                        LABEL: label,
+                        PROP_NAME: prop_name,
+                        ENTITY_TYPE: EntityType.NODE,
                     },
                 )
             )
@@ -128,9 +139,9 @@ def _compare_views(
                     left=left_props.get(prop_name),
                     right=right_props.get(prop_name),
                     extra={
-                        "label": rt,
-                        "prop_name": prop_name,
-                        "entity_type": EntityType.RELATIONSHIP,
+                        LABEL: rt,
+                        PROP_NAME: prop_name,
+                        ENTITY_TYPE: EntityType.RELATIONSHIP,
                     },
                 )
             )

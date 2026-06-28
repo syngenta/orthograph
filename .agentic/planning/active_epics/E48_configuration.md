@@ -1,11 +1,11 @@
 # Epic E48: Configuration — Thread Tunable Knobs Through the Public API
 
 > **Priority:** Medium
-> **Origin:** E46.4 follow-up — `PropertyTypeMismatchRule.severity_threshold` (`comparison/rules.py:345`) is a per-instance field with no convenient override; survey 2026-06-24 found inspector knobs (`value_counts_top_n`, Neo4j `strategy`) are unreachable through `api.database.inspect`/`validate`.
-> **Goal:** Make the existing tunable knobs reachable and overridable through the public API, with a single documented configuration approach — without introducing a global settings / file / env-var layer.
-> **Blocked by:** the new-API epic (NOT YET CREATED — see "Sequencing" below). Reserve the config seam in the API epic now; build E48 against the API once it lands.
-> **Decisions:** ADR-036 (this epic's E48.0 — the configuration approach; decided before any build) · ADR-035 §1 (minimal-knob bias — "no second sampling/bound knob") · ADR-009 (backend parity)
-> **Rubric (every task judged against this):** minimal knobs (no speculative configurability) · no global settings object / file / env layer this phase · strongly-typed · backend-scoped (no vendor concept leaks into vendor-free `api/`) · additive & non-regressing (existing `rules=` injection keeps working) · honest defaults preserved (NetworkX scan-on `10`; DB scan-off `None`) · each task ends green with guardrails run
+> **Origin:** E46.4 follow-up — `PropertyTypeMismatchRule.severity_threshold` (`comparison/rules.py:345`) is a per-instance field with no convenient override; survey 2026-06-24 found inspector knobs (`value_counts_top_n`, Neo4j `strategy`) were unreachable through the old `api.database.inspect`/`validate`. **Re-pathed 2026-06-28:** E55 shipped the new API as root-level modules — `profile.inspect_networkx/_neo4j/_memgraph` already expose `value_counts_top_n` and Neo4j `strategy` as typed per-backend keyword args (the old `api/database.py:38` no-arg gap is gone). E48's remaining scope narrows to: (a) the comparison-rule threshold convenience, and (b) deciding whether to fold the now-exposed inspector keywords into a **config object** rather than loose kwargs.
+> **Goal:** Make the tunable knobs conveniently overridable through the public API with a single documented configuration approach — without introducing a global settings / file / env-var layer.
+> **Blocked by:** ~~the new-API epic~~ **UNBLOCKED** — E55 (root-level capability modules) is **done** (2026-06-26). E48.0 (ADR-036) may begin now; build tasks attach to the shipped `profile.*` / `compare.*` / `queries.*` surface.
+> **Decisions:** ADR-036 (this epic's E48.0 — the configuration approach; decided before any build) · ADR-035 §1 (minimal-knob bias — "no second sampling/bound knob") · ADR-009 (backend parity) · ADR-040/041 (the root-module API the knobs attach to)
+> **Rubric (every task judged against this):** minimal knobs (no speculative configurability) · no global settings object / file / env layer this phase · strongly-typed · backend-scoped (no vendor concept leaks into vendor-free public modules) · additive & non-regressing (existing `rules=` injection keeps working) · honest defaults preserved (NetworkX scan-on `10`; DB scan-off `None`) · **config object only if it removes net complexity, not for its own sake** · each task ends green with guardrails run
 
 ---
 
@@ -27,13 +27,14 @@ approach in an ADR so future knobs follow it.
    `standard_rules()` list by hand** (`comparison/rules.py:1108`). There is no "standard rules,
    but tweak this one threshold" helper.
 
-2. **Inspector knobs are unreachable through the public API.** `api.database.inspect`
-   instantiates the inspector with **no arguments** — `inspector_cls()` (`api/database.py:38`,
-   mirrored at `:54` in `validate`). `**backend_kwargs` is forwarded to the per-call
-   `.inspect(...)` method, **not** to the inspector `__init__`. So `value_counts_top_n`
-   (NetworkX `inspector.py:51`; Neo4j keyword-only `inspector.py:91`; Memgraph
-   `inspector.py:76`) and the Neo4j `strategy` enum are **invisible to API consumers** —
-   the whole opt-in value scan (E46) cannot be switched on through the public surface.
+2. **Inspector knobs: now exposed per-backend, but not as a config object.** Under the old
+   `api.database.inspect` the inspector was built with **no arguments** (`inspector_cls()`),
+   swallowing the knobs. **E55 fixed reachability:** `profile.inspect_neo4j(driver, *, strategy=,
+   value_counts_top_n=, ...)`, `inspect_memgraph(...)`, and `inspect_networkx(...)` now take the
+   knobs as typed, documented keyword args, routed via `loader.run_inspection` into the inspector
+   constructor. **The remaining E48 question is ergonomic, not reachability:** as more knobs are
+   added, do we keep loose keywords or fold them into a typed per-backend **options/config
+   object** passed once? (See "Underlying prep" above — gated.)
 
 ### Known tunable knobs (the inventory E48 governs — do not invent more)
 
@@ -49,31 +50,46 @@ Candidate-but-deferred: `PropertyIncompleteRule`'s hardcoded `completeness < 1.0
 (`comparison/rules.py:299`). Out of scope unless the ADR decides otherwise — do not silently
 make it configurable.
 
+### Underlying prep — per-backend internal options consolidation (gated; from E56 review 2026-06-28)
+
+The three inspectors each store the knobs as **loose private fields** (`self._value_counts_top_n`
+on all three; Neo4j additionally `self._strategy` plus the `use_apoc` deprecation translation in
+`__init__`). When E48 threads a **config object** through the public surface (the idea: pass one
+options object rather than repeating keywords), the natural internal landing is a small **frozen
+per-backend options dataclass** held as `self._config`, replacing the loose fields.
+
+| # | Place | Today | Internal prep |
+|---|-------|-------|---------------|
+| P1 | `backends/neo4j/inspector.py.__init__` | `self._strategy`, `self._value_counts_top_n` (+ `use_apoc`→strategy) | collapse into one frozen `_Neo4jInspectionConfig` field |
+| P2 | `backends/memgraph/inspector.py.__init__` | `self._value_counts_top_n` | same shape (parity with neo4j) |
+| P3 | `backends/networkx/inspector.py.__init__` | `self._value_counts_top_n` (default 10) | same shape |
+
+**Explicitly gated — do NOT do this prep yet.** With only 1–2 knobs per backend, the dataclass
+**adds** more than it deletes, so it fails the "no abstraction unless it removes net complexity"
+rubric (ADR-042 §2). It also collides with **E56.3** (the inspector-helper hoist that edits the
+same `__init__`s). **Start P1–P3 only when the threshold is crossed:** E56.3 has landed **and**
+either a third per-backend knob appears **or** E48.2's config-object shape (ADR-036 §2) is fixed
+and needs an internal home. Run it as the **first build step of E48.2**, after E56.3, never before.
+Public `__init__` signatures stay unchanged by the prep itself; only E48.2 changes the surface.
+
 ---
 
-## Sequencing — config lands AFTER the new API; reserve the seam NOW
+## Sequencing — the new API has shipped; config now attaches to it
 
-A **new public API is planned** but not yet an epic. Configuration is not free-standing:
-every knob must attach to an API entry point (`inspect`/`compare`/`validate`). Building a
-config layer against the *current* API surface (the one being replaced) means re-threading
-it later — the rework trap. The dependency runs **API → configuration**, not the reverse.
+The new public API (E55, root-level modules) is **done**. Configuration was always
+**API → configuration**: knobs attach to entry points. Those entry points now exist
+(`profile.inspect_*`, `compare.*`, `queries.validate_*`), and the inspector knobs are
+**already reachable** through `profile.inspect_*` (E55). So:
 
-Therefore:
+1. **The "reserve a config-ready seam" constraint is satisfied** — `profile.inspect_*` already
+   take typed per-backend keyword args; no `inspector_cls()`-no-args mistake remains.
+2. **ADR-036 (E48.0)** is now **unblocked** and decides the *ergonomic* shape: keep loose
+   keywords vs a typed per-backend options/config object, and the threshold-override shape — all
+   against the concrete, shipped entry points.
+3. **The E48 build tasks attach to the shipped surface.** No new-API rework trap remains.
 
-1. **In the new-API epic (when it is written): add one constraint** — the new
-   `inspect` / `compare` / `validate` entry points must be **config-ready**: reserve an
-   explicit seam for knobs (options bag, kwargs, or builder — shape TBD by ADR-036) instead
-   of repeating the `inspector_cls()`-with-no-args mistake (`api/database.py:38`). This is a
-   one-line constraint on that epic, **not** a build task here.
-2. **ADR-036 (E48.0)** is written **alongside or just after** the new-API decision, because
-   "where knobs live and how they thread through the API" can only be pinned once the API's
-   entry points exist. (E48.0 stays the first task *within* E48; it must not precede the API
-   decision.)
-3. **The E48 build tasks land after the new API**, threading the inventory knobs through the
-   now-stable surface. No rework.
-
-> **Do NOT start E48 build tasks (E48.1+) until the new-API epic exists and its entry-point
-> shapes are settled.** E48.0 (the ADR) may begin once the API decision is in flight.
+> **Earlier ordering note retired:** E48 is no longer gated on an unwritten API epic. ADR-036
+> may start immediately; build tasks follow it.
 
 ---
 
@@ -92,11 +108,13 @@ E48.0 is decision-only and resolves these before any build task:
    - Builder / per-call kwargs on the new API entry points.
    Decide one; record the rejected alternatives.
 
-2. **Inspector-knob plumbing.** How do `value_counts_top_n` and Neo4j `strategy` reach the
-   inspector through the new `inspect`/`validate` — given today's surface swallows them
-   (`inspector_cls()`, `api/database.py:38`)? Must stay backend-scoped (no Neo4j
-   `strategy` concept leaking into vendor-free `api/` typing — ADR-009 / ADR-011). Decide
-   whether knobs are generic pass-through or a typed per-backend options object.
+2. **Inspector-knob ergonomics.** `value_counts_top_n` and Neo4j `strategy` already reach the
+   inspector through `profile.inspect_*` (E55, typed per-backend keyword args). The open
+   question is whether to **fold them into a typed per-backend options/config object** (passed
+   once) as the knob set grows, or keep loose keywords. Must stay backend-scoped (no Neo4j
+   `strategy` concept leaking into a vendor-free module — ADR-009 / ADR-011). If a config object
+   is chosen, sequence the internal `_config` consolidation prep (P1–P3 above) as the first build
+   step — and only because it then removes net complexity.
 
 3. **Scope of the knob inventory.** Confirm the five knobs above are the complete public
    set for this phase; rule explicitly in/out on the `completeness < 1.0` candidate. Honour
@@ -132,9 +150,9 @@ E48.0 is decision-only and resolves these before any build task:
 | The threshold to expose | `PropertyTypeMismatchRule.severity_threshold` | `comparison/rules.py:345` |
 | The rule-list factory to extend with a convenience | `standard_rules()` | `comparison/rules.py:1108` |
 | The engine seam already accepting custom rules | `compare_profile_to_definition` / `compare_profiles` / `compare_definitions` (`rules=` param) | `comparison/engine.py:173,210,225` |
-| The API entry points that already accept `rules=` | `api.database.validate`; `api.model.validate_query_catalogue_against_profile` | `api/database.py:41`; `api/model.py:96` |
-| The API gap to fix | `inspect` instantiates `inspector_cls()` with no args | `api/database.py:38,54` |
-| Inspector `__init__` knob signatures | NetworkX / Neo4j / Memgraph | `backends/networkx/inspector.py:51`; `backends/neo4j/inspector.py:91`; `backends/memgraph/inspector.py:76` |
+| The public entry points that already accept `rules=` | `compare.profile_to_definition` (+ `profiles`/`definitions`); `queries.validate_catalogue_against_profile` | `src/orthograph/compare.py`; `src/orthograph/queries.py` |
+| The inspector knobs already exposed (E55) | `profile.inspect_neo4j/_memgraph/_networkx` keyword args | `src/orthograph/profile.py` |
+| Inspector `__init__` knob signatures | NetworkX / Neo4j / Memgraph | `backends/networkx/inspector.py`; `backends/neo4j/inspector.py`; `backends/memgraph/inspector.py` |
 | Prior decision-only ADR precedent (format + rejected-alternatives discipline) | ADR-035 | `.agentic/decisions/035-observed-type-counts-population.md` |
 
 ---
@@ -158,7 +176,7 @@ pwsh> python -m pre_commit run --files <files you changed>
 ### E48.0 — ADR-036: the configuration approach (decision-only)
 
 > **Model: Opus.** Decision-only. Resolves the four Open Questions. No production code.
-> May begin once the new-API decision is in flight; must not precede it.
+> Unblocked now that E55 has shipped the entry points.
 
 **Goal:** `.agentic/decisions/036-configuration-approach.md` (Accepted) pins: the
 threshold-override shape, inspector-knob plumbing through the new API, the closed knob
@@ -179,7 +197,7 @@ rejected alternatives (global Settings object; file/env layer; per-knob ad-hoc p
 
 ### E48.1 — Comparison-rule threshold override (the convenience helper)
 
-> **Blocked by:** E48.0 + the new-API entry points existing.
+> **Blocked by:** E48.0. (Entry points exist — E55 shipped `compare.*` / `queries.*`.)
 
 **Goal:** a caller can override `PropertyTypeMismatchRule.severity_threshold` (and any other
 ADR-036-listed rule threshold) through the shape ADR-036 chose, without rebuilding
@@ -204,26 +222,29 @@ already landed that).
 
 ---
 
-### E48.2 — Inspector knobs reachable through the new API
+### E48.2 — Inspector-knob ergonomics (config object vs loose keywords)
 
-> **Blocked by:** E48.0 + the new-API `inspect`/`validate` entry points existing.
+> **Blocked by:** E48.0. The knobs are **already reachable** via `profile.inspect_*` (E55) — this
+> task is about ergonomics, not reachability.
 
-**Goal:** `value_counts_top_n` (all three backends) and Neo4j `strategy` are settable
-through the new public `inspect` / `validate`, closing the `inspector_cls()`-no-args gap
-(`api/database.py:38`). Backend-scoped: no Neo4j-specific type leaks into vendor-free `api/`.
+**Goal:** decide and (if ADR-036 chooses the config object) deliver a typed per-backend options
+object so callers pass one object instead of repeating keywords, **without** changing defaults or
+leaking a vendor type into a vendor-free module. If ADR-036 keeps loose keywords, this task is a
+no-op confirmation + docs.
 
-**Operation:** thread the knobs per ADR-036 §2 (generic pass-through to inspector `__init__`,
-or a typed per-backend options object). Preserve honest defaults (NetworkX `10`, DB `None`).
+**Operation:** per ADR-036 §2. If a config object is chosen, **first** run the internal P1–P3
+`_config` consolidation (after E56.3), then expose the object on `profile.inspect_*`. Preserve
+honest defaults (NetworkX `10`, DB `None`).
 
 **Tests (TDD — write first):**
-- `inspect` with `value_counts_top_n` set → the resulting `GraphProfile` has populated
+- `inspect_*` with the knob/object set → the resulting `GraphProfile` has populated
   `value_distribution` / `observed_type_counts` (E46 scan ran).
-- `inspect` without the knob → defaults preserved (DB: no scan; NetworkX: top-10).
-- Neo4j `strategy` selectable through the API; vendor-free `api/` typing carries no
-  `Neo4jInspectionStrategy` import (`tests/test_architecture.py` green).
+- `inspect_*` without it → defaults preserved (DB: no scan; NetworkX: top-10).
+- Neo4j `strategy` selectable; no `Neo4jInspectionStrategy` import in a vendor-free module
+  (`tests/test_architecture.py` green).
 
 **Acceptance criteria:**
-- [ ] `value_counts_top_n` and Neo4j `strategy` reachable through the new API entry points.
+- [ ] The chosen ergonomic shape (object or keywords) is delivered on `profile.inspect_*`.
 - [ ] Defaults unchanged; backend isolation preserved (architecture test green).
 - [ ] Guardrails green.
 
@@ -237,7 +258,7 @@ or a typed per-backend options object). Preserve honest defaults (NetworkX `10`,
 
 **Operation:**
 1. Document the configuration approach (the ADR-036 shape) wherever the public API is
-   described (API docstrings / README / onboarding, per the new-API epic's doc surface).
+   described (the root-module docstrings / README / onboarding).
 2. Confirm CONTEXT.md's "How is the library configured?" row resolves to ADR-036 and the API.
 3. Confirm no stale reference implies knobs are unreachable.
 
@@ -250,9 +271,11 @@ or a typed per-backend options object). Preserve honest defaults (NetworkX `10`,
 
 ## Coordination
 
-- **New-API epic (not yet created):** hard prerequisite for E48.1/E48.2. Add the
-  "config-ready entry points" constraint to that epic when it is written. E48.0 may run
-  alongside the API decision.
+- **E55 (new API, done 2026-06-26):** shipped the root-level `profile.*` / `compare.*` /
+  `queries.*` entry points and already exposes the inspector knobs as typed keyword args.
+  E48 attaches the configuration ergonomics to this surface — no longer a prerequisite gap.
+- **E56 (readability distillation):** E56.3 edits the inspector `__init__`s. The P1–P3
+  `_config` consolidation prep (above) must run **after** E56.3 to avoid collisions.
 - **E46 (done):** delivered `severity_threshold` (E46.4) and the inspector
   `value_counts_top_n` opt-in (E46.1/2/3) — the two knobs E48 exposes. E48 does not change
   their behaviour, only their reachability.
@@ -271,5 +294,5 @@ or a typed per-backend options object). Preserve honest defaults (NetworkX `10`,
 - Changing any default value (NetworkX `10`, DB `None`, threshold `0.05`) — E48 exposes, it
   does not re-tune.
 - Changing the `PROPERTY_TYPE_MISMATCH` code or any issue code (would need its own ADR).
-- Building the new public API itself — that is the (separate) new-API epic; E48 only attaches
-  configuration to it.
+- Building the new public API itself — that shipped in E55; E48 only attaches configuration
+  to it.

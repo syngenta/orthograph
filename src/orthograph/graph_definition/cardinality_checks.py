@@ -31,11 +31,12 @@ class RuleSetCheck(Protocol):
         Run the check.  Return an empty iterable when satisfied; yield
         issues otherwise.  ``side`` is ``"source"`` or ``"target"``.
 
-        Absolute convention: ``self_node`` is always the
-        relationship's **source-label** node and ``other_node`` the
-        **target-label** node, for both sides — so ``rule.source`` predicates are
-        validated against ``self_node`` and ``rule.target`` against ``other_node``
-        regardless of which cardinality side is being checked.
+        Per the absolute convention (see the ``models`` module docstring):
+        ``self_node`` is always the relationship's **source-label** node and
+        ``other_node`` the **target-label** node, for both sides — so
+        ``rule.source`` predicates are validated against ``self_node`` and
+        ``rule.target`` against ``other_node`` regardless of which cardinality
+        side is being checked.
     """
 
     code: str

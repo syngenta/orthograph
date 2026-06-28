@@ -349,7 +349,9 @@ class Neo4jInspector(CypherInspector):
         # observations, which are zero for a label that has no properties.  On
         # the APOC strategy it is also the authoritative total_count denominator
         #  APOC's totalObservations can be unreliable.
-        total_count = self._fetch_node_count(connection, label, execute_kwargs)
+        total_count = self._fetch_node_count(
+            connection, label, NodeCountQuery, **execute_kwargs
+        )
         is_apoc = strategy is Neo4jInspectionStrategy.APOC
         schema_types = node_type_map.get(label, {})
         props: dict[str, PropertyProfile] = {}
@@ -435,7 +437,12 @@ class Neo4jInspector(CypherInspector):
         )
         # Per-shape instance count from a dedicated endpoint-filtered count().
         total_count = self._fetch_rel_count(
-            connection, rel_type, source_label, target_label, execute_kwargs
+            connection,
+            rel_type,
+            source_label,
+            target_label,
+            RelCountQuery,
+            **execute_kwargs,
         )
         # observed_types: bulk, keyed by bare rel type (same for every shape).
         schema_types = rel_type_map.get(rel_type, {})
@@ -535,48 +542,6 @@ class Neo4jInspector(CypherInspector):
             connection, InspectNeo4jConstraintsQuery, **execute_kwargs
         )
         return list(rows)  # materialize() already returns ConstraintInfo instances
-
-    # ------------------------------------------------------------------
-    # Internal — authoritative instance counts (property-independent)
-    # ------------------------------------------------------------------
-
-    def _fetch_node_count(
-        self, connection: Any, label: str, execute_kwargs: dict[str, Any]
-    ) -> int:
-        """Return the node count for ``label`` via a dedicated ``count()``.
-
-        Independent of properties: a label with no properties still has a
-        truthful instance count (the property scan would yield zero rows).
-        """
-        rows = self._run_query(
-            connection, NodeCountQuery, identifiers={"label": label}, **execute_kwargs
-        )
-        return rows[0].count if rows else 0
-
-    def _fetch_rel_count(
-        self,
-        connection: Any,
-        rel_type: str,
-        source_label: str,
-        target_label: str,
-        execute_kwargs: dict[str, Any],
-    ) -> int:
-        """Per-shape edge count via an endpoint-filtered ``count()``.
-
-        Counts only edges of ``rel_type`` between ``source_label`` and
-        ``target_label``, so the count belongs to one relationship shape.
-        """
-        rows = self._run_query(
-            connection,
-            RelCountQuery,
-            identifiers={
-                "source_label": source_label,
-                "rel_type": rel_type,
-                "target_label": target_label,
-            },
-            **execute_kwargs,
-        )
-        return rows[0].count if rows else 0
 
     # ------------------------------------------------------------------
     # Internal — APOC no-scan count correction
@@ -721,7 +686,9 @@ class Neo4jInspector(CypherInspector):
         hist_rows: list[ValueHistogramRow] = [
             hist_query.materialize(r) for r in raw_rows
         ]
-        value_dist = _build_value_distribution(hist_rows, scan_present_count, top_n)
+        value_dist = self._build_value_distribution(
+            hist_rows, scan_present_count, top_n
+        )
         return type_counts, value_dist, scan_present_count
 
     def _fetch_rel_value_scan(
@@ -785,7 +752,9 @@ class Neo4jInspector(CypherInspector):
         cypher, params = hist_query.build(TopNParams(top_n=top_n))
         raw_rows = self._run(connection, cypher, parameters_=params, **execute_kwargs)
         hist_rows = [hist_query.materialize(r) for r in raw_rows]
-        value_dist = _build_value_distribution(hist_rows, scan_present_count, top_n)
+        value_dist = self._build_value_distribution(
+            hist_rows, scan_present_count, top_n
+        )
         return type_counts, value_dist, scan_present_count
 
     def _run_fallback_histogram(
@@ -814,7 +783,7 @@ class Neo4jInspector(CypherInspector):
         hist_rows: list[ValueHistogramRow] = [
             hist_query.materialize(r) for r in raw_rows
         ]
-        return _build_value_distribution(hist_rows, present_count, top_n)
+        return self._build_value_distribution(hist_rows, present_count, top_n)
 
 
 def validate_database(
@@ -827,50 +796,3 @@ def validate_database(
         connection, database=database, graph_definition=graph_definition
     )
     return compare_profile_to_definition(profile, graph_definition)
-
-
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
-
-
-def _build_value_distribution(
-    hist_rows: list[ValueHistogramRow],
-    present_count: int,
-    top_n: int,
-) -> BoundedDistribution | None:
-    """Build a BoundedDistribution from value-histogram query rows.
-
-    The DB query already applies ``LIMIT $top_n``; the inspector receives at most
-    ``top_n`` rows.  If the sum of their counts equals ``present_count`` the
-    histogram is complete (``sample_complete=True``); otherwise the remainder
-    folds into ``other_count`` (honesty principle).
-
-    Completeness is inferred purely from count arithmetic: ``top_total >= present_count``.
-    This is correct because every DB row has ``value_count >= 1`` (the GROUP BY
-    only produces rows for values that actually exist).  If that invariant ever
-    changes — e.g. zero-count rows are introduced, or the signal switches to a
-    row-count threshold — the inference must be revisited.
-
-    Returns ``None`` when there are no rows (property has no non-null values).
-    """  # NOQA E501
-    if not hist_rows or present_count == 0:
-        return None
-
-    histogram = {r.value: r.value_count for r in hist_rows}
-    top_total = sum(histogram.values())
-    sample_complete = top_total >= present_count
-
-    if sample_complete:
-        return BoundedDistribution(
-            count=present_count,
-            histogram=histogram,
-            sample_complete=True,
-        )
-    return BoundedDistribution(
-        count=present_count,
-        histogram=histogram,
-        sample_complete=False,
-        limit=top_n,
-        other_count=present_count - top_total,
-    )

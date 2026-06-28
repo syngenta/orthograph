@@ -37,8 +37,8 @@ def schema_to_networkx(graph_definition: GraphDefinition) -> nx.MultiDiGraph[str
             label=rt.__label__,
             directed=rt.__directed__,
             properties=props,
-            source_cardinality=str(rt.__source_cardinality__),
-            target_cardinality=str(rt.__target_cardinality__),
+            source_cardinality=str(rt.source_cardinality()),
+            target_cardinality=str(rt.target_cardinality()),
         )
 
     return g

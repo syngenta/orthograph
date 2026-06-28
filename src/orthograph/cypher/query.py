@@ -35,7 +35,7 @@ Design goals
   :mod:`orthograph.cypher.bindings`).  Identifier *values* are **not** stored on
   the query — they are passed to :meth:`build` at call time, symmetric with
   ``params_schema``.
-* **Full shared validation.** Use :func:`~orthograph.cypher.validation.validate_query`
+* **Full shared validation.** Use :func:`~orthograph.cypher.validation.validate_cypher_query`
   (a free function in :mod:`orthograph.cypher.validation`) to validate a
   ``CypherQuery`` against a
   :class:`~orthograph.graph_definition.graph_definition.GraphDefinition`.
@@ -51,14 +51,14 @@ Design goals
   before a consuming project is ready to declare typed ``Output`` models.
 * **Catalogue citizen.** Carries ``backend = Backend.CYPHER`` (metadata only) and is
 registerable in ``QueryCatalogue`` via ``register_cypher_query``.
-* **Validation timing.** Validation (:func:`~orthograph.cypher.validation.validate_query`)
+* **Validation timing.** Validation (:func:`~orthograph.cypher.validation.validate_cypher_query`)
   runs at call time, not class-definition time like the typed path.  The shared field name
   ``cypher_template`` does **not** imply the typed-path definition-time contract.
 
 Usage — Python (simple path)::
 
      from orthograph.cypher.bindings import NoParams, NoIdentifiers
-     from orthograph.cypher.validation import validate_query
+     from orthograph.cypher.validation import validate_cypher_query
 
      query = CypherQuery(
          query_id="find_movie",
@@ -66,7 +66,7 @@ Usage — Python (simple path)::
          params_schema=FindMovieParams,
          identifiers_schema=NoIdentifiers,
      )
-     result = validate_query(query, my_graph_definition)   # static, no DB
+     result = validate_cypher_query(query, my_graph_definition)   # static, no DB
      query_data = query.build(movie_id="M-001")
      await session.run(query_data.cypher, query_data.params)
 

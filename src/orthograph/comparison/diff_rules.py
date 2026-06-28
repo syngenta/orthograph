@@ -13,13 +13,15 @@ Two questions, two rule families:
 - **Diff** (profile ↔ profile, definition ↔ definition): ``diff_rules()`` —
   symmetric, neutral left/right semantics, emits INFO only.
 
-Address conventions (set by the engine, same as ``rules.py``):
+Address conventions (set by the engine, same as ``rules.py``; the ``extra``
+keys are named by the ``ADDRESS_TYPE`` / ``LABEL`` / ``PROP_NAME`` /
+``ENTITY_TYPE`` constants imported from ``rules.py``):
 
-- Node-label address  : ``extra["address_type"] == "node_label"``; ``left``/
+- Node-label address  : ``extra[ADDRESS_TYPE] == ADDR_NODE_LABEL``; ``left``/
   ``right`` are ``NodeTypeProfile`` or ``NodeModel`` subclass (or ``None``).
-- Rel-type address    : ``extra["address_type"] == "rel_type"``; same shape
+- Rel-type address    : ``extra[ADDRESS_TYPE] == ADDR_REL_TYPE``; same shape
   with ``RelationshipTypeProfile`` or ``RelationshipModel`` subclass.
-- Property address    : ``extra["prop_name"]`` present; ``left``/``right`` are
+- Property address    : ``extra[PROP_NAME]`` present; ``left``/``right`` are
   ``TypeInfo`` (definition) or ``PropertyProfile`` (profile), or ``None``.
 """
 
@@ -27,7 +29,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
-from orthograph.comparison.rules import Rule, RuleContext
+from orthograph.comparison.rules import (
+    ADDR_NODE_LABEL,
+    ADDR_REL_TYPE,
+    ADDRESS_TYPE,
+    ENTITY_TYPE,
+    LABEL,
+    PROP_NAME,
+    Rule,
+    RuleContext,
+)
 from orthograph.comparison.type_mapping import db_type_to_python
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue
@@ -326,6 +337,48 @@ def _cardinality_issue_definition(
 
 
 # ---------------------------------------------------------------------------
+# Node-label / rel-type "only in one operand" diff rules
+#
+# The four rules below share one shape: address-kind guard → present on *my*
+# side and absent on the other → the address *is* the entity id, emit one INFO
+# issue.  ``_only_on_side_issues`` holds that shape once; each thin rule supplies
+# its address kind, the side it reports on, code, entity type, and message.
+# ---------------------------------------------------------------------------
+
+_LEFT = "left"
+_RIGHT = "right"
+
+
+def _only_on_side_issues(
+    context: RuleContext,
+    *,
+    address_type: str,
+    present_side: str,  # _LEFT / _RIGHT
+    code: str,
+    entity_type: EntityType,
+    message_template: str,  # one ``{address}`` placeholder
+) -> Iterable[ValidationIssue]:
+    """Emit one INFO issue when the node-label/rel-type ``address`` is present on
+    ``present_side`` and absent on the other."""
+    if context.extra.get(ADDRESS_TYPE) != address_type:
+        return  # not my address kind
+    if present_side == _LEFT:
+        present, absent = context.left, context.right
+    else:
+        present, absent = context.right, context.left
+    if present is None or absent is not None:
+        return  # not a one-sided presence on my side
+    address: str = context.address
+    yield ValidationIssue(
+        code=code,
+        severity=Severity.INFO,
+        entity_type=entity_type,
+        entity_id=address,
+        message=message_template.format(address=address),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Node-label diff rules
 # ---------------------------------------------------------------------------
 
@@ -338,17 +391,15 @@ class NodeLabelOnlyInLeftRule:
     key: str = "diff.node_label.only_in_left"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "node_label":
-            return
-        if context.left is None or context.right is not None:
-            return
-        label: str = context.address
-        yield ValidationIssue(
+        return _only_on_side_issues(
+            context,
+            address_type=ADDR_NODE_LABEL,
+            present_side=_LEFT,
             code="NODE_LABEL_ONLY_IN_LEFT",
-            severity=Severity.INFO,
             entity_type=EntityType.NODE,
-            entity_id=label,
-            message=f"Node label '{label}' is present in left but not in right",
+            message_template=(
+                "Node label '{address}' is present in left but not in right"
+            ),
         )
 
 
@@ -360,17 +411,15 @@ class NodeLabelOnlyInRightRule:
     key: str = "diff.node_label.only_in_right"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "node_label":
-            return
-        if context.right is None or context.left is not None:
-            return
-        label: str = context.address
-        yield ValidationIssue(
+        return _only_on_side_issues(
+            context,
+            address_type=ADDR_NODE_LABEL,
+            present_side=_RIGHT,
             code="NODE_LABEL_ONLY_IN_RIGHT",
-            severity=Severity.INFO,
             entity_type=EntityType.NODE,
-            entity_id=label,
-            message=f"Node label '{label}' is present in right but not in left",
+            message_template=(
+                "Node label '{address}' is present in right but not in left"
+            ),
         )
 
 
@@ -387,17 +436,15 @@ class RelTypeOnlyInLeftRule:
     key: str = "diff.rel_type.only_in_left"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "rel_type":
-            return
-        if context.left is None or context.right is not None:
-            return
-        rt: str = context.address
-        yield ValidationIssue(
+        return _only_on_side_issues(
+            context,
+            address_type=ADDR_REL_TYPE,
+            present_side=_LEFT,
             code="REL_TYPE_ONLY_IN_LEFT",
-            severity=Severity.INFO,
             entity_type=EntityType.RELATIONSHIP,
-            entity_id=rt,
-            message=f"Relationship type '{rt}' is present in left but not in right",
+            message_template=(
+                "Relationship type '{address}' is present in left but not in right"
+            ),
         )
 
 
@@ -409,17 +456,15 @@ class RelTypeOnlyInRightRule:
     key: str = "diff.rel_type.only_in_right"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "rel_type":
-            return
-        if context.right is None or context.left is not None:
-            return
-        rt: str = context.address
-        yield ValidationIssue(
+        return _only_on_side_issues(
+            context,
+            address_type=ADDR_REL_TYPE,
+            present_side=_RIGHT,
             code="REL_TYPE_ONLY_IN_RIGHT",
-            severity=Severity.INFO,
             entity_type=EntityType.RELATIONSHIP,
-            entity_id=rt,
-            message=f"Relationship type '{rt}' is present in right but not in left",
+            message_template=(
+                "Relationship type '{address}' is present in right but not in left"
+            ),
         )
 
 
@@ -436,13 +481,13 @@ class PropertyOnlyInLeftRule:
     key: str = "diff.property.only_in_left"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if "prop_name" not in context.extra:
+        if PROP_NAME not in context.extra:
             return
         if context.left is None or context.right is not None:
             return
-        label: str = context.extra["label"]
-        prop_name: str = context.extra["prop_name"]
-        entity_type: EntityType = context.extra["entity_type"]
+        label: str = context.extra[LABEL]
+        prop_name: str = context.extra[PROP_NAME]
+        entity_type: EntityType = context.extra[ENTITY_TYPE]
         yield ValidationIssue(
             code="PROPERTY_ONLY_IN_LEFT",
             severity=Severity.INFO,
@@ -462,13 +507,13 @@ class PropertyOnlyInRightRule:
     key: str = "diff.property.only_in_right"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if "prop_name" not in context.extra:
+        if PROP_NAME not in context.extra:
             return
         if context.right is None or context.left is not None:
             return
-        label: str = context.extra["label"]
-        prop_name: str = context.extra["prop_name"]
-        entity_type: EntityType = context.extra["entity_type"]
+        label: str = context.extra[LABEL]
+        prop_name: str = context.extra[PROP_NAME]
+        entity_type: EntityType = context.extra[ENTITY_TYPE]
         yield ValidationIssue(
             code="PROPERTY_ONLY_IN_RIGHT",
             severity=Severity.INFO,
@@ -499,7 +544,7 @@ class PropertyTypeChangedRule:
     key: str = "diff.property.type_changed"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if "prop_name" not in context.extra:
+        if PROP_NAME not in context.extra:
             return
         if context.left is None or context.right is None:
             return
@@ -519,9 +564,9 @@ class PropertyTypeChangedRule:
             return
 
         left_desc, right_desc = resolved
-        label: str = context.extra["label"]
-        prop_name: str = context.extra["prop_name"]
-        entity_type: EntityType = context.extra["entity_type"]
+        label: str = context.extra[LABEL]
+        prop_name: str = context.extra[PROP_NAME]
+        entity_type: EntityType = context.extra[ENTITY_TYPE]
         yield ValidationIssue(
             code="PROPERTY_TYPE_CHANGED",
             severity=Severity.INFO,
@@ -561,7 +606,7 @@ class EndpointsChangedRule:
     key: str = "diff.rel.endpoints_changed"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "rel_type":
+        if context.extra.get(ADDRESS_TYPE) != ADDR_REL_TYPE:
             return
         if context.left is None or context.right is None:
             return
@@ -590,7 +635,7 @@ class CardinalityChangedRule:
     key: str = "diff.rel.cardinality_changed"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "rel_type":
+        if context.extra.get(ADDRESS_TYPE) != ADDR_REL_TYPE:
             return
         if context.left is None or context.right is None:
             return
@@ -623,7 +668,7 @@ class PartitionedCardinalityChangedRule:
     key: str = "diff.rel.partitioned_cardinality_changed"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "rel_type":
+        if context.extra.get(ADDRESS_TYPE) != ADDR_REL_TYPE:
             return
         if context.left is None or context.right is None:
             return
@@ -648,13 +693,15 @@ class CountChangedRule:
     key: str = "diff.count_changed"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        address_type = context.extra.get("address_type")
-        if address_type not in ("node_label", "rel_type"):
+        address_type = context.extra.get(ADDRESS_TYPE)
+        if address_type not in (ADDR_NODE_LABEL, ADDR_REL_TYPE):
             return  # only the type-level addresses carry a total count
         # Both operands must be the profile class matching the address; this
         # keeps the rule self-contained and rejects any node/rel mix.
         expected = (
-            NodeTypeProfile if address_type == "node_label" else RelationshipTypeProfile
+            NodeTypeProfile
+            if address_type == ADDR_NODE_LABEL
+            else RelationshipTypeProfile
         )
         left = context.left
         right = context.right
@@ -664,9 +711,11 @@ class CountChangedRule:
             return
 
         entity_type = (
-            EntityType.NODE if address_type == "node_label" else EntityType.RELATIONSHIP
+            EntityType.NODE
+            if address_type == ADDR_NODE_LABEL
+            else EntityType.RELATIONSHIP
         )
-        kind = "Node label" if address_type == "node_label" else "Relationship type"
+        kind = "Node label" if address_type == ADDR_NODE_LABEL else "Relationship type"
         yield ValidationIssue(
             code="COUNT_CHANGED",
             severity=Severity.INFO,

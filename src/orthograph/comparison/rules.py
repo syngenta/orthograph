@@ -16,7 +16,7 @@ Extend the rule set by passing a custom list to
 import enum
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from orthograph.comparison.type_mapping import db_type_to_python
 from orthograph.comparison.views import GraphView
@@ -24,6 +24,7 @@ from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue
 from orthograph.graph_definition.models import (
     ConditionalCardinality,
+    PropMatch,
     RelationshipModel,
     representative_spec,
 )
@@ -36,9 +37,82 @@ from orthograph.graph_profile.models import (
 )
 
 
-# One partition and its observed degree distribution (``None`` = declared but
-# unobserved → degree 0, the missing-partition convention).
-_PartitionDist = tuple[PartitionKey, BoundedDistribution | None]
+class _PropertyAddress(NamedTuple):
+    """The label / property / entity coordinates a property rule operates on.
+
+    Reads ``label``, ``prop_name`` and ``entity_type`` from the engine-stamped
+    ``RuleContext.extra`` and derives the ``label.prop_name`` issue id once, so
+    the property rules share one preamble instead of repeating it.
+    """
+
+    label: str
+    prop_name: str
+    entity_type: EntityType
+    entity_id: str
+
+    @classmethod
+    def from_context(cls, context: "RuleContext") -> "_PropertyAddress":
+        label: str = context.extra[LABEL]
+        prop_name: str = context.extra[PROP_NAME]
+        return cls(
+            label=label,
+            prop_name=prop_name,
+            entity_type=context.extra[ENTITY_TYPE],
+            entity_id=f"{label}.{prop_name}",
+        )
+
+
+# One partition and its observed degree distribution.
+class _PartitionDegree(NamedTuple):
+    """One partition paired with its observed degree distribution.
+
+    ``stats is None`` means the partition was declared but never observed →
+    degree 0 (the missing-partition convention).
+    """
+
+    partition: PartitionKey
+    stats: BoundedDistribution | None
+
+
+# ---------------------------------------------------------------------------
+# RuleContext.extra contract — named keys and address-type values
+#
+# ``RuleContext.extra`` is a loosely-typed ``dict[str, Any]`` whose keys form a
+# string-keyed contract between the *producer* (the engine in ``engine.py``,
+# which stamps the dict per address) and the *consumers* (every rule in this
+# module and in ``diff_rules.py``).  The constants below name that contract so
+# no rule or producer hard-codes a bare string.
+#
+# Keys, and which addresses carry them:
+#
+#   ADDRESS_TYPE   present on node-label and rel-type addresses; its value is
+#                  one of ``ADDR_NODE_LABEL`` / ``ADDR_REL_TYPE``.  Absent on
+#                  property addresses.
+#   LABEL          property addresses only — the owning node label str or the
+#                  ``str(RelTypeKey)`` for a relationship property.
+#   PROP_NAME      property addresses only — the property name str.
+#   ENTITY_TYPE    property addresses only — the :class:`EntityType` of the
+#                  owning entity (``NODE`` or ``RELATIONSHIP``).
+#   MAX_DISTINCT_COUNT  optional; supplied only by callers that inject
+#                  :class:`PropertyDistinctCountRule` (not in ``standard_rules``).
+#
+# ``left`` / ``right`` hold the address's left/right object (or ``None`` when
+# the address exists on only one side):
+#   - node-label address : ``NodeModel`` subclass / ``NodeTypeProfile``
+#   - rel-type address    : ``RelationshipModel`` subclass / ``RelationshipTypeProfile``
+#   - property address    : ``TypeInfo`` (declared) / ``PropertyProfile`` (observed)
+# ---------------------------------------------------------------------------
+
+# extra keys
+ADDRESS_TYPE = "address_type"
+LABEL = "label"
+PROP_NAME = "prop_name"
+ENTITY_TYPE = "entity_type"
+MAX_DISTINCT_COUNT = "max_distinct_count"
+
+# extra[ADDRESS_TYPE] values
+ADDR_NODE_LABEL = "node_label"
+ADDR_REL_TYPE = "rel_type"
 
 
 @dataclass(frozen=True)
@@ -68,8 +142,11 @@ class RuleContext:
         a ``PropertyProfile``).  ``None`` when the address exists only on
         the left side.
     extra:
-        Optional bag for additional context (e.g. ``label``, ``prop_name``,
-        ``entity_type`` for property rules).
+        String-keyed context bag.  Its keys and values are the contract named
+        by the ``ADDRESS_TYPE`` / ``LABEL`` / ``PROP_NAME`` / ``ENTITY_TYPE`` /
+        ``MAX_DISTINCT_COUNT`` constants above (with ``ADDRESS_TYPE`` taking the
+        ``ADDR_NODE_LABEL`` / ``ADDR_REL_TYPE`` values); see the module-level
+        note for which keys each address kind carries.
     """
 
     left_graph: GraphView
@@ -124,14 +201,15 @@ def _expected_storage_type(python_type: type) -> type | None:
 # ---------------------------------------------------------------------------
 # Standard rule set
 #
-# Address conventions used by the engine:
+# Address conventions used by the engine (extra keys named by the constants
+# defined above — ADDRESS_TYPE/LABEL/PROP_NAME/ENTITY_TYPE):
 #   node-label rules   : address = label str
 #   rel-type rules     : address = str(RelTypeKey) ("source:LABEL:target")
 #   property rules     : address = "<label>.<prop_name>" str (node) or
 #                        "<rel_key>.<prop_name>" str (relationship)
-#                        extra["label"]       = label str / rel_key str
-#                        extra["prop_name"]   = property name str
-#                        extra["entity_type"] = EntityType
+#                        extra[LABEL]       = label str / rel_key str
+#                        extra[PROP_NAME]   = property name str
+#                        extra[ENTITY_TYPE] = EntityType
 #   cardinality rules  : address = str(RelTypeKey)
 #
 # Endpoint mismatch is no longer a dedicated rule: endpoints are
@@ -144,6 +222,51 @@ def _expected_storage_type(python_type: type) -> type | None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Label/rel-type presence rules
+#
+# The four rules below share one shape: address-kind guard → if the side that
+# must be empty is in fact present, presence is satisfied → otherwise the
+# address *is* the entity id, so emit one issue.  ``_presence_issues`` holds
+# that shape once; each thin rule supplies its address kind, which side must be
+# empty, and the issue fields.
+#
+# A "missing" finding fires when the *observed* side (right) is absent for a
+# declared address; an "unexpected" finding fires when the *declared* side
+# (left) is absent for an observed address.
+# ---------------------------------------------------------------------------
+
+_OBSERVED_SIDE = "right"  # absent → declared-but-not-observed → "missing"
+_DECLARED_SIDE = "left"  # absent → observed-but-not-declared → "unexpected"
+
+
+def _presence_issues(
+    context: RuleContext,
+    *,
+    address_type: str,
+    side_that_must_be_empty: str,  # _OBSERVED_SIDE / _DECLARED_SIDE
+    code: str,
+    severity: Severity,
+    entity_type: EntityType,
+    message_template: str,  # one ``{address}`` placeholder
+) -> Iterable[ValidationIssue]:
+    """Emit one presence issue at a node-label/rel-type ``address`` when
+    ``side_that_must_be_empty`` is absent."""
+    if context.extra.get(ADDRESS_TYPE) != address_type:
+        return  # not my address kind
+    side = context.right if side_that_must_be_empty == _OBSERVED_SIDE else context.left
+    if side is not None:
+        return  # that side is present — presence is satisfied
+    address: str = context.address
+    yield ValidationIssue(
+        code=code,
+        severity=severity,
+        entity_type=entity_type,
+        entity_id=address,
+        message=message_template.format(address=address),
+    )
+
+
 @dataclass
 class MissingNodeLabelRule:
     """Emits ``MISSING_NODE_LABEL`` (ERROR) when a declared node label is absent
@@ -152,18 +275,15 @@ class MissingNodeLabelRule:
     key: str = "node_label.missing"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "node_label":
-            return  # not a node-label address
-        if context.right is not None:
-            return  # label present in profile — not missing
-        label: str = context.address
-        yield ValidationIssue(
+        return _presence_issues(
+            context,
+            address_type=ADDR_NODE_LABEL,
+            side_that_must_be_empty=_OBSERVED_SIDE,
             code="MISSING_NODE_LABEL",
             severity=Severity.ERROR,
             entity_type=EntityType.NODE,
-            entity_id=label,
-            message=(
-                f"Model defines node type '{label}' but no instances found in profile"
+            message_template=(
+                "Model defines node type '{address}' but no instances found in profile"
             ),
         )
 
@@ -176,17 +296,16 @@ class UnexpectedNodeLabelRule:
     key: str = "node_label.unexpected"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "node_label":
-            return  # not a node-label address
-        if context.left is not None:
-            return  # label is declared — not unexpected
-        label: str = context.address
-        yield ValidationIssue(
+        return _presence_issues(
+            context,
+            address_type=ADDR_NODE_LABEL,
+            side_that_must_be_empty=_DECLARED_SIDE,
             code="UNEXPECTED_NODE_LABEL",
             severity=Severity.WARNING,
             entity_type=EntityType.NODE,
-            entity_id=label,
-            message=f"Profile contains node label '{label}' not defined in model",
+            message_template=(
+                "Profile contains node label '{address}' not defined in model"
+            ),
         )
 
 
@@ -198,18 +317,15 @@ class MissingRelTypeRule:
     key: str = "rel_type.missing"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "rel_type":
-            return  # not a rel-type address
-        if context.right is not None:
-            return  # rel type present in profile — not missing
-        rt: str = context.address
-        yield ValidationIssue(
+        return _presence_issues(
+            context,
+            address_type=ADDR_REL_TYPE,
+            side_that_must_be_empty=_OBSERVED_SIDE,
             code="MISSING_REL_TYPE",
             severity=Severity.ERROR,
             entity_type=EntityType.RELATIONSHIP,
-            entity_id=rt,
-            message=(
-                f"Model defines relationship type '{rt}' "
+            message_template=(
+                "Model defines relationship type '{address}' "
                 "but no instances found in profile"
             ),
         )
@@ -223,17 +339,16 @@ class UnexpectedRelTypeRule:
     key: str = "rel_type.unexpected"
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
-        if context.extra.get("address_type") != "rel_type":
-            return  # not a rel-type address
-        if context.left is not None:
-            return  # rel type is declared — not unexpected
-        rt: str = context.address
-        yield ValidationIssue(
+        return _presence_issues(
+            context,
+            address_type=ADDR_REL_TYPE,
+            side_that_must_be_empty=_DECLARED_SIDE,
             code="UNEXPECTED_REL_TYPE",
             severity=Severity.WARNING,
             entity_type=EntityType.RELATIONSHIP,
-            entity_id=rt,
-            message=f"Profile contains relationship type '{rt}' not defined in model",
+            message_template=(
+                "Profile contains relationship type '{address}' not defined in model"
+            ),
         )
 
 
@@ -252,9 +367,9 @@ class MissingPropertyRule:
             return  # context is not a property address
         if not type_info.is_required:
             return  # optional property missing from profile is not an error
-        label: str = context.extra["label"]
-        prop_name: str = context.extra["prop_name"]
-        entity_type: EntityType = context.extra["entity_type"]
+        label: str = context.extra[LABEL]
+        prop_name: str = context.extra[PROP_NAME]
+        entity_type: EntityType = context.extra[ENTITY_TYPE]
         yield ValidationIssue(
             code="MISSING_PROPERTY",
             severity=Severity.ERROR,
@@ -278,13 +393,13 @@ class UnexpectedPropertyRule:
             return  # property is declared — not unexpected
         if context.right is None:
             return  # no observation either — nothing to report
-        if "prop_name" not in context.extra:
+        if PROP_NAME not in context.extra:
             return  # not a property address
         if not isinstance(context.right, PropertyProfile):
             return  # not a property observation
-        label: str = context.extra["label"]
-        prop_name: str = context.extra["prop_name"]
-        entity_type: EntityType = context.extra["entity_type"]
+        label: str = context.extra[LABEL]
+        prop_name: str = context.extra[PROP_NAME]
+        entity_type: EntityType = context.extra[ENTITY_TYPE]
         yield ValidationIssue(
             code="UNEXPECTED_PROPERTY",
             severity=Severity.INFO,
@@ -312,9 +427,9 @@ class PropertyIncompleteRule:
             return  # need both sides as proper types
         if not (type_info.is_required and prop_profile.completeness < 1.0):
             return
-        label: str = context.extra["label"]
-        prop_name: str = context.extra["prop_name"]
-        entity_type: EntityType = context.extra["entity_type"]
+        label: str = context.extra[LABEL]
+        prop_name: str = context.extra[PROP_NAME]
+        entity_type: EntityType = context.extra[ENTITY_TYPE]
         yield ValidationIssue(
             code="PROPERTY_INCOMPLETE",
             severity=Severity.WARNING,
@@ -365,9 +480,6 @@ class PropertyTypeMismatchRule:
             prop_profile, PropertyProfile
         ):
             return  # need both sides as proper types
-        label: str = context.extra["label"]
-        prop_name: str = context.extra["prop_name"]
-        entity_type: EntityType = context.extra["entity_type"]
         expected_type = _expected_storage_type(type_info.python_type)
         # An enum whose members carry mixed value types (e.g. some str, some int)
         # has no single storage type; skip the structural type check and let
@@ -375,6 +487,16 @@ class PropertyTypeMismatchRule:
         if expected_type is None:
             return
 
+        address = _PropertyAddress.from_context(context)
+        yield from self._type_mismatch_issues(prop_profile, expected_type, address)
+
+    def _type_mismatch_issues(
+        self,
+        prop_profile: PropertyProfile,
+        expected_type: type,
+        address: "_PropertyAddress",
+    ) -> Iterable[ValidationIssue]:
+        """One ``PROPERTY_TYPE_MISMATCH`` per observed off-type, prevalence-aware."""
         counts = prop_profile.observed_type_counts
         # Share denominator is the scan's own total (sum of the type counts), not
         # `present_count`.  Counts are intended to partition
@@ -388,9 +510,8 @@ class PropertyTypeMismatchRule:
             if py_type is None or py_type is expected_type:
                 continue
 
-            entity_id = f"{label}.{prop_name}"
             base = (
-                f"Property '{prop_name}' on {label} "
+                f"Property '{address.prop_name}' on {address.label} "
                 f"has observed type '{obs_type}' "
                 f"(Python: {py_type.__name__}), "
                 f"expected {expected_type.__name__}"
@@ -403,8 +524,8 @@ class PropertyTypeMismatchRule:
                 yield ValidationIssue(
                     code="PROPERTY_TYPE_MISMATCH",
                     severity=Severity.ERROR,
-                    entity_type=entity_type,
-                    entity_id=entity_id,
+                    entity_type=address.entity_type,
+                    entity_id=address.entity_id,
                     message=base,
                 )
                 continue
@@ -416,8 +537,8 @@ class PropertyTypeMismatchRule:
             yield ValidationIssue(
                 code="PROPERTY_TYPE_MISMATCH",
                 severity=severity,
-                entity_type=entity_type,
-                entity_id=entity_id,
+                entity_type=address.entity_type,
+                entity_id=address.entity_id,
                 message=(
                     f"{base} "
                     f"({off_type_count}/{total} = {share:.1%} of observed values)"
@@ -463,9 +584,9 @@ class PropertyConstraintPresenceRule:
         ):
             return  # need both sides as proper types
         constraint_required = prop_profile.constraint_required
-        label: str = context.extra["label"]
-        prop_name: str = context.extra["prop_name"]
-        entity_type: EntityType = context.extra["entity_type"]
+        label: str = context.extra[LABEL]
+        prop_name: str = context.extra[PROP_NAME]
+        entity_type: EntityType = context.extra[ENTITY_TYPE]
         entity_id = f"{label}.{prop_name}"
 
         if type_info.is_required:
@@ -544,44 +665,19 @@ class PropertyEnumValueRule:
         if not (isinstance(declared, type) and issubclass(declared, enum.Enum)):
             return  # value comparison applies only to declared enums
 
-        label: str = context.extra["label"]
-        prop_name: str = context.extra["prop_name"]
-        entity_type: EntityType = context.extra["entity_type"]
-        entity_id = f"{label}.{prop_name}"
+        address = _PropertyAddress.from_context(context)
 
         distribution = prop_profile.value_distribution
         if distribution is None or distribution.histogram is None:
-            yield ValidationIssue(
-                code="PROPERTY_VALUE_UNVERIFIABLE",
-                severity=Severity.INFO,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                message=(
-                    f"Property '{prop_name}' on {label} is declared as enum "
-                    f"'{declared.__name__}' but no observed value distribution is "
-                    "available to verify its values"
-                ),
-            )
+            yield self._missing_distribution_issue(declared, address)
             return
 
         declared_values = {str(member.value) for member in declared}
         observed_values = set(distribution.histogram)
 
-        # Values that ARE shown in the histogram were definitely observed, so an
-        # undeclared one among them is a true contract breach regardless of
-        # truncation (the more severe direction).
-        for value in sorted(observed_values - declared_values):
-            yield ValidationIssue(
-                code="UNDECLARED_PROPERTY_VALUE",
-                severity=Severity.WARNING,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                message=(
-                    f"Property '{prop_name}' on {label} has observed value "
-                    f"'{value}' not declared in enum '{declared.__name__}'"
-                ),
-                context={"value": value, "declared": sorted(declared_values)},
-            )
+        yield from self._undeclared_value_issues(
+            declared, declared_values, observed_values, address
+        )
 
         # Truncation honesty: a histogram capped at ``limit``
         # (``sample_complete is False``) hides every value beyond the top-N in
@@ -597,42 +693,106 @@ class PropertyEnumValueRule:
         # verdict.  A declared enum should be profiled with a complete histogram
         # (no value cap); the inspector enforces this (see GraphInspector).
         if not distribution.sample_complete:
-            yield ValidationIssue(
-                code="PROPERTY_VALUE_UNVERIFIABLE",
-                severity=Severity.INFO,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                message=(
-                    f"Property '{prop_name}' on {label} is declared as enum "
-                    f"'{declared.__name__}' but its observed value distribution is "
-                    f"truncated ({distribution.other_count} observation(s) beyond "
-                    f"the top-{distribution.limit} cap are hidden); undeclared "
-                    "values in the remainder cannot be detected and unobserved "
-                    "declared values cannot be confirmed"
-                ),
-                context={
-                    "limit": distribution.limit,
-                    "other_count": distribution.other_count,
-                },
-            )
+            yield self._truncated_issue(declared, distribution, address)
             return
 
+        yield from self._unobserved_value_issues(
+            declared_values, observed_values, address
+        )
+
+    @staticmethod
+    def _missing_distribution_issue(
+        declared: type[enum.Enum], address: "_PropertyAddress"
+    ) -> ValidationIssue:
+        """No per-value counts at all → ``PROPERTY_VALUE_UNVERIFIABLE``."""
+        return ValidationIssue(
+            code="PROPERTY_VALUE_UNVERIFIABLE",
+            severity=Severity.INFO,
+            entity_type=address.entity_type,
+            entity_id=address.entity_id,
+            message=(
+                f"Property '{address.prop_name}' on {address.label} is declared "
+                f"as enum '{declared.__name__}' but no observed value distribution "
+                "is available to verify its values"
+            ),
+        )
+
+    @staticmethod
+    def _undeclared_value_issues(
+        declared: type[enum.Enum],
+        declared_values: set[str],
+        observed_values: set[str],
+        address: "_PropertyAddress",
+    ) -> Iterable[ValidationIssue]:
+        """One ``UNDECLARED_PROPERTY_VALUE`` per observed value not in the enum.
+
+        Values that ARE shown in the histogram were definitely observed, so an
+        undeclared one among them is a true contract breach regardless of
+        truncation (the more severe direction).
+        """
+        for value in sorted(observed_values - declared_values):
+            yield ValidationIssue(
+                code="UNDECLARED_PROPERTY_VALUE",
+                severity=Severity.WARNING,
+                entity_type=address.entity_type,
+                entity_id=address.entity_id,
+                message=(
+                    f"Property '{address.prop_name}' on {address.label} has "
+                    f"observed value '{value}' not declared in enum "
+                    f"'{declared.__name__}'"
+                ),
+                context={"value": value, "declared": sorted(declared_values)},
+            )
+
+    @staticmethod
+    def _truncated_issue(
+        declared: type[enum.Enum],
+        distribution: BoundedDistribution,
+        address: "_PropertyAddress",
+    ) -> ValidationIssue:
+        """Histogram capped → ``PROPERTY_VALUE_UNVERIFIABLE`` for absence verdicts."""
+        return ValidationIssue(
+            code="PROPERTY_VALUE_UNVERIFIABLE",
+            severity=Severity.INFO,
+            entity_type=address.entity_type,
+            entity_id=address.entity_id,
+            message=(
+                f"Property '{address.prop_name}' on {address.label} is declared "
+                f"as enum '{declared.__name__}' but its observed value "
+                f"distribution is truncated ({distribution.other_count} "
+                f"observation(s) beyond the top-{distribution.limit} cap are "
+                "hidden); undeclared values in the remainder cannot be detected "
+                "and unobserved declared values cannot be confirmed"
+            ),
+            context={
+                "limit": distribution.limit,
+                "other_count": distribution.other_count,
+            },
+        )
+
+    @staticmethod
+    def _unobserved_value_issues(
+        declared_values: set[str],
+        observed_values: set[str],
+        address: "_PropertyAddress",
+    ) -> Iterable[ValidationIssue]:
+        """One ``UNOBSERVED_PROPERTY_VALUE`` per declared value never observed."""
         for value in sorted(declared_values - observed_values):
             yield ValidationIssue(
                 code="UNOBSERVED_PROPERTY_VALUE",
                 severity=Severity.INFO,
-                entity_type=entity_type,
-                entity_id=entity_id,
+                entity_type=address.entity_type,
+                entity_id=address.entity_id,
                 message=(
-                    f"Property '{prop_name}' on {label} declares enum value "
-                    f"'{value}' which was never observed"
+                    f"Property '{address.prop_name}' on {address.label} declares "
+                    f"enum value '{value}' which was never observed"
                 ),
                 context={"value": value},
             )
 
 
 def _conditional_sides(
-    rt_class: Any,
+    rt_class: type[RelationshipModel],
 ) -> list[tuple[ConditionalCardinality, str]]:
     """Return ``(conditional_card, side)`` for **every** conditional directed side.
 
@@ -645,16 +805,16 @@ def _conditional_sides(
     if not rt_class.__directed__:
         return []
     sides: list[tuple[ConditionalCardinality, str]] = []
-    src_card = rt_class.__source_cardinality__
+    src_card = rt_class.source_cardinality()
     if isinstance(src_card, ConditionalCardinality):
         sides.append((src_card, "source"))
-    tgt_card = rt_class.__target_cardinality__
+    tgt_card = rt_class.target_cardinality()
     if isinstance(tgt_card, ConditionalCardinality):
         sides.append((tgt_card, "target"))
     return sides
 
 
-def _declared_endpoint_map(match: Any) -> dict[str, str | None]:
+def _declared_endpoint_map(match: PropMatch) -> dict[str, str | None]:
     """Stringified condition map for one endpoint of a declared rule.
 
     Mirrors the observed :class:`PartitionKey` endpoint maps the producers emit:
@@ -666,7 +826,7 @@ def _declared_endpoint_map(match: Any) -> dict[str, str | None]:
     return {k: str(v) for k, v in match.conditions.items()}
 
 
-def _degree_bounds(dist: Any) -> tuple[int, int | None]:
+def _degree_bounds(dist: BoundedDistribution | None) -> tuple[int, int | None]:
     """Return ``(min, max)`` degree from a partition distribution.
 
     An absent partition (``dist is None``) — a declared pair never observed —
@@ -735,10 +895,14 @@ class CardinalityViolationRule:
             yield from self._compare_constant(label, rt_class, rel_profile)
 
     def _compare_constant(
-        self, label: str, rt_class: Any, rel_profile: Any
+        self,
+        label: str,
+        rt_class: type[RelationshipModel],
+        rel_profile: RelationshipTypeProfile,
     ) -> Iterable[ValidationIssue]:
         """Check the observed aggregate distribution against the declared bound."""
         stats = rel_profile.cardinality_stats
+        assert stats is not None  # __call__ guards on cardinality_stats presence
         # E40.3: collapse a possibly-conditional value to a concrete spec
         # (E40.7 tracks per-endpoint resolution).
         src_card = representative_spec(rt_class.source_cardinality())
@@ -782,7 +946,11 @@ class CardinalityViolationRule:
             )
 
     def _compare_conditional(
-        self, label: str, rel_profile: Any, card: ConditionalCardinality, side: str
+        self,
+        label: str,
+        rel_profile: RelationshipTypeProfile,
+        card: ConditionalCardinality,
+        side: str,
     ) -> Iterable[ValidationIssue]:
         """Enforce per-pair bounds for one conditional declared side (E41.5/E41.7).
 
@@ -831,7 +999,7 @@ class CardinalityViolationRule:
         # side degree (parity with the in-memory per-node floor — finding 1).  The
         # counted map keys the group via its (hashable) frozenset of items.
         unmatched_by_value: dict[
-            frozenset[tuple[str, str | None]], list[_PartitionDist]
+            frozenset[tuple[str, str | None]], list[_PartitionDegree]
         ] = {}
         for partition, dist in partitions.items():
             counted_map = partition.source if side == "source" else partition.target
@@ -839,7 +1007,9 @@ class CardinalityViolationRule:
                 yield from self._check_matched(label, card, partition, dist)
             else:
                 group_key = frozenset(counted_map.items())
-                unmatched_by_value.setdefault(group_key, []).append((partition, dist))
+                unmatched_by_value.setdefault(group_key, []).append(
+                    _PartitionDegree(partition, dist)
+                )
 
         for group in unmatched_by_value.values():
             yield from self._check_unmatched(label, card, group)
@@ -881,7 +1051,7 @@ class CardinalityViolationRule:
             )
 
     def _check_unmatched(
-        self, label: str, card: ConditionalCardinality, group: list[_PartitionDist]
+        self, label: str, card: ConditionalCardinality, group: list[_PartitionDegree]
     ) -> Iterable[ValidationIssue]:
         """Emit drift + default-floor for one unmatched counted-side value group.
 
@@ -893,8 +1063,8 @@ class CardinalityViolationRule:
         parity).  A single ``CARDINALITY_UNMATCHED_KIND`` INFO is emitted per
         value (drift granularity matching the in-memory once-per-node emission).
         """
-        # group is a list of (partition, dist); they share one counted-side map.
-        sample_partition = group[0][0]
+        # The group shares one counted-side map; any member names the value pair.
+        sample_partition = group[0].partition
         total_min = 0
         total_max: int | None = 0
         for _partition, dist in group:
@@ -995,7 +1165,7 @@ def standard_rules() -> list[Rule]:
 @dataclass
 class PropertyDistinctCountRule:
     """Emits ``DISTINCT_COUNT_EXCEEDED`` (INFO) when ``PropertyProfile.distinct_count``
-    exceeds ``extra["max_distinct_count"]``.
+    exceeds ``extra[MAX_DISTINCT_COUNT]``.
 
     Not included in :func:`standard_rules` — inject explicitly when needed.
     """
@@ -1004,7 +1174,7 @@ class PropertyDistinctCountRule:
 
     def __call__(self, context: RuleContext) -> Iterable[ValidationIssue]:
         prop_profile = context.right
-        max_distinct: int | None = context.extra.get("max_distinct_count")
+        max_distinct: int | None = context.extra.get(MAX_DISTINCT_COUNT)
         if not isinstance(prop_profile, PropertyProfile):
             return  # not a property address
         if max_distinct is None:
@@ -1013,9 +1183,9 @@ class PropertyDistinctCountRule:
             return  # observed measurement not populated — skip
 
         if prop_profile.distinct_count > max_distinct:
-            label: str = context.extra["label"]
-            prop_name: str = context.extra["prop_name"]
-            entity_type: EntityType = context.extra["entity_type"]
+            label: str = context.extra[LABEL]
+            prop_name: str = context.extra[PROP_NAME]
+            entity_type: EntityType = context.extra[ENTITY_TYPE]
             yield ValidationIssue(
                 code="DISTINCT_COUNT_EXCEEDED",
                 severity=Severity.INFO,

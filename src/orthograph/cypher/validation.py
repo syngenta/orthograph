@@ -6,6 +6,7 @@ model.  Imperative or non-Cypher queries are reported as ``QUERY_UNVERIFIABLE``
 """
 
 from collections.abc import Sequence
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -30,13 +31,8 @@ from orthograph.diagnostics.result import ValidationIssue, ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
 from orthograph.graph_profile.models import GraphProfile
-from orthograph.query.base_models import Backend, ReadQuery
+from orthograph.query.base_models import Backend, ReadQuery, WriteQuery
 from orthograph.query.catalogue import QueryCatalogue
-
-
-# Dummy identifier used when validating templates with <<name>> placeholders.
-# This matches the placeholder used in base_models.py at definition time.
-_PARSE_PLACEHOLDER = "__IDENT__"
 
 
 def _unverifiable(name: str, reason: str) -> ValidationIssue:
@@ -49,67 +45,114 @@ def _unverifiable(name: str, reason: str) -> ValidationIssue:
     )
 
 
-def _check_return_output_alignment(
+def _is_projection_output(output_model: type[BaseModel]) -> bool:
+    """True when every field of *output_model* is itself a Node/Rel model.
+
+    Such an Output is a *projection*: its fields are filled from whole-node /
+    whole-rel RETURN columns, so the variable-name↔field-name gap is the
+    legitimate ``materialize`` seam and must not be reported as a mismatch.
+    """
+    field_types = [
+        f.annotation
+        for f in output_model.model_fields.values()
+        if f.annotation is not None
+    ]
+    return bool(field_types) and all(
+        isinstance(ft, type) and issubclass(ft, (NodeModel, RelationshipModel))
+        for ft in field_types
+    )
+
+
+def _label_mismatch_issue(
+    col: ReturnColumn, expected_label: str, query_name: str
+) -> ValidationIssue:
+    return ValidationIssue(
+        code="QUERY_RETURN_OUTPUT_LABEL_MISMATCH",
+        severity=Severity.ERROR,
+        entity_type=EntityType.QUERY,
+        entity_id=query_name,
+        message=(
+            f"Query '{query_name}': RETURN projects "
+            f"'{col.name}' (label '{col.label}') but "
+            f"Output expects label '{expected_label}'"
+        ),
+    )
+
+
+def _no_whole_column_issue(
+    query_name: str, *, is_node_model: bool, expected_label: str | None
+) -> ValidationIssue:
+    model_kind = "NodeModel" if is_node_model else "RelationshipModel"
+    column_kind = "node" if is_node_model else "relationship"
+    return ValidationIssue(
+        code="QUERY_RETURN_OUTPUT_MISMATCH",
+        severity=Severity.ERROR,
+        entity_type=EntityType.QUERY,
+        entity_id=query_name,
+        message=(
+            f"Query '{query_name}': Output is a {model_kind} "
+            f"('{expected_label}') but RETURN contains no matching "
+            f"whole-{column_kind} column"
+        ),
+    )
+
+
+def _check_whole_entity_alignment(
+    return_cols: list[ReturnColumn],
+    query_name: str,
+    *,
+    is_node_model: bool,
+    expected_label: str | None,
+) -> list[ValidationIssue]:
+    """Align a NodeModel / RelationshipModel Output against the RETURN columns.
+
+    Valid when exactly one matching whole-node / whole-rel column carries the
+    expected label.  A single column with the wrong label is a
+    ``QUERY_RETURN_OUTPUT_LABEL_MISMATCH`` ERROR; columns present but none of the
+    matching kind is a ``QUERY_RETURN_OUTPUT_MISMATCH`` ERROR.
+    """
+    expected_kind = ReturnKind.WHOLE_NODE if is_node_model else ReturnKind.WHOLE_REL
+    whole_cols = [c for c in return_cols if c.kind == expected_kind]
+
+    if len(whole_cols) == 1:
+        col = whole_cols[0]
+        if expected_label and col.label and col.label != expected_label:
+            return [_label_mismatch_issue(col, expected_label, query_name)]
+        return []
+
+    if len(whole_cols) == 0 and return_cols:
+        # Columns present but none whole-node/whole-rel for a Node/Rel Output —
+        # e.g. a scalar-only return against a NodeModel.  Emit one ERROR rather
+        # than staying silent.
+        return [
+            _no_whole_column_issue(
+                query_name,
+                is_node_model=is_node_model,
+                expected_label=expected_label,
+            )
+        ]
+
+    # More than one matching column → valid (unchanged policy).
+    return []
+
+
+def _check_flat_field_alignment(
     return_cols: list[ReturnColumn],
     output_model: type[BaseModel],
     query_name: str,
 ) -> list[ValidationIssue]:
-    """Tiered RETURN→Output alignment check.
+    """Align a flat scalar Output against the scalar RETURN columns.
 
-    Branches on both the *Output* kind and the classified RETURN columns:
-
-    * **Output is a NodeModel** and there is exactly one matching
-      ``WHOLE_NODE`` column of the same label → **valid, no issue**.
-      If the label does not match → **ERROR** ``QUERY_RETURN_OUTPUT_LABEL_MISMATCH``.
-    * **Output is a RelationshipModel** and there is exactly one matching
-      ``WHOLE_REL`` column of the same label → **valid, no issue**.
-      If the label does not match → **ERROR** ``QUERY_RETURN_OUTPUT_LABEL_MISMATCH``.
-    * **Output is a flat BaseModel** (not a Node/Rel model) and RETURN is scalar
-      columns → each **required** field missing from the scalar projections is an
-      **ERROR** ``QUERY_RETURN_OUTPUT_MISMATCH``; optional fields missing are INFO.
-    * **Output is a projection BaseModel** (fields are themselves Node/Rel models)
-      and RETURN has whole-node/whole-rel columns → no mismatch noise (the
-      variable-name↔field-name gap is the legitimate ``materialize`` seam).
-
-    Extra RETURN columns not in ``Output`` are never reported (unchanged policy).
-
-    Returns an empty list when the alignment is considered valid.
+    Each Output field with no matching scalar column is reported: required
+    fields as a ``QUERY_RETURN_OUTPUT_MISMATCH`` ERROR, optional fields as the
+    same code at INFO.
     """
+    scalar_col_names = {c.name for c in return_cols if c.kind == ReturnKind.SCALAR}
     issues: list[ValidationIssue] = []
-
-    # --- Branch 1 & 2: Output is a NodeModel or RelationshipModel ---
-    is_node_model = issubclass(output_model, NodeModel)
-    is_rel_model = (not is_node_model) and issubclass(output_model, RelationshipModel)
-
-    if is_node_model or is_rel_model:
-        expected_kind = ReturnKind.WHOLE_NODE if is_node_model else ReturnKind.WHOLE_REL
-        expected_label: str | None = getattr(output_model, "__label__", None)
-
-        # Find all whole-node / whole-rel columns.
-        whole_cols = [c for c in return_cols if c.kind == expected_kind]
-
-        if len(whole_cols) == 1:
-            col = whole_cols[0]
-            if expected_label and col.label and col.label != expected_label:
-                # Wrong label: mismatch.
-                issues.append(
-                    ValidationIssue(
-                        code="QUERY_RETURN_OUTPUT_LABEL_MISMATCH",
-                        severity=Severity.ERROR,
-                        entity_type=EntityType.QUERY,
-                        entity_id=query_name,
-                        message=(
-                            f"Query '{query_name}': RETURN projects "
-                            f"'{col.name}' (label '{col.label}') but "
-                            f"Output expects label '{expected_label}'"
-                        ),
-                    )
-                )
-        elif len(whole_cols) == 0 and return_cols:
-            # There are columns but none are whole-node/whole-rel for a
-            # NodeModel/RelationshipModel Output — could be a scalar-only return
-            # against a NodeModel.  Emit a single ERROR so the developer gets
-            # actionable feedback rather than silence.
+    for field_name, field_info in sorted(output_model.model_fields.items()):
+        if field_name in scalar_col_names:
+            continue
+        if field_info.is_required():
             issues.append(
                 ValidationIssue(
                     code="QUERY_RETURN_OUTPUT_MISMATCH",
@@ -117,67 +160,62 @@ def _check_return_output_alignment(
                     entity_type=EntityType.QUERY,
                     entity_id=query_name,
                     message=(
-                        f"Query '{query_name}': Output is a "
-                        f"{'NodeModel' if is_node_model else 'RelationshipModel'} "
-                        f"('{expected_label}') but RETURN contains no matching "
-                        f"whole-{'node' if is_node_model else 'relationship'} column"
+                        f"Query '{query_name}': Output field '{field_name}' has no "
+                        "matching column in the RETURN clause"
                     ),
                 )
             )
-        # len(whole_cols) > 1 or len(whole_cols) == 1 with matching label → valid.
-        return issues
-
-    # --- Branch 3 & 4: flat BaseModel ---
-    # First determine whether this looks like a projection Output (fields are
-    # themselves Node/Rel models).  If so, the variable-name↔field-name gap is
-    # expected → no noise.
-    field_types = [
-        f.annotation
-        for f in output_model.model_fields.values()
-        if f.annotation is not None
-    ]
-    is_projection_output = bool(field_types) and all(
-        isinstance(ft, type) and issubclass(ft, (NodeModel, RelationshipModel))
-        for ft in field_types
-    )
-
-    if is_projection_output:
-        # Branch 4: projection of whole-node/whole-rel columns → no noise.
-        return issues
-
-    # Branch 3: scalar flat BaseModel — check required fields against scalar
-    # column names.
-    scalar_col_names = {c.name for c in return_cols if c.kind == ReturnKind.SCALAR}
-    for field_name, field_info in sorted(output_model.model_fields.items()):
-        if field_name not in scalar_col_names:
-            if field_info.is_required():
-                issues.append(
-                    ValidationIssue(
-                        code="QUERY_RETURN_OUTPUT_MISMATCH",
-                        severity=Severity.ERROR,
-                        entity_type=EntityType.QUERY,
-                        entity_id=query_name,
-                        message=(
-                            f"Query '{query_name}': Output field '{field_name}' has no "
-                            "matching column in the RETURN clause"
-                        ),
-                    )
+        else:
+            issues.append(
+                ValidationIssue(
+                    code="QUERY_RETURN_OUTPUT_MISMATCH",
+                    severity=Severity.INFO,
+                    entity_type=EntityType.QUERY,
+                    entity_id=query_name,
+                    message=(
+                        f"Query '{query_name}': optional field '{field_name}' "
+                        "has no matching RETURN column"
+                    ),
                 )
-            else:
-                issues.append(
-                    ValidationIssue(
-                        code="QUERY_RETURN_OUTPUT_MISMATCH",
-                        severity=Severity.INFO,
-                        entity_type=EntityType.QUERY,
-                        entity_id=query_name,
-                        message=(
-                            f"Query '{query_name}': optional field '{field_name}' "
-                            "has no matching RETURN column"
-                        ),
-                    )
-                )
-
+            )
     return issues
+
+
+def _check_return_output_alignment(
+    return_cols: list[ReturnColumn],
+    output_model: type[BaseModel],
+    query_name: str,
+) -> list[ValidationIssue]:
+    """Tiered RETURN→Output alignment check: classify the Output, then route.
+
+    Three Output shapes, each with its own alignment rule:
+
+    * **whole-entity** (Output is a ``NodeModel`` / ``RelationshipModel``) →
+      :func:`_check_whole_entity_alignment` (exactly one matching whole column
+      of the right label).
+    * **projection** (Output fields are themselves Node/Rel models) → no noise;
+      the variable-name↔field-name gap is the legitimate ``materialize`` seam.
+    * **flat scalar** (any other ``BaseModel``) → :func:`_check_flat_field_alignment`
+      (each Output field must have a matching scalar RETURN column).
+
+    Extra RETURN columns not in ``Output`` are never reported (unchanged policy).
+    Returns an empty list when the alignment is considered valid.
+    """
+    if issubclass(output_model, NodeModel) or issubclass(
+        output_model, RelationshipModel
+    ):
+        is_node_model = issubclass(output_model, NodeModel)
+        return _check_whole_entity_alignment(
+            return_cols,
+            query_name,
+            is_node_model=is_node_model,
+            expected_label=getattr(output_model, "__label__", None),
+        )
+
+    if _is_projection_output(output_model):
+        return []
+
+    return _check_flat_field_alignment(return_cols, output_model, query_name)
 
 
 def _check_identifier_injection(
@@ -306,7 +344,33 @@ def validate_cypher_spec(
     return result
 
 
-def validate_query(
+def _validate_simple_cypher_query(
+    query: CypherQuery,
+    definition: GraphDefinition | None,
+) -> ValidationResult:
+    """Run the shared spec validation for a simple :class:`CypherQuery`.
+
+    Extracts the ``$param`` and ``<<identifier>>`` field names declared on the
+    query and delegates to :func:`validate_cypher_spec` with no ``Output`` model
+    (simple queries declare no result shape).  This is the single source of the
+    simple-query validation idiom used by both :func:`validate_cypher_query` and the
+    ``CypherQuery`` branch of :func:`validate_query_catalogue`.
+    """
+    params_fields: set[str] = set(query.params_schema.model_fields)
+    identifier_fields: set[str] = set(
+        (query.identifiers_schema or NoIdentifiers).model_fields
+    )
+    return validate_cypher_spec(
+        cypher=query.cypher_template,
+        params_fields=params_fields,
+        query_name=query.query_id,
+        identifier_fields=identifier_fields,
+        graph_definition=definition,
+        output_model=None,
+    )
+
+
+def validate_cypher_query(
     query: CypherQuery,
     definition: GraphDefinition | None,
 ) -> ValidationResult:
@@ -331,17 +395,88 @@ def validate_query(
         to validate the query against.  Pass ``None`` to perform a syntactic-only
         check (param alignment + parse); domain validation is skipped.
     """
-    params_fields: set[str] = set(query.params_schema.model_fields)
-    identifier_fields: set[str] = set(
-        (query.identifiers_schema or NoIdentifiers).model_fields
+    return _validate_simple_cypher_query(query, definition)
+
+
+def validate_typed_cypher_query(
+    query: ReadQuery[Any, Any] | WriteQuery[Any, Any],
+    graph_definition: GraphDefinition,
+) -> ValidationResult:
+    """Validate a typed (ReadQuery / WriteQuery) Cypher query against *graph_definition*.
+
+    Guards (all specific to the typed path — CypherQuery never reaches this):
+
+    * Non-Cypher backend → ``QUERY_UNVERIFIABLE`` (INFO).
+    * Imperative query (no ``cypher_template``) → ``QUERY_UNVERIFIABLE`` (INFO).
+    * Identifier injection → injection INFO + ``QUERY_UNVERIFIABLE`` (static
+      validation is incomplete without runtime identifier values; INFO fires
+      here rather than inside :func:`validate_cypher_spec` so we bail before
+      the deeper checks).
+
+    Otherwise extracts Params / Identifiers / Output from the query class and
+    delegates to :func:`validate_cypher_spec`.
+    """  # NOQA E501
+    if query.backend != Backend.CYPHER:
+        result = ValidationResult()
+        result.add(
+            _unverifiable(
+                query.name,
+                reason=f"backend is {query.backend.value}; this validator only "
+                "checks Cypher queries",
+            )
+        )
+        return result
+
+    template = getattr(type(query), "cypher_template", None)
+    if template is None:
+        result = ValidationResult()
+        result.add(
+            _unverifiable(
+                query.name,
+                "query is imperative (no 'cypher_template'); its Cypher is "
+                "only known at build() time",
+            )
+        )
+        return result
+
+    # T10: emit injection INFO then bail — extract once, no second call inside
+    # validate_cypher_spec (we return before reaching it).
+    if injection_issues := _check_identifier_injection(template, query.name):
+        result = ValidationResult()
+        for issue in injection_issues:
+            result.add(issue)
+        result.add(
+            _unverifiable(
+                query.name,
+                "query uses identifier injection (<<...>> placeholders); "
+                "Cypher template validation is incomplete without runtime "
+                "identifier values",
+            )
+        )
+        return result
+
+    params_cls = getattr(type(query), "Params", None)
+    params_fields: set[str] = (
+        set(params_cls.model_fields)
+        if isinstance(params_cls, type) and issubclass(params_cls, BaseModel)
+        else set()
+    )
+    identifiers_cls = getattr(type(query), "Identifiers", None)
+    identifier_fields: set[str] = (
+        set(identifiers_cls.model_fields)
+        if isinstance(identifiers_cls, type) and issubclass(identifiers_cls, BaseModel)
+        else set()
+    )
+    output_cls: type[BaseModel] | None = (
+        getattr(type(query), "Output", None) if isinstance(query, ReadQuery) else None
     )
     return validate_cypher_spec(
-        cypher=query.cypher_template,
+        cypher=template,
         params_fields=params_fields,
-        query_name=query.query_id,
+        query_name=query.name,
         identifier_fields=identifier_fields,
-        graph_definition=definition,
-        output_model=None,
+        graph_definition=graph_definition,
+        output_model=output_cls,
     )
 
 
@@ -368,97 +503,11 @@ def validate_query_catalogue(
     placeholders, a ``QUERY_USES_IDENTIFIER_INJECTION`` INFO issue is emitted.
     """
     result = ValidationResult()
-
     for query in query_catalogue.queries():
-        # --- Simple CypherQuery branch (YAML / direct-instantiation path) ---
-        # Resolved first so the remainder of the loop is narrowed to
-        # ReadQuery | WriteQuery, where .name is guaranteed to exist.
         if isinstance(query, CypherQuery):
-            params_fields: set[str] = set(query.params_schema.model_fields)
-            identifier_fields_simple: set[str] = set(
-                (query.identifiers_schema or NoIdentifiers).model_fields
-            )
-            result.merge(
-                validate_cypher_spec(
-                    cypher=query.cypher_template,
-                    params_fields=params_fields,
-                    query_name=query.query_id,
-                    identifier_fields=identifier_fields_simple,
-                    graph_definition=graph_definition,
-                    output_model=None,
-                )
-            )
-            continue
-
-        if query.backend != Backend.CYPHER:
-            result.add(
-                _unverifiable(
-                    query.name,
-                    f"backend is {query.backend.value}; this validator only "
-                    "checks Cypher queries",
-                )
-            )
-            continue
-
-        template = getattr(type(query), "cypher_template", None)
-        if template is None:
-            result.add(
-                _unverifiable(
-                    query.name,
-                    "query is imperative (no 'cypher_template'); its Cypher is "
-                    "only known at build() time",
-                )
-            )
-            continue
-
-        # T10: Check for identifier injection BEFORE validating Cypher.
-        # Queries with identifier injection are reported as QUERY_UNVERIFIABLE
-        # (INFO) because the identifiers will be substituted at runtime,
-        # making static validation incomplete.
-        has_identifier_injection = bool(extract_cypher_identifiers(template))
-        for issue in _check_identifier_injection(template, query.name):
-            result.add(issue)
-
-        if has_identifier_injection:
-            result.add(
-                _unverifiable(
-                    query.name,
-                    "query uses identifier injection (<<...>> placeholders); "
-                    "Cypher template validation is incomplete without runtime "
-                    "identifier values",
-                )
-            )
-            continue
-
-        params_cls = getattr(type(query), "Params", None)
-        params_fields_typed: set[str] = (
-            set(params_cls.model_fields)
-            if isinstance(params_cls, type) and issubclass(params_cls, BaseModel)
-            else set()
-        )
-        identifiers_cls = getattr(type(query), "Identifiers", None)
-        identifier_fields: set[str] = (
-            set(identifiers_cls.model_fields)
-            if isinstance(identifiers_cls, type)
-            and issubclass(identifiers_cls, BaseModel)
-            else set()
-        )
-        output_cls: type[BaseModel] | None = (
-            getattr(type(query), "Output", None)
-            if isinstance(query, ReadQuery)
-            else None
-        )
-        result.merge(
-            validate_cypher_spec(
-                cypher=template,
-                params_fields=params_fields_typed,
-                query_name=query.name,
-                identifier_fields=identifier_fields,
-                graph_definition=graph_definition,
-                output_model=output_cls,
-            )
-        )
-
+            result.merge(_validate_simple_cypher_query(query, graph_definition))
+        else:
+            result.merge(validate_typed_cypher_query(query, graph_definition))
     return result
 
 

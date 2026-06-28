@@ -1,15 +1,27 @@
 """Graph inspector ABC and the shared Cypher inspector base."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 from orthograph.cypher.bindings import NoParams
 from orthograph.graph_profile.models import (
+    BoundedDistribution,
     CardinalityStats,
     GraphProfile,
     PartitionedCardinalityRow,
     RelationshipTypeProfile,
 )
+
+
+class _HistogramRow(Protocol):
+    """Duck-type for histogram rows.
+
+    Satisfied by both ``ValueHistogramRow`` and ``MemgraphValueHistogramRow``.
+    """
+
+    value: str
+    value_count: int
 
 
 def _extract_discriminators(card: Any) -> tuple[list[str], list[str]] | None:
@@ -124,6 +136,99 @@ class CypherInspector(GraphInspector):
                 for tgt in erow.target_labels:
                     pairs.add((src, tgt))
         return sorted(pairs)
+
+    def _fetch_node_count(
+        self, connection: Any, label: str, count_query: Any, **execute_kwargs: Any
+    ) -> int:
+        """Return the node count for ``label`` via a property-independent count().
+
+        Independent of properties: a label with no properties still has a
+        truthful instance count (the property scan would yield zero rows).
+        ``count_query`` is the vendor-specific ``NodeCountQuery`` class.
+        """
+        rows = self._run_query(
+            connection, count_query, identifiers={"label": label}, **execute_kwargs
+        )
+        return rows[0].count if rows else 0
+
+    def _fetch_rel_count(
+        self,
+        connection: Any,
+        rel_type: str,
+        source_label: str,
+        target_label: str,
+        count_query: Any,
+        **execute_kwargs: Any,
+    ) -> int:
+        """Per-shape edge count via an endpoint-filtered count().
+
+        Counts only edges of ``rel_type`` between ``source_label`` and
+        ``target_label``, so the count belongs to one relationship shape.
+        ``count_query`` is the vendor-specific ``RelCountQuery`` class.
+        """
+        rows = self._run_query(
+            connection,
+            count_query,
+            identifiers={
+                "source_label": source_label,
+                "rel_type": rel_type,
+                "target_label": target_label,
+            },
+            **execute_kwargs,
+        )
+        return rows[0].count if rows else 0
+
+    def _build_value_distribution(
+        self,
+        hist_rows: Sequence[_HistogramRow],
+        present_count: int,
+        top_n: int,
+    ) -> BoundedDistribution | None:
+        """Build a :class:`BoundedDistribution` from value-histogram query rows.
+
+        The DB query already applies ``LIMIT $top_n``; the inspector receives at
+        most ``top_n`` rows.  If the sum of their counts equals ``present_count``
+        the histogram is complete (``sample_complete=True``); otherwise the
+        remainder folds into ``other_count`` (honesty principle).
+
+        Completeness is inferred purely from count arithmetic:
+        ``top_total >= present_count``.  This is correct because every DB row has
+        ``value_count >= 1`` (the GROUP BY only produces rows for values that
+        actually exist).  If that invariant ever changes the inference must be
+        revisited.
+
+        Returns ``None`` when there are no rows (property has no non-null values).
+
+        **Cross-backend parity note:** the histogram key differs by backend.
+        Neo4j's APOC path groups on ``apoc.convert.toJson`` (list-safe: lists and
+        maps are kept *in* the histogram).  Memgraph and Neo4j's no-APOC path
+        group on ``toStringOrNull`` (scalars only: list/map values become ``null``
+        and are dropped).  Consequently, on a property mixing scalars and lists,
+        Memgraph reports ``sample_complete=False`` with lists in ``other_count``,
+        while Neo4j/APOC may report ``sample_complete=True`` for the same data.
+        This is honest degradation — the *arithmetic* here is identical on both
+        backends; the deviation originates in the query-layer histogram key.
+        """
+        if not hist_rows or present_count == 0:
+            return None
+
+        histogram = {r.value: r.value_count for r in hist_rows}
+        top_total = sum(histogram.values())
+        sample_complete = top_total >= present_count
+
+        if sample_complete:
+            return BoundedDistribution(
+                count=present_count,
+                histogram=histogram,
+                sample_complete=True,
+            )
+        return BoundedDistribution(
+            count=present_count,
+            histogram=histogram,
+            sample_complete=False,
+            limit=top_n,
+            other_count=present_count - top_total,
+        )
 
     def _cardinality_for_shape(
         self,

@@ -8,7 +8,7 @@ driver), runs the statement, and materialises each record.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, cast
+from typing import Any, Callable
 
 from pydantic import BaseModel
 
@@ -82,14 +82,43 @@ class CypherExecutor(Executor):
                 f"Query '{query_name}' produced unparseable Cypher: {exc}"
             ) from exc
 
+    @staticmethod
+    def _query_shape(query: Any) -> tuple[type[BaseModel], str]:
+        """Return ``(params_model, query_identity)`` for either query shape.
+
+        This is the **single** place in the executor that knows two query
+        shapes coexist: the typed ``ReadQuery``/``WriteQuery`` (``Params`` /
+        ``name``) and the simple ``CypherQuery``-fed adapters (``params_schema``
+        / ``query_id``).  Both names describe the *same* concept; the divergence
+        is accidental and slated for removal — the typed shape will adopt the
+        Cypher names (``params_schema`` / ``query_id``) so the two paths share
+        one vocabulary and this reconciliation disappears.  See E59
+        (query-shape alignment) and ADR-042.  Until then, every other method
+        reads through this one mapping rather than re-spelling the fallback.
+        """
+        params_model = getattr(query, "params_schema", None) or query.Params
+        query_identity = getattr(query, "query_id", None) or query.name
+        return params_model, query_identity
+
+    def _prepare_statement(
+        self, query: Any, raw_params: Any
+    ) -> tuple[str, dict[str, Any], str]:
+        """Shared read/write prologue: resolve shape → validate → build → parse.
+
+        Returns ``(cypher, qparams, query_identity)`` ready to hand to a
+        session.  The only difference between ``read`` and ``write`` is what
+        happens *after* this — transaction handling — so the prologue lives
+        here once and the two verbs keep their distinct I/O tails.
+        """
+        params_model, query_identity = self._query_shape(query)
+        params = params_model.model_validate(raw_params)
+        cypher, qparams = query.build(params)
+        self._validate_cypher(cypher, query_identity)  # runtime syntax check
+        return cypher, qparams, query_identity
+
     def read(self, query: ReadQuery[P, D], raw_params: Any) -> list[D]:
         """Validate params → build → parse Cypher → run → materialise (no commit)."""
-        # Support both CypherQuery (params_schema) and typed queries (Params)
-        params_model = getattr(query, "params_schema", None) or query.Params
-        query_id = getattr(query, "query_id", None) or query.name
-        params = cast(P, params_model.model_validate(raw_params))
-        cypher, qparams = query.build(params)
-        self._validate_cypher(cypher, query_id)  # runtime syntax check
+        cypher, qparams, _ = self._prepare_statement(query, raw_params)
         with self._driver_factory() as session:  # only I/O seam
             # Auto-commit: read() runs a single statement via session.run() and
             # does not open an explicit transaction (unlike write()). This is
@@ -112,12 +141,7 @@ class CypherExecutor(Executor):
         write queries express their result through ``interpret_result`` acting
         on those counters, not on returned row data.
         """
-        # Support both CypherQuery (params_schema) and typed queries (Params)
-        params_model = getattr(query, "params_schema", None) or query.Params
-        query_id = getattr(query, "query_id", None) or query.name
-        params = cast(P, params_model.model_validate(raw_params))
-        cypher, qparams = query.build(params)
-        self._validate_cypher(cypher, query_id)  # runtime syntax check
+        cypher, qparams, _ = self._prepare_statement(query, raw_params)
         with self._driver_factory() as session:  # only I/O seam
             tx = session.begin_transaction()
             try:

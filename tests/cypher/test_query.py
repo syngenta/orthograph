@@ -6,18 +6,21 @@ Coverage:
 - Construction: required params_schema, optional identifiers_schema, description
 - list_arguments: derives required/optional from params_schema.model_fields
 - build: validates kwargs, returns CypherQueryData
-- validate_query: free function in cypher.validation, runs shared validate_cypher_spec core
+- validate_cypher_query: free function in cypher.validation, runs shared validate_cypher_spec core
 - Identifiers: opt-in identifier injection
 - model_dump: JSON-Schema serialization via params_schema / identifiers_schema
 """  # NOQA E501
 
+from typing import Any
+
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from orthograph.cypher.base_models import CypherReadQuery
 from orthograph.cypher.bindings import NoIdentifiers, NoParams
 from orthograph.cypher.exceptions import CypherQueryError
 from orthograph.cypher.query import CypherQuery
-from orthograph.cypher.validation import validate_query, validate_query_catalogue
+from orthograph.cypher.validation import validate_cypher_query, validate_query_catalogue
 from orthograph.diagnostics.classification import Severity
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
@@ -530,7 +533,7 @@ def test_multiple_queries_independent() -> None:
 
 
 # ---------------------------------------------------------------------------
-# validate_query
+# validate_cypher_query
 # ---------------------------------------------------------------------------
 
 
@@ -546,7 +549,7 @@ def test_validate_valid_query_returns_no_errors(definition: GraphDefinition) -> 
         params_schema=FindMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    result = validate_query(q, definition)
+    result = validate_cypher_query(q, definition)
     errors = [i for i in result.issues if i.severity == Severity.ERROR]
     assert errors == []
 
@@ -563,7 +566,7 @@ def test_validate_unknown_label_surfaces_as_error(definition: GraphDefinition) -
         params_schema=FindMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    result = validate_query(q, definition)
+    result = validate_cypher_query(q, definition)
     codes = {i.code for i in result.issues if i.severity == Severity.ERROR}
     assert "QUERY_UNKNOWN_NODE_LABEL" in codes
 
@@ -578,7 +581,7 @@ def test_validate_unknown_rel_type_surfaces_as_error(
         params_schema=NoParams,
         identifiers_schema=NoIdentifiers,
     )
-    result = validate_query(q, definition)
+    result = validate_cypher_query(q, definition)
     codes = {i.code for i in result.issues if i.severity == Severity.ERROR}
     assert "QUERY_UNKNOWN_REL_TYPE" in codes
 
@@ -595,7 +598,7 @@ def test_validate_without_definition_returns_empty_result() -> None:
         params_schema=FindMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    result = validate_query(q, None)
+    result = validate_cypher_query(q, None)
     assert result.is_valid
 
 
@@ -609,7 +612,7 @@ def test_validate_syntax_error_surfaces_regardless_of_definition(
         params_schema=NoParams,
         identifiers_schema=NoIdentifiers,
     )
-    result = validate_query(q, definition)
+    result = validate_cypher_query(q, definition)
     non_info = [i for i in result.issues if i.severity != Severity.INFO]
     assert non_info
 
@@ -622,7 +625,7 @@ def test_validate_valid_rel_type_no_errors(definition: GraphDefinition) -> None:
         params_schema=NoParams,
         identifiers_schema=NoIdentifiers,
     )
-    result = validate_query(q, definition)
+    result = validate_cypher_query(q, definition)
     errors = [i for i in result.issues if i.severity == Severity.ERROR]
     assert errors == []
 
@@ -635,7 +638,7 @@ def test_validate_returns_validation_result() -> None:
         params_schema=NoParams,
         identifiers_schema=NoIdentifiers,
     )
-    result = validate_query(q, None)
+    result = validate_cypher_query(q, None)
     assert hasattr(result, "is_valid")
     assert hasattr(result, "issues")
     assert result.is_valid is True
@@ -659,7 +662,7 @@ def test_validate_with_complex_cypher() -> None:
         params_schema=FestivalParams,
         identifiers_schema=NoIdentifiers,
     )
-    result = validate_query(q, None)
+    result = validate_cypher_query(q, None)
     assert result.is_valid
 
 
@@ -887,7 +890,7 @@ def test_validate_cypher_spec_with_definition_catches_unknown_label(
 
 
 def test_cypher_query_validate_none_catches_param_alignment() -> None:
-    """validate_query(query, None) catches a $param alignment error."""
+    """validate_cypher_query(query, None) catches a $param alignment error."""
 
     class StaleParams(BaseModel):
         movie_id: str
@@ -899,7 +902,7 @@ def test_cypher_query_validate_none_catches_param_alignment() -> None:
         # $title used in cypher_template but not declared on Params
         identifiers_schema=NoIdentifiers,
     )
-    result = validate_query(q, None)
+    result = validate_cypher_query(q, None)
     alignment_errors = [
         i for i in result.issues if i.code == "QUERY_PARAM_ALIGNMENT_ERROR"
     ]
@@ -913,15 +916,12 @@ def test_cypher_query_validate_none_catches_param_alignment() -> None:
 def test_cypher_query_validate_parity_with_typed_query(
     definition: GraphDefinition,
 ) -> None:
-    """validate_query(query, definition) produces same domain codes as typed query.
+    """validate_cypher_query(query, definition) produces same domain codes as typed query.
 
     Both paths call validate_cypher_spec; the domain (label/rel-type) codes must
     match. RETURN→Output codes are excluded — the simple path declares no Output
     by design, so only the shared syntactic+semantic axis is compared.
-    """
-    from typing import Any
-
-    from orthograph.cypher.base_models import CypherReadQuery
+    """  # NOQA E501
 
     _DOMAIN_CODES = {
         "QUERY_UNKNOWN_NODE_LABEL",
@@ -944,7 +944,7 @@ def test_cypher_query_validate_parity_with_typed_query(
         params_schema=ReleasedParams,
         identifiers_schema=NoIdentifiers,
     )
-    simple_result = validate_query(simple, definition)
+    simple_result = validate_cypher_query(simple, definition)
     simple_domain_codes = {
         i.code for i in simple_result.issues if i.code in _DOMAIN_CODES
     }

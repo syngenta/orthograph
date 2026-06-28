@@ -138,7 +138,9 @@ class MemgraphInspector(CypherInspector):
             # Truthful entity total via a property-independent count() — the only
             # honest denominator for completeness (never derive it from
             # present_count, which would fabricate completeness == 1.0).
-            label_total = self._fetch_node_count(connection, label)
+            label_total = self._fetch_node_count(
+                connection, label, MemgraphNodeCountQuery
+            )
             props: dict[str, PropertyProfile] = {}
             for r in prop_rows:
                 name = r.property_name
@@ -235,7 +237,7 @@ class MemgraphInspector(CypherInspector):
         """Build one profile for the ``(source, rel, target)`` shape."""
         # Per-shape edge total via an endpoint-filtered count().
         rel_total = self._fetch_rel_count(
-            connection, rel_type, source_label, target_label
+            connection, rel_type, source_label, target_label, MemgraphRelCountQuery
         )
         props: dict[str, PropertyProfile] = {}
         for r in prop_rows:
@@ -327,38 +329,6 @@ class MemgraphInspector(CypherInspector):
     # ------------------------------------------------------------------
     # Internal — value scan helpers
     # ------------------------------------------------------------------
-
-    def _fetch_node_count(self, connection: Any, label: str) -> int:
-        """Return the node count for ``label`` via a property-independent count().
-
-        Independent of properties: a label with no properties still has a
-        truthful instance count (the schema scan supplies none).  This is the
-        honest denominator for ``completeness`` — never derive a total from
-        ``present_count``.
-        """
-        rows = self._run_query(
-            connection, MemgraphNodeCountQuery, identifiers={"label": label}
-        )
-        return rows[0].count if rows else 0
-
-    def _fetch_rel_count(
-        self,
-        connection: Any,
-        rel_type: str,
-        source_label: str,
-        target_label: str,
-    ) -> int:
-        """Per-shape edge count via an endpoint-filtered count()."""
-        rows = self._run_query(
-            connection,
-            MemgraphRelCountQuery,
-            identifiers={
-                "source_label": source_label,
-                "rel_type": rel_type,
-                "target_label": target_label,
-            },
-        )
-        return rows[0].count if rows else 0
 
     def _fetch_node_value_scan(
         self,
@@ -457,7 +427,9 @@ class MemgraphInspector(CypherInspector):
         hist_rows: list[MemgraphValueHistogramRow] = [
             hist_query.materialize(r) for r in raw_rows
         ]
-        value_dist = _build_value_distribution(hist_rows, scan_present_count, top_n)
+        value_dist = self._build_value_distribution(
+            hist_rows, scan_present_count, top_n
+        )
         return type_counts, value_dist, scan_present_count
 
 
@@ -468,54 +440,3 @@ def validate_database(
     """Validate a Memgraph database against a GraphDefinition."""
     profile = MemgraphInspector().inspect(connection, graph_definition=graph_definition)
     return compare_profile_to_definition(profile, graph_definition)
-
-
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
-
-
-def _build_value_distribution(
-    hist_rows: list[MemgraphValueHistogramRow],
-    present_count: int,
-    top_n: int,
-) -> BoundedDistribution | None:
-    """Build a BoundedDistribution from scalar value-histogram rows.
-
-    The DB query already applies ``LIMIT $top_n``.  Because the histogram covers
-    **scalar values only** (``toStringOrNull`` drops lists/maps), its total can
-    be below the authoritative ``present_count``; the shortfall — whether from
-    truncation or from dropped non-scalar values — folds into ``other_count``.
-    Returns ``None`` when there are no rows.
-
-    Known cross-backend parity deviation (not identical
-    output).  Memgraph's histogram key is ``toStringOrNull`` (scalars only),
-    whereas Neo4j's APOC histogram key is ``apoc.convert.toJson`` (list/map
-    values are kept *in* the histogram).  Consequence: a property mixing scalars
-    and lists is reported ``sample_complete=False`` with the lists in
-    ``other_count`` on Memgraph, but ``sample_complete=True`` on Neo4j for the
-    same data.  ``observed_type_counts`` (the epic's primary deliverable) is
-    exact and parity-correct on both backends; only the *value histogram*'s
-    ``sample_complete``/``other_count`` differ.  Memgraph has no portable
-    list-safe scalar+list value key, so this is honest degradation, not a bug.
-    """
-    if not hist_rows or present_count == 0:
-        return None
-
-    histogram = {r.value: r.value_count for r in hist_rows}
-    top_total = sum(histogram.values())
-    sample_complete = top_total >= present_count
-
-    if sample_complete:
-        return BoundedDistribution(
-            count=present_count,
-            histogram=histogram,
-            sample_complete=True,
-        )
-    return BoundedDistribution(
-        count=present_count,
-        histogram=histogram,
-        sample_complete=False,
-        limit=top_n,
-        other_count=present_count - top_total,
-    )

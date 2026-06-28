@@ -22,16 +22,24 @@ from orthograph.graph_definition.models import (
 
 # Type alias for the (label, src_uid, tgt_uid, props) tuple used internally
 _RelRecord = tuple[str, str, str, dict[str, Any]]
+
+# Maps (uid, rel_label) → degree count.  Key: the counted node's uid paired with
+# the relationship label it participates in (e.g. ("n1", "KNOWS") → 3).
 _DegreeCounts = dict[tuple[str, str], int]
 
-# A partition value: the absolute (source-label-node, target-label-node)
-# discriminator key/value pairs, each side sorted by key so equal partitions
-# share one identity (absolute convention, both endpoints).
+# Sorted (key, value) pairs selected from one endpoint's properties.
+# Equal selections share one identity regardless of insertion order.
 _EndpointProps = tuple[tuple[str, object], ...]
+
+# Absolute partition key: (source-label-node discriminator props,
+# target-label-node discriminator props).  Always built in source-then-target
+# order regardless of side — the absolute convention (see the ``models`` module
+# docstring, the one place the convention is stated).
 _Partition = tuple[_EndpointProps, _EndpointProps]
 
-# Partitioned counts: maps (uid, rel_label) → {partition → count}. Populated
-# only for relationship sides whose cardinality is ConditionalCardinality.
+# Maps (uid, rel_label) → {partition → count}.  Key: the counted node's uid
+# paired with the relationship label; value: per-partition degree counts.
+# Populated only for sides whose cardinality is ConditionalCardinality.
 _PartitionCounts = dict[tuple[str, str], dict[_Partition, int]]
 
 
@@ -253,23 +261,17 @@ def _select(props: Mapping[str, object], keys: frozenset[str]) -> _EndpointProps
 def _partition_endpoints(
     partition: _Partition,
 ) -> tuple[dict[str, object], dict[str, object]]:
-    """Split a partition into (source-label props, target-label props) dicts."""
+    """Split a partition into (source-label props, target-label props) dicts.
+
+    The fixed source-then-target order is the absolute convention (see the
+    ``models`` module docstring).
+    """
     src, tgt = partition
     return dict(src), dict(tgt)
 
 
-def _counted_props(partition: _Partition, side: str) -> dict[str, object]:
-    """Return the counted node's discriminator props for *side* (absolute convention).
-
-    The counted node is the source-label node on the ``"source"`` side and the
-    target-label node on the ``"target"`` side.
-    """
-    src_props, tgt_props = _partition_endpoints(partition)
-    return src_props if side == "source" else tgt_props
-
-
 def _node_matches_any_rule(
-    card: ConditionalCardinality, side: str, self_props: Mapping[str, object]
+    card: ConditionalCardinality, side: str, counted_node_props: Mapping[str, object]
 ) -> bool:
     """Return True when some rule's counted-endpoint predicate matches this node.
 
@@ -279,13 +281,13 @@ def _node_matches_any_rule(
     """
     for rule in card.rules:
         own = rule.source if side == "source" else rule.target
-        if own.matches(self_props):
+        if own.matches(counted_node_props):
             return True
     return False
 
 
 def _declared_partitions(
-    card: ConditionalCardinality, side: str, self_props: Mapping[str, object]
+    card: ConditionalCardinality, side: str, counted_node_props: Mapping[str, object]
 ) -> set[_Partition]:
     """Return partitions a rule pins for this node so a missing one is checked.
 
@@ -304,11 +306,11 @@ def _declared_partitions(
     for rule in card.rules:
         own = rule.source if side == "source" else rule.target
         other = rule.target if side == "source" else rule.source
-        if not own.matches(self_props):
+        if not own.matches(counted_node_props):
             continue
         if not other_keys <= other.conditions.keys():
             continue
-        self_sel = _select(self_props, self_keys)
+        self_sel = _select(counted_node_props, self_keys)
         other_sel = tuple(sorted((k, other.conditions[k]) for k in other_keys))
         partition = (self_sel, other_sel) if side == "source" else (other_sel, self_sel)
         partitions.add(partition)
@@ -381,11 +383,11 @@ def _unmatched_kind_issue(
     node_label: str,
     rel_label: str,
     side: str,
-    self_props: Mapping[str, object],
+    counted_node_props: Mapping[str, object],
     card: ConditionalCardinality,
 ) -> ValidationIssue:
     """Build the CARDINALITY_UNMATCHED_KIND INFO for an unmodelled discriminator."""
-    val = _discriminator_value(self_props, _counted_keys(card, side))
+    val = _discriminator_value(counted_node_props, _counted_keys(card, side))
     role = "source" if side == "source" else "target"
     return ValidationIssue(
         code="CARDINALITY_UNMATCHED_KIND",
@@ -409,7 +411,7 @@ def _default_floor_issue(
     node_label: str,
     rel_label: str,
     side: str,
-    self_props: Mapping[str, object],
+    counted_node_props: Mapping[str, object],
     spec: CardinalitySpec,
     total: int,
     card: ConditionalCardinality,
@@ -425,7 +427,7 @@ def _default_floor_issue(
     """
     if spec.contains(total):
         return None
-    val = _discriminator_value(self_props, _counted_keys(card, side))
+    val = _discriminator_value(counted_node_props, _counted_keys(card, side))
     role = "source" if side == "source" else "target"
     direction = "outgoing" if side == "source" else "incoming"
     max_str = "*" if spec.max is None else str(spec.max)
@@ -454,7 +456,7 @@ def _default_floor_issue(
 def _check_conditional_side(
     uid: str,
     node_label: str,
-    self_props: Mapping[str, object],
+    counted_node_props: Mapping[str, object],
     rel_type: type[RelationshipModel],
     side: str,
     card: ConditionalCardinality,
@@ -470,14 +472,13 @@ def _check_conditional_side(
     not silently skipped) and a CARDINALITY_UNMATCHED_KIND INFO is emitted.
     """
     issues: list[ValidationIssue] = []
-    partitions = set(observed) | _declared_partitions(card, side, self_props)
+    partitions = set(observed) | _declared_partitions(card, side, counted_node_props)
 
     for partition in partitions:
-        # Absolute convention: resolve always takes
-        # (source-label-node props, target-label-node props); rule.source is
-        # matched against arg 1, rule.target against arg 2, regardless of side.
-        src_props, tgt_props = _partition_endpoints(partition)
-        spec = card.resolve_for_pair(src_props, tgt_props)
+        # ``resolve_for_pair`` takes (source-label props, target-label props) in
+        # that fixed order — the absolute convention (``models`` module docstring).
+        source_side_props, target_side_props = _partition_endpoints(partition)
+        spec = card.resolve_for_pair(source_side_props, target_side_props)
         count = observed.get(partition, 0)
         if not spec.contains(count):
             issues.append(
@@ -493,13 +494,13 @@ def _check_conditional_side(
                 )
             )
 
-    if not _node_matches_any_rule(card, side, self_props):
+    if not _node_matches_any_rule(card, side, counted_node_props):
         floor = _default_floor_issue(
             uid,
             node_label,
             rel_type.__label__,
             side,
-            self_props,
+            counted_node_props,
             card.default,
             total,
             card,
@@ -508,7 +509,7 @@ def _check_conditional_side(
             issues.append(floor)
         issues.append(
             _unmatched_kind_issue(
-                uid, node_label, rel_type.__label__, side, self_props, card
+                uid, node_label, rel_type.__label__, side, counted_node_props, card
             )
         )
 
@@ -567,6 +568,33 @@ def _extra_properties_issue(
     )
 
 
+def _validate_props(
+    entity_type: EntityType,
+    entity_id: str,
+    model_type: type[NodeModel] | type[RelationshipModel],
+    props: dict[str, Any],
+    result: "ValidationResult",
+) -> bool:
+    """Run the extra-props → pydantic guard ladder for one entity.
+
+    Adds any issues to *result*. Returns ``False`` when extra properties are
+    found (caller should ``continue`` — the entity is unindexable). Returns
+    ``True`` when props are within the declared set (pydantic errors are added
+    but do not skip indexing/collecting).
+    """
+    extra = set(props.keys()) - model_type.get_all_property_names()
+    if extra:
+        result.add(_extra_properties_issue(entity_type, entity_id, extra))
+        return False
+
+    try:
+        model_type.model_validate(props)
+    except PydanticValidationError as e:
+        for issue in _pydantic_issues(entity_type, entity_id, e):
+            result.add(issue)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Conditional-cardinality partitioning helpers
 # ---------------------------------------------------------------------------
@@ -580,8 +608,8 @@ def _absolute_partition(
     """Build the absolute (source-label props, target-label props) partition key.
 
     Selects, from each endpoint, the keys any rule discriminates on for that
-    endpoint (absolute convention). A dangling/absent endpoint
-    reads its selected keys as ``None``.
+    endpoint (the absolute convention; see the ``models`` module docstring). A
+    dangling/absent endpoint reads its selected keys as ``None``.
     """
     src_props = src_node.props if src_node is not None else {}
     tgt_props = tgt_node.props if tgt_node is not None else {}
@@ -628,7 +656,7 @@ def _partition_counts(
             continue
         src_node = node_index.get(src_uid)
         tgt_node = node_index.get(tgt_uid)
-        src_card = rel_type.__source_cardinality__
+        src_card = rel_type.source_cardinality()
         if isinstance(src_card, ConditionalCardinality):
             _accumulate_partition(
                 partitioned,
@@ -638,7 +666,7 @@ def _partition_counts(
                 src_node,
                 tgt_node,
             )
-        tgt_card = rel_type.__target_cardinality__
+        tgt_card = rel_type.target_cardinality()
         if isinstance(tgt_card, ConditionalCardinality):
             _accumulate_partition(
                 partitioned,
@@ -677,11 +705,48 @@ def _count_rel_degrees(
     return outgoing, incoming, undirected
 
 
+def _check_one_side(
+    uid: str,
+    node_label: str,
+    counted_node_props: Mapping[str, object],
+    rel_type: type[RelationshipModel],
+    side: str,
+    card: CardinalitySpec | ConditionalCardinality,
+    direction: str,
+    constant_count: int,
+    observed_partitions: dict[_Partition, int],
+    total: int,
+) -> list[ValidationIssue]:
+    """Check one cardinality side (source or target) of a single node.
+
+    A :class:`ConditionalCardinality` takes the partitioned per-pair path; a
+    constant bound takes the single-count path. ``direction`` and the counts are
+    resolved by the caller because they differ per side (an undirected rel is
+    counted as a node's *total* degree, a directed one by its outgoing/incoming
+    degree).
+    """
+    if isinstance(card, ConditionalCardinality):
+        return _check_conditional_side(
+            uid,
+            node_label,
+            counted_node_props,
+            rel_type,
+            side,
+            card,
+            observed_partitions,
+            total,
+        )
+    issue = _cardinality_violation_issue(
+        uid, node_label, rel_type, direction, constant_count
+    )
+    return [issue] if issue is not None else []
+
+
 def _check_node_cardinality(
     uid: str,
     node_label: str,
     node_type: Any,
-    self_props: Mapping[str, object],
+    counted_node_props: Mapping[str, object],
     graph_definition: GraphDefinition,
     outgoing: _DegreeCounts,
     incoming: _DegreeCounts,
@@ -690,47 +755,53 @@ def _check_node_cardinality(
 ) -> list[ValidationIssue]:
     """Return cardinality violations for a single node across all its rel types.
 
-    A directed side whose cardinality is :class:`ConditionalCardinality` takes
-    the partitioned per-pair path; every other side keeps the unchanged
-    single-count path.
+    Reads as: for each outgoing rel check the source side; for each incoming
+    *directed* rel check the target side. The directed/undirected distinction
+    only matters on the outgoing walk — an undirected rel is counted as the
+    node's total degree (and skipped on the incoming walk so it is not counted
+    twice). :func:`_check_one_side` owns the constant-vs-conditional decision.
     """
     issues: list[ValidationIssue] = []
 
     for rel_type in graph_definition.get_outgoing_relationship_types(node_type):
-        card = rel_type.__source_cardinality__
-        if rel_type.__directed__ and isinstance(card, ConditionalCardinality):
-            observed = partitioned.get((uid, rel_type.__label__), {})
-            total = outgoing.get((uid, rel_type.__label__), 0)
-            issues += _check_conditional_side(
-                uid, node_label, self_props, rel_type, "source", card, observed, total
-            )
-            continue
-        direction = "total" if not rel_type.__directed__ else "outgoing"
-        counts = undirected if not rel_type.__directed__ else outgoing
-        count = counts.get((uid, rel_type.__label__), 0)
-        issue = _cardinality_violation_issue(
-            uid, node_label, rel_type, direction, count
+        is_undirected = not rel_type.__directed__
+        # A conditional side only partitions when the rel is directed; an
+        # undirected side resolves through the constant path below.
+        card: CardinalitySpec | ConditionalCardinality = (
+            representative_spec(rel_type.source_cardinality())
+            if is_undirected
+            else rel_type.source_cardinality()
         )
-        if issue is not None:
-            issues.append(issue)
+        issues += _check_one_side(
+            uid,
+            node_label,
+            counted_node_props,
+            rel_type,
+            "source",
+            card,
+            direction="total" if is_undirected else "outgoing",
+            constant_count=(undirected if is_undirected else outgoing).get(
+                (uid, rel_type.__label__), 0
+            ),
+            observed_partitions=partitioned.get((uid, rel_type.__label__), {}),
+            total=outgoing.get((uid, rel_type.__label__), 0),
+        )
 
     for rel_type in graph_definition.get_incoming_relationship_types(node_type):
         if not rel_type.__directed__:
             continue
-        card = rel_type.__target_cardinality__
-        if isinstance(card, ConditionalCardinality):
-            observed = partitioned.get((uid, rel_type.__label__), {})
-            total = incoming.get((uid, rel_type.__label__), 0)
-            issues += _check_conditional_side(
-                uid, node_label, self_props, rel_type, "target", card, observed, total
-            )
-            continue
-        count = incoming.get((uid, rel_type.__label__), 0)
-        issue = _cardinality_violation_issue(
-            uid, node_label, rel_type, "incoming", count
+        issues += _check_one_side(
+            uid,
+            node_label,
+            counted_node_props,
+            rel_type,
+            "target",
+            rel_type.target_cardinality(),
+            direction="incoming",
+            constant_count=incoming.get((uid, rel_type.__label__), 0),
+            observed_partitions=partitioned.get((uid, rel_type.__label__), {}),
+            total=incoming.get((uid, rel_type.__label__), 0),
         )
-        if issue is not None:
-            issues.append(issue)
 
     return issues
 
@@ -834,16 +905,10 @@ class GraphValidator:
                 continue
 
             entity_id = f"node[{i}]:{label}"
-            extra = set(props.keys()) - node_type.get_all_property_names()
-            if extra:
-                result.add(_extra_properties_issue(EntityType.NODE, entity_id, extra))
+            if not _validate_props(
+                EntityType.NODE, entity_id, node_type, props, result
+            ):
                 continue
-
-            try:
-                node_type.model_validate(props)
-            except PydanticValidationError as e:
-                for issue in _pydantic_issues(EntityType.NODE, entity_id, e):
-                    result.add(issue)
 
             uid_field = node_type.__uid_field__
             if uid_field and uid_field in props:
@@ -909,18 +974,10 @@ class GraphValidator:
                 continue
 
             entity_id = f"rel[{i}]:{label}"
-            extra = set(props.keys()) - rel_type.get_all_property_names()
-            if extra:
-                result.add(
-                    _extra_properties_issue(EntityType.RELATIONSHIP, entity_id, extra)
-                )
+            if not _validate_props(
+                EntityType.RELATIONSHIP, entity_id, rel_type, props, result
+            ):
                 continue
-
-            try:
-                rel_type.model_validate(props)
-            except PydanticValidationError as e:
-                for issue in _pydantic_issues(EntityType.RELATIONSHIP, entity_id, e):
-                    result.add(issue)
 
             records.append((label, str(src_uid), str(tgt_uid), props))
 

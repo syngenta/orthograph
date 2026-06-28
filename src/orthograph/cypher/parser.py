@@ -9,7 +9,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from graphglot.dialect import Dialect
 from graphglot.lineage import LineageAnalyzer
-from graphglot.lineage.models import BindingKind, LineageGraph
+from graphglot.lineage.models import BindingKind, LineageGraph, LineageNode
 
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.diagnostics.result import ValidationIssue, ValidationResult
@@ -221,22 +221,16 @@ class GraphglotParser:
     def _extract_return_columns(self, lg: LineageGraph) -> list[ReturnColumn] | None:
         """Classify each RETURN output column.
 
-        Returns ``None`` to signal that the alignment check should be skipped,
-        which happens when:
+        Reads as the algorithm spec:
 
-        * The RETURN clause projects nothing (``RETURN *`` — graphglot emits
-          zero output nodes for wildcard projections).
-        * Any output field is flagged as aggregated (e.g. ``count(m)``).
+        * ``RETURN *`` (graphglot emits no output nodes) → skip the check.
+        * Any aggregated output (e.g. ``count(m)``) → skip the check.
+        * Otherwise, for each output column: resolve its upstream neighbour,
+          classify it, and keep the result if classifiable.
 
-        For each output node the method resolves its upstream neighbour:
-        * A ``PropertyRef`` neighbour → ``SCALAR`` column.
-        * A ``Binding`` with ``kind == NODE`` → ``WHOLE_NODE`` column carrying the
-          resolved label.
-        * A ``Binding`` with ``kind == EDGE`` → ``WHOLE_REL`` column carrying the
-          resolved relationship type.
-        Columns with no resolvable neighbour (e.g. literal expressions) are
-        silently omitted; the caller is free to treat a shorter-than-expected list
-        as an unverifiable case.
+        Returns ``None`` to signal the alignment check should be skipped; an
+        unclassifiable column is dropped (the list may be shorter than the
+        RETURN clause), which the caller treats as an unverifiable case.
         """
         output_ids = list(lg.outputs)
 
@@ -252,59 +246,71 @@ class GraphglotParser:
             if node.is_aggregated:
                 return None
 
-            # Determine the alias (if any) — used as the column name for scalars
-            # and aliased whole-node/whole-rel projections.
+            # Alias (if any) names scalars and aliased whole-node/whole-rel cols.
             alias: str | None = node.alias if node.alias else None
 
-            # Walk the edges to find the connected upstream node.
-            for edge in lg.edges:
-                if edge.source_id == oid or edge.target_id == oid:
-                    other_id = (
-                        edge.target_id if edge.source_id == oid else edge.source_id
-                    )
-                    other = lg.nodes.get(other_id)
-                    if other is None:
-                        continue
-
-                    if hasattr(other, "property_name"):
-                        # Scalar property projection.
-                        col_name = alias or other.property_name
-                        columns.append(
-                            ReturnColumn(
-                                name=col_name, kind=ReturnKind.SCALAR, label=None
-                            )
-                        )
-                        break
-
-                    if hasattr(other, "kind"):
-                        # Binding — whole-node or whole-rel.
-                        label_str = (
-                            str(other.label_expression)
-                            if other.label_expression
-                            else None
-                        )
-                        col_name = alias or (other.name if other.name else "")
-                        if not col_name:
-                            break
-                        if other.kind == BindingKind.NODE:
-                            columns.append(
-                                ReturnColumn(
-                                    name=col_name,
-                                    kind=ReturnKind.WHOLE_NODE,
-                                    label=label_str,
-                                )
-                            )
-                        elif other.kind == BindingKind.EDGE:
-                            columns.append(
-                                ReturnColumn(
-                                    name=col_name,
-                                    kind=ReturnKind.WHOLE_REL,
-                                    label=label_str,
-                                )
-                            )
-                        break
+            neighbour = self._resolve_output_neighbour(oid, lg)
+            if neighbour is None:
+                continue
+            column = self._classify_return_neighbour(neighbour, alias)
+            if column is not None:
+                columns.append(column)
 
         return columns
+
+    @staticmethod
+    def _resolve_output_neighbour(oid: str, lg: LineageGraph) -> LineageNode | None:
+        """Return the first existing node connected to output *oid* by an edge.
+
+        ``None`` when no edge touches *oid* or the connected node is missing.
+        """
+        for edge in lg.edges:
+            if edge.source_id == oid or edge.target_id == oid:
+                other_id = edge.target_id if edge.source_id == oid else edge.source_id
+                other = lg.nodes.get(other_id)
+                if other is not None:
+                    return other
+        return None
+
+    @staticmethod
+    def _classify_return_neighbour(
+        neighbour: LineageNode, alias: str | None
+    ) -> ReturnColumn | None:
+        """Classify a resolved RETURN-output neighbour into a :class:`ReturnColumn`.
+
+        * ``PropertyRef`` (has ``property_name``) → ``SCALAR``.
+        * ``Binding`` (has ``kind``) with ``NODE`` → ``WHOLE_NODE``, ``EDGE`` →
+          ``WHOLE_REL``, carrying the resolved label/type.
+        * Anything else, or a binding with no resolvable name (e.g. a literal
+          expression) → cannot classify, return ``None`` to skip the column.
+        """
+        if hasattr(neighbour, "property_name"):
+            # Scalar property projection.
+            return ReturnColumn(
+                name=alias or neighbour.property_name,
+                kind=ReturnKind.SCALAR,
+                label=None,
+            )
+
+        if hasattr(neighbour, "kind"):
+            # Binding — whole-node or whole-rel.
+            col_name = alias or (neighbour.name if neighbour.name else "")
+            if not col_name:
+                return None
+            label_str = (
+                str(neighbour.label_expression) if neighbour.label_expression else None
+            )
+            if neighbour.kind == BindingKind.NODE:
+                return ReturnColumn(
+                    name=col_name, kind=ReturnKind.WHOLE_NODE, label=label_str
+                )
+            if neighbour.kind == BindingKind.EDGE:
+                return ReturnColumn(
+                    name=col_name, kind=ReturnKind.WHOLE_REL, label=label_str
+                )
+
+        # Cannot classify (literal, unknown binding kind, …) → skip the column.
+        return None
 
 
 # --- Module-level default parser ---

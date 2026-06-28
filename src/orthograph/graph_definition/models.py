@@ -1,4 +1,15 @@
-"""NodeModel and RelationshipModel base classes for defining graph types."""
+"""NodeModel and RelationshipModel base classes for defining graph types.
+
+**The absolute convention.** ``rule.source`` always describes the
+relationship's source-label node and ``rule.target`` the target-label node — for
+BOTH the source and target cardinality side. Consequently
+``ConditionalCardinality.resolve_for_pair`` and every conditional-cardinality
+partition key are always built in ``(source-label-node props, target-label-node
+props)`` order, regardless of which side is being checked; the "counted" node is
+the source-label node on the source side and the target-label node on the target
+side. Helpers across the cardinality code follow this convention and refer back
+to it by name.
+"""
 
 import enum
 import inspect
@@ -450,6 +461,10 @@ class ConditionalCardinality(BaseModel):
         other_props: Mapping[str, object],
     ) -> CardinalitySpec:
         """Return the cardinality spec for the given endpoint property pair.
+
+        Arguments follow the absolute convention (see this module's docstring):
+        ``self_props`` is the source-label node's props, ``other_props`` the
+        target-label node's, regardless of which cardinality side is resolved.
 
         Raises :exc:`AmbiguousCardinalityError` when two rules of equal
         top specificity both match (defence-in-depth; prevented at definition

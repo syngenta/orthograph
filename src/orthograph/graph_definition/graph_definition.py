@@ -255,14 +255,15 @@ class GraphDefinition:
             src_node = self.get_node_type(rt.__source_label__)
             tgt_node = self.get_node_type(rt.__target_label__)
 
-            # Absolute convention: rule.source always describes the
-            # source-label node, rule.target the target-label node — for BOTH the
-            # source and target cardinality. The checks validate rule.source
-            # against the first node and rule.target against the second, so both
-            # sides pass (src_node, tgt_node) in that fixed order.
+            # The absolute convention (see the graph_definition.models module
+            # docstring): rule.source always describes the source-label node,
+            # rule.target the target-label node — for BOTH the source and target
+            # cardinality. The checks validate rule.source against the first node
+            # and rule.target against the second, so both sides pass
+            # (src_node, tgt_node) in that fixed order.
             sides = [
-                ("source", rt.__source_cardinality__),
-                ("target", rt.__target_cardinality__),
+                ("source", rt.source_cardinality()),
+                ("target", rt.target_cardinality()),
             ]
             for side, card in sides:
                 if not isinstance(card, ConditionalCardinality):

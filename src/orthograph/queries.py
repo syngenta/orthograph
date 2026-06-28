@@ -165,7 +165,7 @@ def validate_query(
     :class:`~orthograph.diagnostics.result.ValidationResult`.
     """
     if isinstance(query, CypherQuery):
-        return _cypher_validation.validate_query(query, definition)
+        return _cypher_validation.validate_cypher_query(query, definition)
     return validate_cypher(query=query, graph_definition=definition)
 
 
