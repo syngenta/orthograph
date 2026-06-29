@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,6 +9,7 @@ from typing import Any
 
 import networkx as nx
 
+from orthograph.diagnostics.logging import get_logger
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import (
     ConditionalCardinality,
@@ -29,7 +29,7 @@ from orthograph.graph_profile.models import (
 )
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Default maximum distinct values kept in value_distribution.histogram.
 # Set to None or 0 to disable value_distribution entirely.
