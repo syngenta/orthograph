@@ -125,259 +125,779 @@ number after $`. `SKIP $skip` parses; `LIMIT $limit`, `LIMIT toInteger($limit)`,
 
 ---
 
-## Error Hierarchy & Library Logging Discipline
-
-> **Forward note — ADR-017 (2026-06-12) re-paths this section's file targets.**
-> ADR-017 renames `core/` → `graph_definition/` and extracts the validation
-> result currency to a new `diagnostics/` package. This section is **not
-> contradicted** — its decisions (an `OrthographError` root; a `get_logger` +
-> `NullHandler` convention) still stand — but its *destinations move*:
-> - the project-wide `OrthographError` root and `get_logger`/logging helper are
->   **cross-cutting infrastructure**, so under ADR-017 they belong in a shared
->   home (alongside or near `diagnostics/`), **not** inside the renamed
->   definition package `graph_definition/`. Treat the `core/exceptions.py` /
->   `core/logging.py` paths below as **`diagnostics/`-adjacent** when this epic
->   is executed.
-> - the ADR numbers cited below (`011-error-hierarchy.md`, `012-library-logging.md`)
->   are **stale** — those numbers are already taken (ADR-011 = capability seams,
->   ADR-012 = optional-dependency policy). Allocate the next free numbers when
->   picked up.
-> - the `extensions/cypher/` and `extensions/networkx/` paths below predate the
->   E25 split (now `cypher/` and `backends/networkx/`).
-> Do **not** revert ADR-017. When this section is executed, target the
-> post-ADR-017 topology.
-
+## Error Hierarchy & Library Logging Discipline (tasks E20.1 – E20.11)
 
 > **Origin:** E17 refactor session 2026-06-10 (Cypher exception hierarchy introduced; surfaced
-> the absence of a project-wide exception root and any logging convention).
-> **Relates to:** PRD Problem Statement ("applications fail silently"), PRD Constraint 1
-> (DB-agnostic core), PRD Constraint 13 (Orthograph never owns a connection — it is a library,
-> not an application), ADR-008 (Cypher identifier safety — raises on unsafe input).
+> the absence of a project-wide exception root and any logging convention). Re-pathed onto the
+> post-ADR-017 / post-ADR-041 topology and re-cut into context-free, model-tagged tasks on
+> 2026-06-29.
 >
-> **SCOPE NOTE:** This section establishes two cross-cutting foundations and migrates the existing
-> code onto them. It does NOT invent new diagnostics features, a metrics system, structured-event
-> emission, or any application-level observability. The library emits diagnostics through the
-> standard `logging` module and raises a coherent exception hierarchy; configuring sinks, levels,
-> and formatting remains the consuming application's responsibility.
+> **Relates to:** PRD Problem Statement ("applications fail silently"), PRD Constraint 13
+> (Orthograph never owns a connection — it is a library, not an application), ADR-017 (package
+> topology — `diagnostics/` is the dependency-free shared layer), ADR-041 (root capability
+> modules; the `api/` layer was removed; root modules are thin re-export shims over subpackages).
+>
+> **SCOPE NOTE:** Establishes two cross-cutting foundations and migrates existing code onto them.
+> Does NOT invent diagnostics features, metrics, structured-event emission, or application-level
+> observability. The library emits diagnostics through the stdlib `logging` module and raises a
+> coherent exception hierarchy; configuring sinks, levels, and formatting remains the consuming
+> application's responsibility.
 
----
+### Standing decisions (do not re-litigate — they are inputs to the tasks below)
 
-### Context
+- **D1. Single root.** Every error Orthograph raises derives from `OrthographError`, directly or
+  via a mid-tier base. A consumer can `except OrthographError` to isolate all library errors.
+- **D2. Three mid-tier groups by *kind*** (not by subpackage):
+  - `OrthographUsageError` — the caller misused the API / definitions / queries.
+  - `OrthographValidationError` — a graph or data set failed validation.
+  - `OrthographBackendError` — a live-DB / driver / optional-dependency problem.
+  Concrete and subpackage-base exceptions reparent under the appropriate *kind*.
+- **D3. Real code lives in `diagnostics/`** (the dependency-free shared layer, ADR-017):
+  `diagnostics/errors.py` and `diagnostics/logging.py`. The root modules `orthograph/errors.py`
+  and `orthograph/logging.py` are **thin re-export shims** mirroring the capability-module
+  pattern (ADR-041).
+- **D4. Differentiation is by subclass + message**, never by docstring "possible causes" lists
+  (the E17 anti-stale-docstring rule, project-wide).
+- **D5. Library logging hygiene.** Attach a `logging.NullHandler` to the top-level `orthograph`
+  logger. Never call `basicConfig`, never add non-null handlers, never set levels on any logger,
+  never `print` for diagnostics. Loggers are named by module `__name__` under the `orthograph.*`
+  tree, obtained via `get_logger`.
+- **D6. Self-logging error→log bridge.** `OrthographError.__init__` logs itself once, at a
+  per-class `log_level` (default `logging.DEBUG`). `OrthographBackendError` raises that to
+  `logging.ERROR`; `MissingDependencyError` overrides back to `logging.DEBUG` (it is expected
+  during backend probing). Rationale: every raised error leaves a trace without the noise/
+  double-logging that an unconditional ERROR-on-construct would cause. (Decided in ADR-047.)
+- **D7. raise vs warn vs log.** *raise* (hierarchy) for caller errors the caller must handle;
+  `warnings.warn` for authoring advisories a developer should see once (the existing imperative-
+  query `UserWarning` in `cypher/base_models.py` and the `DeprecationWarning` in
+  `backends/neo4j/inspector.py` stay as-is); `logging` for operational events (skipped record,
+  fallback chosen, retry).
+- **D8. ADR numbers.** Allocate **ADR-047** (error hierarchy) and **ADR-048** (library logging).
+  The numbers 011/012 cited in older notes are stale (already taken).
+- **D9. Builtin boundary.** Prefer the hierarchy over `TypeError`/`ValueError` for *library-domain*
+  errors; leave genuinely generic type/value misuse as builtins where that is the honest signal.
 
-Two cross-cutting concerns have grown ad-hoc and now warrant a deliberate, one-time foundation:
-
-1. **Exception hierarchy.** The Cypher extension recently gained a package base
-   (`CypherError`) with `CypherQueryDefinitionError` / `CypherSyntaxError` inheriting it (E17
-   refactor). No equivalent root exists elsewhere: `core/` and the other extensions raise bare
-   `TypeError` / `ValueError` / `Exception`, so a consumer cannot catch "any Orthograph error"
-   or reason about error provenance. There is no project-wide base to hang subpackage bases off.
-
-2. **Logging.** Logging is incidental, not designed. Today only
-   `extensions/networkx/inspector.py` calls `logging.getLogger(__name__)` (one `warning`). There
-   is no convention for *when* to log vs raise vs warn, no `NullHandler` guard (a library must
-   never configure the root logger or emit to a handler the application did not opt into), and no
-   guidance separating user-facing `warnings.warn` (already used for imperative-query definitions
-   in `cypher/base_models.py`) from operational `logging`.
-
-The PRD's founding problem is that consuming applications "fail silently." A library whose own
-diagnostics are inconsistent undercuts that mission. This epic makes both foundations explicit,
-documents them, and migrates existing call sites — without expanding scope into
-application-level observability.
-
----
-
-### Why This Is Needed
-
-- **Catchability.** A consumer should be able to `except OrthographError` to isolate every error
-  this library raises from errors raised by their own code or third-party drivers.
-- **Provenance + differentiation.** Errors should be differentiated by *subclass and message*,
-  not by docstring inventories that go stale. (E17 already established this pattern for Cypher.)
-- **Library hygiene.** A library must attach a `NullHandler` and never configure logging; the
-  current ad-hoc `getLogger` usage has no such guard and no shared convention.
-- **Consistency.** Without a single decision, every future extension reinvents both, drifting
-  apart again — exactly the redundancy E2 set out to prevent, but for cross-cutting concerns.
-
----
-
-### Implementation Order (build in this sequence)
+### Execution order & dependencies
 
 ```
-STEP 1 — Exception hierarchy        (T1, T2, T3)   define root → adopt in subpackages → migrate raises
-STEP 2 — Logging discipline + ADR   (T4, T5)       decide policy + helper → migrate call sites
-STEP 3 — Documentation              (T6)           CONTEXT/PRD cross-links; developer guidance
-─────────────────────────────────────────────────────────────────────────────────────────────
+E20.1  diagnostics/logging.py   (real logging helper)        ── independent
+E20.2  __init__.py NullHandler  (depends on E20.1)
+E20.3  diagnostics/errors.py    (root + mid-tier + self-log)  (depends on E20.1)
+E20.4  reparent GraphValidationError       (depends on E20.3)
+E20.5  reparent CypherError                (depends on E20.3)
+E20.6  reparent ModelDefinitionError       (depends on E20.3)
+E20.7  reparent MissingDependencyError     (depends on E20.3)
+E20.8  orthograph/errors.py shim           (depends on E20.4–E20.7)
+E20.9  orthograph/logging.py shim          (depends on E20.1)
+E20.10 migrate networkx inspector logger   (depends on E20.1)
+E20.11 ADR-047 + ADR-048 + CONTEXT links   (depends on E20.3, E20.1; do last)
 ```
 
-Files likely touched:
+Each task below is self-contained: it states exactly which file to touch, the current content,
+the new content, and how to verify. An executing agent needs no context beyond its own task.
+
+---
+
+### E20.1 — Create `diagnostics/logging.py` logging helper  · model: **haiku**
+
+**File to CREATE:** `src/orthograph/diagnostics/logging.py`
+
+**Why:** Give the library one entry point for obtaining a logger, named under the `orthograph.*`
+tree. Pure stdlib wrapper, no dependencies.
+
+**Exact content to write:**
+
+```python
+"""Library logging helper (dependency-free).
+
+Orthograph is a library, not an application: it never configures logging,
+sets levels, or adds handlers. It only obtains named loggers under the
+``orthograph.*`` tree via :func:`get_logger`. The consuming application owns
+all sink/level/format configuration. A ``NullHandler`` is attached to the
+top-level ``orthograph`` logger in ``orthograph/__init__.py`` so the library
+emits nothing unless the application opts in.
+"""
+
+import logging
+
+
+def get_logger(name: str) -> logging.Logger:
+    """Return the stdlib logger named ``name``.
+
+    Call as ``get_logger(__name__)`` so the logger sits under the
+    ``orthograph.*`` name tree (e.g. ``orthograph.cypher.validation``).
+    """
+    return logging.getLogger(name)
 ```
-src/orthograph/core/exceptions.py                  NEW — OrthographError root (T1)
-src/orthograph/extensions/cypher/exceptions.py     CypherError reparented under root (T2)
-src/orthograph/<subpackages>/exceptions.py         NEW per-subpackage bases as needed (T2)
-src/orthograph/**/*.py                             bare raises migrated to the hierarchy (T3)
-src/orthograph/core/logging.py                     NEW — get_logger() + NullHandler convention (T4)
-src/orthograph/extensions/networkx/inspector.py    migrated to the convention (T5)
-.agentic/decisions/011-error-hierarchy.md          NEW (T1/T2)
-.agentic/decisions/012-library-logging.md          NEW (T4)
-tests/core/test_exceptions.py                      NEW (T1)
-tests/core/test_logging.py                         NEW (T4)
+
+**Verify:**
+- `python -c "from orthograph.diagnostics.logging import get_logger; print(get_logger('orthograph.x').name)"`
+  prints `orthograph.x`.
+- `ruff check src/orthograph/diagnostics/logging.py` clean.
+
+**Acceptance criteria:**
+- [ ] File exists with exactly the content above.
+- [ ] Import works; `get_logger("orthograph.x").name == "orthograph.x"`.
+
+---
+
+### E20.2 — Attach a `NullHandler` to the `orthograph` logger  · model: **haiku**
+
+**Depends on:** E20.1.
+**File to EDIT:** `src/orthograph/__init__.py`
+
+**Why:** A library must never emit to a handler the application did not opt into. A single
+`NullHandler` on the top-level `orthograph` logger guarantees silence by default.
+
+**Current relevant content (around line 42):**
+
+```python
+import importlib.metadata
+
+from orthograph import (  # noqa: F401  (re-exported as public surface)
+    compare,
+    definition,
+    discovery,
+    execution,
+    profile,
+    queries,
+    rendering,
+)
 ```
 
----
+**Change:** Immediately AFTER the line `import importlib.metadata`, insert these two lines:
 
-### STEP 1 — Exception hierarchy
+```python
+import logging as _logging
 
-#### T1: Define the `OrthographError` root and record the decision
+_logging.getLogger("orthograph").addHandler(_logging.NullHandler())
+```
 
-**What:** A single project-wide base exception that every Orthograph-raised error derives from,
-directly or via a subpackage base.
+Use the alias `_logging` to avoid any name clash with the future `orthograph.logging`
+submodule (E20.9) and to keep it out of the public namespace.
 
-**Actions:**
-1. Create `src/orthograph/core/exceptions.py` with `class OrthographError(Exception)`. No
-   behaviour beyond being a catchable root; the message carries specifics (no fixed cause-lists —
-   the E17 anti-stale-docstring rule applies project-wide).
-2. Decide and record in `.agentic/decisions/011-error-hierarchy.md`:
-   - the root (`OrthographError`) and the two-level shape (root → subpackage base → concrete),
-   - the rule that differentiation is by **subclass and message**, never by docstring inventory,
-   - the policy on inheriting builtins: prefer the hierarchy over `TypeError`/`ValueError` for
-     *library-domain* errors, while leaving genuinely generic type/value misuse as builtins where
-     that is the honest signal (record the boundary so it is not re-litigated per PR),
-   - the rejected alternative (no root / bare builtins everywhere) and why.
+**Verify (must produce NO output on stderr):**
+```
+python -W error -c "import logging, sys; logging.disable(logging.NOTSET); import orthograph; logging.getLogger('orthograph.test').warning('should be swallowed')"
+```
+The warning must NOT appear on stderr (the `NullHandler` plus the default "no configured
+handler" rule swallow it).
 
-**Tests (`tests/core/test_exceptions.py`):**
-- `OrthographError` is an `Exception` subclass.
-- A subclass raised under `OrthographError` is catchable as the root.
-
-**Verification:** `from orthograph.core.exceptions import OrthographError` works; ADR-011 exists.
+**Acceptance criteria:**
+- [ ] `logging.getLogger("orthograph").handlers` contains exactly one `NullHandler` after
+      `import orthograph`.
+- [ ] Importing `orthograph` and logging a warning under `orthograph.*` produces no stderr output.
+- [ ] `import orthograph` still succeeds; `ruff check` clean.
 
 ---
 
-#### T2: Reparent subpackage bases under the root
+### E20.3 — Create `diagnostics/errors.py`: root + mid-tier groups + self-logging  · model: **sonnet**
 
-**What:** Each subpackage that raises domain errors gets (or keeps) a base inheriting
-`OrthographError`.
+**Depends on:** E20.1.
+**File to CREATE:** `src/orthograph/diagnostics/errors.py`
 
-**Actions:**
-1. Reparent `CypherError` (in `extensions/cypher/exceptions.py`) to inherit `OrthographError`.
-   `CypherQueryDefinitionError` / `CypherSyntaxError` already inherit `CypherError` — unchanged.
-2. For each other subpackage that raises its own domain errors (neo4j, memgraph, gqlalchemy,
-   io, core), introduce a base (`Neo4jError`, etc.) inheriting `OrthographError` **only where a
-   subpackage actually raises domain errors** — do not create empty bases speculatively.
-3. Keep each subpackage's exceptions in that subpackage's `exceptions.py` (the E17 pattern).
+**Why:** Establish the single project-wide exception root (`OrthographError`), the three mid-tier
+groups by kind, and the self-logging bridge so every raised error leaves a trace (decisions D1,
+D2, D6).
 
-**Tests:** extend `tests/.../test_exceptions.py` per subpackage: each base inherits
-`OrthographError`; each concrete exception inherits its subpackage base.
+**Exact content to write:**
 
-**Verification:** `except OrthographError` catches a Cypher, neo4j, etc. exception. `mypy src/`
-clean.
+```python
+"""Project-wide exception hierarchy (dependency-free).
 
----
+``OrthographError`` is the single root every Orthograph-raised error derives
+from, directly or via one of the three mid-tier groups:
 
-#### T3: Migrate bare `raise` sites onto the hierarchy
+* :class:`OrthographUsageError`      — the caller misused the API/definitions/queries.
+* :class:`OrthographValidationError` — a graph or data set failed validation.
+* :class:`OrthographBackendError`    — a live-DB / driver / optional-dependency problem.
 
-**What:** Replace bare `raise TypeError/ValueError/Exception(...)` that signal a *library-domain*
-failure with the appropriate hierarchy exception, preserving the message.
+Self-logging: every error logs itself once on construction, at the class-level
+``log_level`` (default ``DEBUG``). This guarantees a trace without the noise of
+an unconditional ``ERROR``-on-construct. Subclasses override ``log_level`` to
+raise or lower the level (see ``OrthographBackendError``).
+"""
 
-**Actions:**
-1. Audit `raise` sites across `src/`. For each, decide: library-domain error (→ hierarchy) or
-   genuine builtin misuse (→ leave as builtin, per the ADR-011 boundary).
-2. Migrate the library-domain ones. Preserve message text so existing
-   `pytest.raises(match=...)` assertions still match; update the `pytest.raises(<type>)` *type*
-   where it changes, and document each behavioural change in the PR.
-3. Do NOT change `warnings.warn` call sites (those are user advisories, not exceptions — see T4).
+import logging
 
-**Tests:** existing suites stay green; where an exception type legitimately changed, update the
-`pytest.raises` type (not the message) and note it.
+from orthograph.diagnostics.logging import get_logger
 
-**Verification:** No library-domain `raise` bypasses the hierarchy (spot-checked by an audit
-list in the PR). Full `pytest` green; `mypy src/` clean; `ruff check` clean.
 
----
+class OrthographError(Exception):
+    """Root of every error Orthograph raises.
 
-### STEP 2 — Logging discipline
+    Differentiation is by subclass and message — never by a docstring list of
+    causes. The message carries the specifics.
+    """
 
-#### T4: Define the library logging convention + helper, and record the decision
+    #: Level at which this error logs itself on construction.
+    log_level: int = logging.DEBUG
 
-**What:** A single, documented way the library emits operational diagnostics, honouring
-"Orthograph is a library, not an application" (PRD Constraint 13's spirit).
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+        get_logger(type(self).__module__).log(
+            self.log_level, "%s: %s", type(self).__name__, self
+        )
 
-**Actions:**
-1. Create `src/orthograph/core/logging.py` providing `get_logger(name) -> logging.Logger`
-   (thin wrapper over `logging.getLogger`) and attach a `logging.NullHandler` to the top-level
-   `orthograph` logger so the library never emits unless the application opts in.
-2. Decide and record in `.agentic/decisions/012-library-logging.md`:
-   - **Library hygiene:** never call `basicConfig`, never add non-null handlers, never set levels
-     on the root logger, never `print`.
-   - **When to log vs raise vs warn:** raise (hierarchy) for caller errors the caller must handle;
-     `warnings.warn` (e.g. the existing imperative-query `UserWarning`) for authoring advisories
-     a developer should see once; `logging` for operational events (skipped record, fallback
-     strategy chosen, retry) at the right level (`DEBUG`/`INFO`/`WARNING`).
-   - **Logger naming:** module `__name__` under the `orthograph.*` tree.
-   - the rejected alternative (ad-hoc `getLogger` per module with no `NullHandler`) and why.
 
-**Tests (`tests/core/test_logging.py`):**
-- The `orthograph` logger has a `NullHandler` (importing the library emits nothing to stderr).
-- `get_logger("orthograph.x")` returns a logger under the `orthograph` tree.
-- A logged warning is *capturable* via `caplog` but produces no output without app config.
+class OrthographUsageError(OrthographError):
+    """The caller misused the API, a model definition, or a query."""
 
-**Verification:** Importing `orthograph` and exercising a code path that logs produces no stderr
-output by default; ADR-012 exists.
 
----
+class OrthographValidationError(OrthographError):
+    """A graph or data set failed validation."""
 
-#### T5: Migrate existing logging call sites to the convention
 
-**What:** Bring the one current ad-hoc logger (and any added since) onto the convention.
+class OrthographBackendError(OrthographError):
+    """A live-database, driver, or optional-dependency problem."""
 
-**Actions:**
-1. `extensions/networkx/inspector.py`: replace `logging.getLogger(__name__)` with
-   `get_logger(__name__)` (or confirm equivalence and the `NullHandler` guard now covers it);
-   confirm the existing `warning` is the right level per ADR-012.
-2. Sweep `src/` for any `print(` used as diagnostics and convert to logging or remove.
+    log_level = logging.ERROR
+```
 
-**Tests:** the networkx inspector's existing behaviour is unchanged (its tests stay green); add a
-`caplog` assertion on the skipped-node warning.
+**Verify:**
+```
+python -c "from orthograph.diagnostics.errors import OrthographError, OrthographUsageError, OrthographValidationError, OrthographBackendError; assert issubclass(OrthographUsageError, OrthographError); assert OrthographBackendError.log_level==40; assert OrthographError.log_level==10; print('ok')"
+```
+- `mypy src/orthograph/diagnostics/errors.py` clean; `ruff check` clean.
 
-**Verification:** Full `pytest` green; no `print(` diagnostics remain in `src/`.
+**Acceptance criteria:**
+- [ ] File exists with exactly the content above.
+- [ ] The three mid-tier classes subclass `OrthographError`.
+- [ ] `OrthographError.log_level == logging.DEBUG` (10); `OrthographBackendError.log_level == logging.ERROR` (40).
+- [ ] Constructing `OrthographError("msg")` logs one record at DEBUG to logger
+      `orthograph.diagnostics.errors` (capturable via pytest `caplog`); no stderr output by default.
 
 ---
 
-### STEP 3 — Documentation
+### E20.4 — Reparent `GraphValidationError` under `OrthographValidationError`  · model: **sonnet**
 
-#### T6: Cross-link the decisions and add developer guidance
+**Depends on:** E20.3.
+**File to EDIT:** `src/orthograph/diagnostics/result.py`
 
-**Actions:**
-1. Add a one-line cross-link to ADR-011 and ADR-012 from CONTEXT.md's decisions routing (no
-   content duplication).
-2. If the PRD documents an error/diagnostics boundary, add a one-line reference; otherwise note
-   in ADR-011/012 that this is a library-internal convention (not a PRD capability).
-3. Brief "Errors & Logging" note for contributors (where to put a new exception; how to get a
-   logger; raise-vs-warn-vs-log) — placed wherever contributor guidance lives, not duplicated.
+**Why:** Make graph-validation failures catchable as `OrthographError` / `OrthographValidationError`
+(D1, D2) while preserving the existing `.issues` attribute and message.
 
-**Verification:** An agent reading `.agentic/` can find both decisions from CONTEXT.md and apply
-them without asking.
+**Current content (lines 8–12 and 34–40):**
+
+```python
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from orthograph.diagnostics.classification import EntityType, Severity
+```
+```python
+class GraphValidationError(Exception):
+    """Raised when graph validation fails."""
+
+    def __init__(self, issues: list["ValidationIssue"]) -> None:
+        self.issues = issues
+        messages = [str(i) for i in issues]
+        super().__init__("\n".join(messages))
+```
+
+**Change 1 — imports.** After the line
+`from orthograph.diagnostics.classification import EntityType, Severity`, add:
+
+```python
+from orthograph.diagnostics.errors import OrthographValidationError
+```
+
+**Change 2 — base class.** Change the class declaration line
+`class GraphValidationError(Exception):` to:
+
+```python
+class GraphValidationError(OrthographValidationError):
+```
+
+Leave the `__init__` body unchanged (it still sets `self.issues` and joins messages; the
+self-logging happens via the new base's `super().__init__`).
+
+**Verify:**
+```
+python -c "from orthograph.diagnostics.result import GraphValidationError, ValidationResult; from orthograph.diagnostics.errors import OrthographError; assert issubclass(GraphValidationError, OrthographError); print('ok')"
+```
+- Existing tests still green: `pytest tests/diagnostics -q`.
+- `mypy src/` clean.
+
+**Acceptance criteria:**
+- [ ] `GraphValidationError` subclasses `OrthographValidationError` (hence `OrthographError`).
+- [ ] `.issues` still populated; message text unchanged.
+- [ ] `tests/diagnostics` green; `mypy src/` clean.
 
 ---
 
-### Success Criteria (Error Hierarchy & Logging)
+### E20.5 — Reparent `CypherError` under `OrthographUsageError`  · model: **sonnet**
 
-- [ ] `OrthographError` root exists; every library-raised domain error derives from it (T1–T3).
-- [ ] Differentiation is by subclass + message; no stale "possible causes" docstring lists (T1).
-- [ ] ADR-011 records the error-hierarchy decision and the builtin-vs-hierarchy boundary.
-- [ ] The library attaches a `NullHandler` and never configures logging; `get_logger` is the one
-      entry point (T4).
-- [ ] ADR-012 records the raise-vs-warn-vs-log policy and library logging hygiene.
-- [ ] Existing logging/`print` diagnostics migrated to the convention (T5).
-- [ ] CONTEXT.md links both ADRs; contributor guidance exists (T6).
+**Depends on:** E20.3.
+**File to EDIT:** `src/orthograph/cypher/exceptions.py`
+
+**Why:** Cypher errors are caller/authoring errors (D2 → Usage). Reparenting the package base
+moves every concrete Cypher exception under the root automatically (they already inherit
+`CypherError`).
+
+**Current content (lines 3–9):**
+
+```python
+from __future__ import annotations
+
+from orthograph.diagnostics.result import ValidationIssue
+
+
+class CypherError(Exception):
+    """Base class for every exception raised by the Cypher extension."""
+```
+
+**Change 1 — import.** After the line
+`from orthograph.diagnostics.result import ValidationIssue`, add:
+
+```python
+from orthograph.diagnostics.errors import OrthographUsageError
+```
+
+**Change 2 — base class.** Change `class CypherError(Exception):` to:
+
+```python
+class CypherError(OrthographUsageError):
+```
+
+Do NOT change any other class in the file — they inherit `CypherError` and are reparented
+transitively. Keep `CypherModelValidationError.__init__` exactly as-is.
+
+**Verify:**
+```
+python -c "from orthograph.cypher.exceptions import CypherError, CypherSyntaxError; from orthograph.diagnostics.errors import OrthographError; assert issubclass(CypherSyntaxError, OrthographError); print('ok')"
+```
+- `pytest tests/cypher/test_exceptions.py -q` green.
+- `mypy src/` clean.
+
+**Acceptance criteria:**
+- [ ] `CypherError` subclasses `OrthographUsageError`; `CypherSyntaxError` etc. catchable as
+      `OrthographError`.
+- [ ] `tests/cypher/test_exceptions.py` green; `mypy src/` clean.
+
+---
+
+### E20.6 — Reparent `ModelDefinitionError` under `OrthographUsageError`  · model: **sonnet**
+
+**Depends on:** E20.3.
+**File to EDIT:** `src/orthograph/graph_definition/exceptions.py`
+
+**Why:** Model-definition errors are programmer/authoring errors (D2 → Usage).
+
+**Current content (lines 1–5):**
+
+```python
+"""Model-definition exceptions for the graph definition layer."""
+
+
+class ModelDefinitionError(Exception):
+    """Base for model-definition programming errors."""
+```
+
+**Change 1 — import.** After the module docstring line
+`"""Model-definition exceptions for the graph definition layer."""`, add a blank line then:
+
+```python
+from orthograph.diagnostics.errors import OrthographUsageError
+```
+
+**Change 2 — base class.** Change `class ModelDefinitionError(Exception):` to:
+
+```python
+class ModelDefinitionError(OrthographUsageError):
+```
+
+Leave `MissingClassVarError`, `MissingUidFieldError`, `AmbiguousCardinalityError`, and
+`CardinalityParseError` unchanged (they inherit `ModelDefinitionError`).
+
+**Verify:**
+```
+python -c "from orthograph.graph_definition.exceptions import ModelDefinitionError, CardinalityParseError; from orthograph.diagnostics.errors import OrthographError; assert issubclass(CardinalityParseError, OrthographError); print('ok')"
+```
+- `pytest tests/graph_definition/test_exceptions.py -q` green.
+- `mypy src/` clean.
+
+**Note for executor:** This introduces an import from `diagnostics` into `graph_definition`.
+That direction is allowed (diagnostics is the dependency-free leaf). If `pytest
+tests/test_dependencies.py` or `tests/test_architecture.py` fails on a layering rule, STOP and
+report — do not weaken the layering test; flag it in the PR.
+
+**Acceptance criteria:**
+- [ ] `ModelDefinitionError` subclasses `OrthographUsageError`; subclasses catchable as `OrthographError`.
+- [ ] `tests/graph_definition/test_exceptions.py` green; `mypy src/` clean.
+- [ ] `tests/test_architecture.py` and `tests/test_dependencies.py` still green (or blocker reported).
+
+---
+
+### E20.7 — Reparent `MissingDependencyError` under `OrthographBackendError`  · model: **sonnet**
+
+**Depends on:** E20.3.
+**File to EDIT:** `src/orthograph/dependencies.py`
+
+**Why:** A missing optional dependency is a backend problem (D2 → Backend). It must remain an
+`ImportError` for back-compat, AND join the hierarchy. It is *expected* during backend probing,
+so it overrides `log_level` back to DEBUG (D6).
+
+**Current content (lines 7–20):**
+
+```python
+from __future__ import annotations
+
+import importlib.util
+import sys
+
+from orthograph.backends.registry import BACKENDS, Kind
+
+
+# Re-export Kind for backward compatibility
+__all__ = ["Kind", "MissingDependencyError", "is_available", "require"]
+
+
+class MissingDependencyError(ImportError):
+    """Raised when an optional dependency required for a backend is absent."""
+```
+
+**Change 1 — imports.** After the line
+`from orthograph.backends.registry import BACKENDS, Kind`, add:
+
+```python
+import logging
+
+from orthograph.diagnostics.errors import OrthographBackendError
+```
+(Put `import logging` with the other stdlib imports — i.e. after `import sys` — and the
+`from orthograph...` line after the existing `from orthograph.backends.registry` import, to keep
+import groups tidy for ruff/isort.)
+
+**Change 2 — class.** Replace:
+
+```python
+class MissingDependencyError(ImportError):
+    """Raised when an optional dependency required for a backend is absent."""
+```
+with:
+
+```python
+class MissingDependencyError(OrthographBackendError, ImportError):
+    """Raised when an optional dependency required for a backend is absent.
+
+    Multiple-inheritance keeps both ``except OrthographError`` and the
+    historical ``except ImportError`` working. It is expected during backend
+    probing, so it logs at DEBUG rather than the ``OrthographBackendError``
+    default of ERROR.
+    """
+
+    log_level = logging.DEBUG
+```
+
+The MRO `(OrthographBackendError, ImportError)` makes it an `OrthographError` first while
+remaining an `ImportError`.
+
+**Verify:**
+```
+python -c "from orthograph.dependencies import MissingDependencyError as M; from orthograph.diagnostics.errors import OrthographError; assert issubclass(M, OrthographError) and issubclass(M, ImportError); assert M.log_level==10; print('ok')"
+```
+- `pytest tests/backends/test_loader.py tests/test_dependencies.py -q` green (adjust if no such
+  file — run `pytest -q -k dependenc` ).
+- `mypy src/` clean.
+
+**Acceptance criteria:**
+- [ ] `MissingDependencyError` is both an `OrthographError` and an `ImportError`.
+- [ ] `MissingDependencyError.log_level == logging.DEBUG`.
+- [ ] Existing dependency/loader tests green; `mypy src/` clean.
+
+---
+
+### E20.8 — Create the root shim `orthograph/errors.py`  · model: **sonnet**
+
+**Depends on:** E20.4, E20.5, E20.6, E20.7.
+**File to CREATE:** `src/orthograph/errors.py`
+
+**Why:** Mirror the capability-module pattern (ADR-041): a thin root module re-exporting the
+error surface so consumers write `from orthograph.errors import OrthographError, CypherSyntaxError`.
+No logic lives here.
+
+**Exact content to write:**
+
+```python
+"""Public error surface for Orthograph.
+
+Thin re-export shim (mirrors the capability-module pattern, ADR-041). The real
+hierarchy lives in :mod:`orthograph.diagnostics.errors`; concrete errors live
+in their owning subpackages. Catch :class:`OrthographError` to isolate every
+error this library raises.
+"""
+
+from orthograph.cypher.exceptions import (
+    CypherCatalogueLoadError,
+    CypherError,
+    CypherIdentifierError,
+    CypherModelValidationError,
+    CypherQueryDefinitionError,
+    CypherQueryError,
+    CypherSyntaxError,
+    CypherUnknownLabelError,
+    CypherUnknownPropertyError,
+)
+from orthograph.dependencies import MissingDependencyError
+from orthograph.diagnostics.errors import (
+    OrthographBackendError,
+    OrthographError,
+    OrthographUsageError,
+    OrthographValidationError,
+)
+from orthograph.diagnostics.result import GraphValidationError
+from orthograph.graph_definition.exceptions import (
+    AmbiguousCardinalityError,
+    CardinalityParseError,
+    MissingClassVarError,
+    MissingUidFieldError,
+    ModelDefinitionError,
+)
+
+
+__all__ = [
+    # root + mid-tier
+    "OrthographError",
+    "OrthographUsageError",
+    "OrthographValidationError",
+    "OrthographBackendError",
+    # validation
+    "GraphValidationError",
+    # cypher
+    "CypherError",
+    "CypherQueryDefinitionError",
+    "CypherSyntaxError",
+    "CypherIdentifierError",
+    "CypherUnknownLabelError",
+    "CypherUnknownPropertyError",
+    "CypherModelValidationError",
+    "CypherQueryError",
+    "CypherCatalogueLoadError",
+    # model definition
+    "ModelDefinitionError",
+    "MissingClassVarError",
+    "MissingUidFieldError",
+    "AmbiguousCardinalityError",
+    "CardinalityParseError",
+    # backend / dependency
+    "MissingDependencyError",
+]
+```
+
+**Then EDIT** `src/orthograph/__init__.py` to expose the module on the root, matching the
+existing capability-module pattern:
+- In the `from orthograph import ( ... )` block, add `errors,` (keep alphabetical-ish order with
+  the others; the `# noqa: F401` comment on that import statement already covers it).
+- In the `__all__` list, add `"errors",`.
+
+**Verify:**
+```
+python -c "from orthograph.errors import OrthographError, CypherSyntaxError, GraphValidationError, MissingDependencyError; import orthograph; assert orthograph.errors.OrthographError is OrthographError; print('ok')"
+```
+- `mypy src/` clean; `ruff check` clean; `pytest -q` green.
+
+**Acceptance criteria:**
+- [ ] `from orthograph.errors import <any name in __all__>` works.
+- [ ] `import orthograph; orthograph.errors.OrthographError` resolves.
+- [ ] `mypy src/`, `ruff check`, full `pytest` green.
+
+---
+
+### E20.9 — Create the root shim `orthograph/logging.py`  · model: **haiku**
+
+**Depends on:** E20.1.
+**File to CREATE:** `src/orthograph/logging.py`
+
+**Why:** Public logging surface mirroring the capability-module pattern; documents the
+integration contract for consuming applications (they configure the `orthograph` logger).
+
+> **Executor caution:** this module is named `logging` and will shadow the stdlib `logging`
+> *for code that imports it as a submodule of `orthograph`*. It must NOT itself do
+> `import logging` at top level in a way that re-imports itself. The content below imports only
+> from `orthograph.diagnostics.logging`, so there is no self-shadowing. Do not add
+> `import logging` to this file.
+
+**Exact content to write:**
+
+```python
+"""Public logging surface for Orthograph.
+
+Thin re-export shim (mirrors the capability-module pattern, ADR-041). The real
+helper lives in :mod:`orthograph.diagnostics.logging`.
+
+Orthograph is a library, not an application: it attaches a ``NullHandler`` to
+the top-level ``orthograph`` logger and never configures levels, handlers, or
+formatting. To see Orthograph's operational logs, the consuming application
+configures the ``orthograph`` logger, e.g.::
+
+    import logging
+    logging.getLogger("orthograph").setLevel(logging.DEBUG)
+
+Level convention used by the library:
+
+* ``DEBUG``   — internal steps (query compiled, backend round-trip, cache hit),
+                and every raised :class:`~orthograph.errors.OrthographError` by
+                default.
+* ``INFO``    — user-meaningful milestones (profile inspected, catalogue loaded).
+* ``WARNING`` — library-level concerns (deprecated argument, fallback path taken).
+* ``ERROR``   — backend/driver failures (raised ``OrthographBackendError`` logs here).
+"""
+
+from orthograph.diagnostics.logging import get_logger
+
+
+__all__ = ["get_logger"]
+```
+
+**Then EDIT** `src/orthograph/__init__.py` to expose the module on the root:
+- add `logging,` to the `from orthograph import ( ... )` re-export block (the existing
+  `# noqa: F401` covers it); BUT note the `_logging` alias from E20.2 — do NOT remove that alias;
+  it stays for the `NullHandler` line. Add the public `logging` submodule re-export separately.
+- add `"logging",` to `__all__`.
+
+**Verify:**
+```
+python -c "import orthograph; from orthograph.logging import get_logger; assert orthograph.logging.get_logger is get_logger; print('ok')"
+```
+- Confirm stdlib logging still works elsewhere: `python -c "import orthograph; import logging; logging.getLogger('x')"` (no error).
+- `mypy src/` clean; `ruff check` clean; `pytest -q` green.
+
+**Acceptance criteria:**
+- [ ] `from orthograph.logging import get_logger` works; `orthograph.logging.get_logger` resolves.
+- [ ] `import orthograph` followed by stdlib `import logging` still works (no shadowing breakage).
+- [ ] `mypy src/`, `ruff check`, full `pytest` green.
+
+---
+
+### E20.10 — Migrate the NetworkX inspector logger to `get_logger`  · model: **haiku**
+
+**Depends on:** E20.1.
+**File to EDIT:** `src/orthograph/backends/networkx/inspector.py`
+
+**Why:** Bring the one pre-existing ad-hoc logger onto the convention (D5). Behaviour is
+unchanged; this is a sourcing swap.
+
+**Current content (lines 5 and 32):**
+
+```python
+import logging
+```
+```python
+logger = logging.getLogger(__name__)
+```
+
+**Change 1 — import.** Remove the top-level `import logging` (line 5) ONLY IF `logging` is not
+used anywhere else in the file. Run a search for `logging.` in the file first:
+- If `logging.` appears elsewhere, KEEP `import logging` and only change the logger line.
+- If it does NOT (expected — only the `getLogger` call uses it), remove `import logging`.
+
+**Change 2 — add the helper import.** Add, grouped with the other `from orthograph...` imports:
+
+```python
+from orthograph.diagnostics.logging import get_logger
+```
+
+**Change 3 — logger line.** Change `logger = logging.getLogger(__name__)` to:
+
+```python
+logger = get_logger(__name__)
+```
+
+Leave the three `logger.warning(...)` call sites (lines ~91, ~134, ~145) UNCHANGED.
+
+**Verify:**
+- `pytest tests/backends/networkx -q` green.
+- `python -c "import orthograph.backends.networkx.inspector"` imports without error.
+- `ruff check src/orthograph/backends/networkx/inspector.py` clean (no unused `import logging`).
+- `mypy src/` clean.
+
+**Acceptance criteria:**
+- [ ] `logger = get_logger(__name__)`; the three `logger.warning` calls unchanged.
+- [ ] No unused `import logging` remains.
+- [ ] `tests/backends/networkx` green; `ruff` + `mypy` clean.
+
+---
+
+### E20.11 — Write ADR-047 + ADR-048 and add CONTEXT cross-links  · model: **opus**
+
+**Depends on:** E20.3 (errors) and E20.1/E20.2 (logging) being implemented, so the ADRs describe
+shipped reality. Do this LAST.
+
+**Files to CREATE:**
+- `.agentic/decisions/047-error-hierarchy.md`
+- `.agentic/decisions/048-library-logging.md`
+
+**File to EDIT:** `.agentic/CONTEXT.md` (add two routing rows).
+
+**ADR-047 (`047-error-hierarchy.md`) must record:**
+- The decision: single `OrthographError` root in `diagnostics/errors.py`; three mid-tier groups
+  by *kind* (`OrthographUsageError` / `OrthographValidationError` / `OrthographBackendError`);
+  concrete/subpackage exceptions reparent under the appropriate kind; root shim
+  `orthograph/errors.py` re-exports the surface (mirrors ADR-041).
+- The mapping shipped: `CypherError`/`ModelDefinitionError` → Usage; `GraphValidationError` →
+  Validation; `MissingDependencyError(OrthographBackendError, ImportError)` → Backend.
+- D4 (differentiation by subclass+message, no stale cause-lists) and D9 (builtin boundary:
+  library-domain → hierarchy; honest generic misuse → builtins).
+- **The self-logging decision (D6)** and its rationale: log-on-construct at per-class
+  `log_level`, DEBUG default, Backend→ERROR, MissingDependency→DEBUG; why this avoids the
+  double-logging / noise of an unconditional ERROR-on-construct, and that the *catcher* (not the
+  raiser) decides whether a handled error is noise.
+- Rejected alternatives: (a) no root / bare builtins everywhere; (b) two-level shape
+  (root→subpackage-base→concrete) instead of by-kind; (c) unconditional ERROR-on-construct.
+
+**ADR-048 (`048-library-logging.md`) must record:**
+- The decision: `get_logger` helper in `diagnostics/logging.py`; `NullHandler` on the top-level
+  `orthograph` logger in `__init__.py`; root shim `orthograph/logging.py` re-exports `get_logger`
+  and documents the consumer-config contract and level convention.
+- Library hygiene rules (D5): never `basicConfig`, never add non-null handlers, never set levels,
+  never `print` for diagnostics; loggers named by `__name__` under `orthograph.*`.
+- raise-vs-warn-vs-log boundary (D7), explicitly noting the two preserved `warnings.warn` sites
+  (`cypher/base_models.py` UserWarning; `backends/neo4j/inspector.py` DeprecationWarning).
+- The level convention table (DEBUG/INFO/WARNING/ERROR) as shipped in `orthograph/logging.py`.
+- Rejected alternative: ad-hoc `getLogger` per module with no `NullHandler`; a structured-logging
+  dependency (structlog/loguru) — rejected, stdlib name tree is the universal contract.
+
+**CONTEXT.md edits** — add two rows to the "Navigate" table (do NOT duplicate ADR content):
+- `| What is the project-wide error hierarchy and how do errors self-log? | [decisions/047-error-hierarchy.md](decisions/047-error-hierarchy.md) — public surface is the `orthograph.errors` shim |`
+- `| How does the library log, and how does a consuming app capture Orthograph logs? | [decisions/048-library-logging.md](decisions/048-library-logging.md) — public surface is the `orthograph.logging` shim (`get_logger`) |`
+
+**Verify:**
+- Both ADR files exist and follow the format of an existing ADR (open
+  `.agentic/decisions/046-documentation-architecture.md` as a template for headings/front-matter).
+- CONTEXT.md has the two new rows and renders as a valid Markdown table.
+- An agent reading CONTEXT.md can reach both ADRs in one hop.
+
+**Acceptance criteria:**
+- [ ] ADR-047 and ADR-048 exist, matching the house ADR format, recording the decisions above.
+- [ ] CONTEXT.md links both ADRs from the Navigate table.
+- [ ] No ADR content duplicated into CONTEXT.md.
+
+---
+
+### Success Criteria (Error Hierarchy & Logging — whole sub-epic)
+
+- [ ] `OrthographError` root exists in `diagnostics/errors.py`; every library-raised domain error
+      derives from it via a kind-group (E20.3–E20.7).
+- [ ] Every error self-logs once on construction at its `log_level`; DEBUG by default, Backend→ERROR,
+      MissingDependency→DEBUG; no stderr output without app config (E20.3, verified per task).
+- [ ] `orthograph/errors.py` and `orthograph/logging.py` shims expose the public surface and are
+      reachable as `orthograph.errors.*` / `orthograph.logging.*` (E20.8, E20.9).
+- [ ] The library attaches a `NullHandler`; `get_logger` is the one logging entry point (E20.1, E20.2).
+- [ ] The one pre-existing ad-hoc logger is migrated; no `print(` diagnostics exist in `src/`
+      (E20.10; note: the three `print(` hits in `rendering.py`/`__init__.py` are docstring examples,
+      not diagnostics — leave them).
+- [ ] ADR-047 + ADR-048 record the decisions; CONTEXT.md links both (E20.11).
 - [ ] `mypy src/` clean; `ruff check` clean; full `pytest` green.
 
----
-
-### Out of Scope (Error Hierarchy & Logging section)
+### Out of Scope (Error Hierarchy & Logging)
 
 - Application-level observability: metrics, tracing, structured-event emission, log shipping.
 - Changing `warnings.warn` semantics or removing existing user advisories.
 - Async logging, custom handlers/formatters, or any sink configuration (application concern).
-- Reworking `ValidationResult` / `ValidationIssue` (those are value-objects, not exceptions; a
-  separate concern owned by validation epics).
+- Reworking `ValidationResult` / `ValidationIssue` (value-objects, not exceptions).
 - A blanket conversion of every builtin `TypeError`/`ValueError` to custom types — only
-  *library-domain* errors migrate; honest builtin misuse stays builtin (per the ADR-011 boundary).
+  *library-domain* errors migrate (per the ADR-047 builtin boundary).
+- Migrating bare `raise TypeError/ValueError` sites across `src/` to the hierarchy — deferred;
+  if wanted, add as a follow-up task E20.12 (sonnet) with an explicit audit list.

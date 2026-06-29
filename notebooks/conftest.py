@@ -34,6 +34,7 @@ _DB_NOTEBOOKS: dict[str, str] = {
 _UI_NOTEBOOKS: set[str] = {
     "06.01_fastapi_integration.ipynb",
     "06.02_dash_profile_explorer.ipynb",
+    "06.03_async_query_runner.ipynb",
 }
 
 

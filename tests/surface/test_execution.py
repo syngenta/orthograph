@@ -19,8 +19,20 @@ from orthograph.cypher.base_models import (
     TypedCypherReadQueryModel,
     TypedCypherWriteQueryModel,
 )
+from orthograph.cypher.bindings import NoIdentifiers
+from orthograph.cypher.query import CypherQuery
+from orthograph.cypher.query_execution import CypherWriteResultSummary
 from orthograph.dependencies import MissingDependencyError
-from orthograph.execution import ReadQueryModel, WriteQueryModel, run_read, run_write
+from orthograph.execution import (
+    ReadQueryModel,
+    WriteQueryModel,
+    run_cypher_execute,
+    run_cypher_fetch,
+    run_read,
+    run_read_async,
+    run_write,
+    run_write_async,
+)
 from orthograph.graph_definition.models import NodeModel
 
 
@@ -183,7 +195,7 @@ def test_run_write_returns_interpreted_result() -> None:
     session = FakeGraphSession(nodes_created=1)
     result = run_write("neo4j", lambda: session, CreateMovie(), {"released": 1999})
     assert result == 1
-    assert session.committed is True
+    assert session.committed is False  # caller owns the transaction boundary (ADR-028)
     assert session.rolled_back is False
 
 
@@ -216,3 +228,90 @@ def test_run_write_unknown_backend_raises() -> None:
 def test_typed_query_bases_are_reexported() -> None:
     assert ReadQueryModel is not None
     assert WriteQueryModel is not None
+
+
+# ---------------------------------------------------------------------------
+# Async verbs — error paths and re-exports
+# ---------------------------------------------------------------------------
+
+
+async def test_run_read_async_unknown_backend_raises() -> None:
+    with pytest.raises(MissingDependencyError, match="Unknown execution backend"):
+        await run_read_async("nonsense", lambda: object(), MoviesByYear(), {})
+
+
+async def test_run_write_async_unknown_backend_raises() -> None:
+    with pytest.raises(MissingDependencyError, match="Unknown execution backend"):
+        await run_write_async("nonsense", lambda: object(), CreateMovie(), {})
+
+
+def test_async_verbs_are_reexported() -> None:
+    from orthograph.execution import run_read_async, run_write_async
+
+    assert run_read_async is not None
+    assert run_write_async is not None
+
+
+# ---------------------------------------------------------------------------
+# run_cypher_fetch / run_cypher_execute (simple path)
+# ---------------------------------------------------------------------------
+
+
+class _FindMoviesParams(BaseModel):
+    released: int
+
+
+_FIND_MOVIES = CypherQuery(
+    query_id="surface_find_movies",
+    cypher_template=(
+        "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
+    ),
+    params_schema=_FindMoviesParams,
+    identifiers_schema=NoIdentifiers,
+)
+
+
+class _CreateMovieParams(BaseModel):
+    title: str
+
+
+_CREATE_MOVIE = CypherQuery(
+    query_id="surface_create_movie",
+    cypher_template="CREATE (m:Movie {title: $title})",
+    params_schema=_CreateMovieParams,
+    identifiers_schema=NoIdentifiers,
+)
+
+
+def test_run_cypher_fetch_returns_raw_rows() -> None:
+    session = FakeGraphSession(
+        records=[
+            {"m.title": "The Matrix", "m.released": 1999},
+            {"m.title": "Speed", "m.released": 1994},
+        ]
+    )
+    result = run_cypher_fetch(lambda: session, _FIND_MOVIES, {"released": 1999})
+    assert result == [
+        {"m.title": "The Matrix", "m.released": 1999},
+        {"m.title": "Speed", "m.released": 1994},
+    ]
+    assert len(session.run_calls) == 1
+    cypher, params = session.run_calls[0]
+    assert "$released" in cypher
+    assert params == {"released": 1999}
+
+
+def test_run_cypher_execute_returns_summary() -> None:
+    session = FakeGraphSession(nodes_created=1)
+    result = run_cypher_execute(lambda: session, _CREATE_MOVIE, {"title": "Dune"})
+    assert isinstance(result, CypherWriteResultSummary)
+    assert result.nodes_created == 1
+    assert session.committed is False  # caller owns the transaction (ADR-028)
+    assert session.rolled_back is False
+
+
+def test_run_cypher_async_verbs_are_reexported() -> None:
+    from orthograph.execution import run_cypher_execute_async, run_cypher_fetch_async
+
+    assert run_cypher_fetch_async is not None
+    assert run_cypher_execute_async is not None

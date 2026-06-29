@@ -436,7 +436,7 @@ future exploration but must not be built into the library.
 | Schema composition / inheritance | Future — post-pilot |
 | Property value constraints (min/max/regex/enum) | Deferred |
 | CLI tool | Future direction: a CLI that drives validate / profile / diff / report workflows and integrates with CI is desirable (see Aspirational Direction in Further Notes); not part of the current library |
-| Async driver support | Future direction: async execution under the existing connection-ownership constraint (caller passes an async session) is aspirational; deferred until a concrete backend and use case are identified |
+| Async driver support | Query runner: SUPPORTED (async execution via AsyncExecutor / run_read_async / run_write_async + simple-path `AsyncCypherQueryExecutor` / run_cypher_*_async under caller-owned transactions — ADR-028 / E39 / E62). Async inspection (inspect / validate) remains deferred until a concrete use case. |
 | Scheduling or recurring inspections | Platform concern |
 | Synthetic graph data generation | Later-stage differentiator — generate realistic test datasets from declared contracts and observed profiles; deferred until contracts and profiling are stable (post-MVP) |
 
@@ -498,10 +498,10 @@ scope** and must not be built until explicitly promoted out of this section.
   would be the orchestration surface. Constraint: CLI is a consumer of the
   library API, not embedded in the library core.
 
-- **Async execution.** Supporting async database drivers (e.g. the async Neo4j
-  Python driver) under the existing connection-ownership constraint — the caller
-  would pass an async session; Orthograph would await it. Deferred until a
-  concrete backend and pilot use case justify the complexity.
+- **Async execution.** Query-runner async execution (AsyncExecutor / run_read_async /
+  run_write_async under caller-owned transactions) is now delivered (ADR-028 / E39).
+  Async inspection (inspect / validate) remains aspirational and deferred until a
+  concrete use case justifies the complexity.
 
 - **Synthetic graph data generation.** Using declared contracts and observed
   profiles to generate realistic test datasets (node/relationship distributions,

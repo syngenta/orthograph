@@ -49,6 +49,15 @@ Design goals
   :class:`~orthograph.cypher.query_execution.CypherExecutor`.  Callers unpack
   rows themselves.  This keeps the class useful as a validation-only on-ramp
   before a consuming project is ready to declare typed ``Output`` models.
+* **Execution surface.** Run a CypherQuery via
+  :class:`~orthograph.cypher.query_execution.CypherQueryExecutor` (or
+  :class:`~orthograph.cypher.query_execution.AsyncCypherQueryExecutor`), using
+  ``fetch()`` for RETURN queries (``list[dict[str, Any]]``) and ``execute()`` for
+  mutations (``CypherWriteResultSummary``); or the public ``run_cypher_fetch`` /
+  ``run_cypher_execute`` verbs in ``orthograph.execution``. These are typed
+  concretely on ``CypherQuery`` — no ``# type: ignore`` is needed. The simple path
+  is NOT passed to the typed ``CypherExecutor`` (use the typed path for that).
+  The caller owns the transaction (ADR-028).
 * **Catalogue citizen.** Carries ``backend = Backend.CYPHER`` (metadata only) and is
 registerable in ``QueryCatalogue`` via ``register_cypher_query``.
 * **Validation timing.** Validation (:func:`~orthograph.cypher.validation._validate_cypher_query`)

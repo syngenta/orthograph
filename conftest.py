@@ -165,3 +165,34 @@ def memgraph_clean(memgraph_driver: Any) -> Generator[None, None, None]:
     memgraph_driver.execute_query("MATCH (n) DETACH DELETE n")
     yield
     memgraph_driver.execute_query("MATCH (n) DETACH DELETE n")
+
+
+@pytest.fixture
+async def async_neo4j_driver(request: pytest.FixtureRequest) -> Any:
+    """Yield a neo4j.AsyncGraphDatabase driver for async e2e tests.
+
+    Requires the --neo4j flag. Automatically skipped otherwise.
+    """
+    import neo4j
+
+    if not request.config.getoption("--neo4j", default=False):
+        pytest.skip("needs --neo4j flag to run")
+
+    uri = request.config.getoption("--neo4j-uri")
+    user = request.config.getoption("--neo4j-user")
+    password = request.config.getoption("--neo4j-password")
+    driver = neo4j.AsyncGraphDatabase.driver(uri, auth=(user, password))
+    try:
+        yield driver
+    finally:
+        await driver.close()
+
+
+@pytest.fixture
+async def async_neo4j_clean(async_neo4j_driver):
+    """Wipe the Neo4j DB before and after each async e2e test."""
+    async with async_neo4j_driver.session() as session:
+        await session.run("MATCH (n) DETACH DELETE n")
+    yield
+    async with async_neo4j_driver.session() as session:
+        await session.run("MATCH (n) DETACH DELETE n")

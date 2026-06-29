@@ -15,7 +15,11 @@ from orthograph.cypher.base_models import (
     TypedCypherWriteQueryModel,
 )
 from orthograph.cypher.bindings import NoIdentifiers
-from orthograph.cypher.query_execution import CypherExecutor, CypherWriteResultSummary
+from orthograph.cypher.query_execution import (
+    CypherExecutor,
+    CypherQueryExecutor,
+    CypherWriteResultSummary,
+)
 from orthograph.graph_definition.models import NodeModel
 from orthograph.query.write_result import WriteResultSummary
 
@@ -221,14 +225,15 @@ def test_write_bad_params_raise_before_run() -> None:
     assert session.run_calls == []
 
 
-def test_write_commits_transaction() -> None:
-    """write() explicitly commits the transaction on success."""
+def test_write_does_not_commit_caller_owns_tx() -> None:
+    """write() runs the statement but does NOT commit —
+    the caller owns the transaction (ADR-028)."""
     session = FakeGraphSession(nodes_created=1)
     executor = CypherExecutor(lambda: session)
 
     executor.write(CreateMovieCypher(), {"released": 2003})
 
-    assert session.committed is True
+    assert session.committed is False
     assert session.rolled_back is False
 
 
@@ -366,9 +371,9 @@ def test_cypher_query_read_returns_raw_rows() -> None:
             {"m.title": "The Matrix Reloaded", "m.released": 2003},
         ]
     )
-    executor = CypherExecutor(lambda: session)
+    executor = CypherQueryExecutor(lambda: session)
 
-    result: list[dict[str, Any]] = executor.read(query, {"released": 1999})  # type: ignore[arg-type]
+    result: list[dict[str, Any]] = executor.fetch(query, {"released": 1999})
 
     assert result == [
         {"m.title": "The Matrix", "m.released": 1999},
@@ -396,9 +401,9 @@ def test_cypher_query_read_with_typed_params_model() -> None:
         identifiers_schema=NoIdentifiers,
     )
     session = FakeGraphSession(records=[{"m.title": "Inception"}])
-    executor = CypherExecutor(lambda: session)
+    executor = CypherQueryExecutor(lambda: session)
 
-    result: list[dict[str, Any]] = executor.read(query, {"released": 2010})  # type: ignore[arg-type]
+    result: list[dict[str, Any]] = executor.fetch(query, {"released": 2010})
 
     assert result == [{"m.title": "Inception"}]
 
@@ -431,9 +436,9 @@ def test_cypher_query_write_returns_full_summary() -> None:
             )
 
     session = _FakeSessionWithCounters()
-    executor = CypherExecutor(lambda: session)
+    executor = CypherQueryExecutor(lambda: session)
 
-    result: CypherWriteResultSummary = executor.write(query, {"title": "Dune"})  # type: ignore[arg-type]
+    result: CypherWriteResultSummary = executor.execute(query, {"title": "Dune"})
 
     assert isinstance(result, CypherWriteResultSummary)
     assert result.nodes_created == 1
@@ -445,8 +450,9 @@ def test_cypher_query_write_returns_full_summary() -> None:
     assert params == {"title": "Dune"}
 
 
-def test_cypher_query_write_commits_transaction() -> None:
-    """CypherQuery write path commits the transaction."""
+def test_cypher_query_write_does_not_commit_caller_owns_tx() -> None:
+    """CypherQuery write path does NOT commit —
+    the caller owns the transaction (ADR-028)."""
     from pydantic import BaseModel
 
     from orthograph.cypher.query import CypherQuery
@@ -461,9 +467,9 @@ def test_cypher_query_write_commits_transaction() -> None:
         identifiers_schema=NoIdentifiers,
     )
     session = FakeGraphSession(nodes_created=1)
-    executor = CypherExecutor(lambda: session)
+    executor = CypherQueryExecutor(lambda: session)
 
-    _: Any = executor.write(query, {"title": "Arrival"})  # type: ignore[arg-type]
+    _: Any = executor.execute(query, {"title": "Arrival"})
 
-    assert session.committed is True
+    assert session.committed is False
     assert session.rolled_back is False

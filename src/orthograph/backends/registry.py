@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal, Protocol
 
 from orthograph.graph_profile.inspection import GraphInspector
-from orthograph.query.base_models import Executor
+from orthograph.query.base_models import AsyncExecutor, Executor
 
 
 Kind = Literal["db-driver", "orm", "in-memory", "tool"]
@@ -24,6 +24,12 @@ class ExecutorClass(Protocol):
     """A constructable :class:`~orthograph.query.base_models.Executor`."""
 
     def __call__(self, driver_factory: Callable[[], Any]) -> Executor: ...
+
+
+class AsyncExecutorClass(Protocol):
+    """A constructable :class:`~orthograph.query.base_models.AsyncExecutor`."""
+
+    def __call__(self, driver_factory: Callable[[], Any]) -> AsyncExecutor: ...
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +66,12 @@ def _cypher_executor() -> ExecutorClass:
     return CypherExecutor
 
 
+def _async_cypher_executor() -> AsyncExecutorClass:
+    from orthograph.cypher.query_execution import AsyncCypherExecutor
+
+    return AsyncCypherExecutor
+
+
 # ---------------------------------------------------------------------------
 # BackendSpec and BackendCapabilities
 # ---------------------------------------------------------------------------
@@ -90,6 +102,7 @@ class BackendSpec:
     probe_modules: tuple[str, ...]
     inspector: Callable[[], type[GraphInspector]] | None = None
     executor: Callable[[], ExecutorClass] | None = None
+    async_executor: Callable[[], AsyncExecutorClass] | None = None
     deferred_executor_reason: str | None = None
     inspector_init_kwargs: frozenset[str] = frozenset()
 
@@ -120,6 +133,7 @@ BACKENDS: dict[str, BackendSpec] = {
         probe_modules=("neo4j",),
         inspector=_neo4j_inspector,
         executor=_cypher_executor,
+        async_executor=_async_cypher_executor,
         inspector_init_kwargs=frozenset({"strategy", "value_counts_top_n"}),
     ),
     "memgraph": BackendSpec(
@@ -128,6 +142,7 @@ BACKENDS: dict[str, BackendSpec] = {
         probe_modules=("neo4j",),
         inspector=_memgraph_inspector,
         executor=_cypher_executor,
+        async_executor=_async_cypher_executor,
         inspector_init_kwargs=frozenset({"value_counts_top_n"}),
     ),
     "networkx": BackendSpec(
@@ -144,6 +159,7 @@ BACKENDS: dict[str, BackendSpec] = {
         probe_modules=("graphglot",),
         inspector=None,
         executor=_cypher_executor,
+        async_executor=_async_cypher_executor,
     ),
     "gqlalchemy": BackendSpec(
         pip_extra="gqlalchemy",

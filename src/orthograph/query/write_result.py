@@ -1,7 +1,7 @@
 """Vendor-free write result protocol.
 
 Defines the structural contract that any write-result object must satisfy so
-that ``WriteQuery.interpret_result`` implementations are testable without a
+that ``WriteQueryModel.interpret_result`` implementations are testable without a
 live database driver.
 """
 

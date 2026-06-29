@@ -236,7 +236,7 @@ class Executor(ABC):
 
     @abstractmethod
     def write(self, query: WriteQueryModel[P, R], raw_params: Any) -> R:
-        """Validate params → build() (pure) → execute → commit → interpret_result."""
+        """Validate params → build() (pure) → execute → interpret_result. No commit."""
 
 
 class ReadPort(ABC, Generic[P, D]):
@@ -265,3 +265,38 @@ class QueryBackedReadPort(ReadPort[P, D]):
 
     def fetch(self, params: P) -> list[D]:
         return self._executor.read(self._query, params)
+
+
+class AsyncExecutor(ABC):
+    """Async counterpart of Executor. Same contract, awaited.
+
+    Like Executor, it NEVER commits or rolls back — the caller owns the transaction
+    boundary (ADR-028). Implementations receive an async factory and open/close the
+    async session (or accept a caller-supplied live async transaction) per call.
+    """
+
+    @abstractmethod
+    async def read(self, query: ReadQueryModel[P, D], raw_params: Any) -> list[D]:
+        """Validate params → build() (pure) → execute → materialize. No commit."""
+
+    @abstractmethod
+    async def write(self, query: WriteQueryModel[P, R], raw_params: Any) -> R:
+        """Validate params → build() (pure) → execute → interpret_result. No commit."""
+
+
+class AsyncReadPort(ABC, Generic[P, D]):
+    """Async named read capability. Async counterpart of ReadPort."""
+
+    @abstractmethod
+    async def fetch(self, params: P) -> list[D]: ...
+
+
+class AsyncQueryBackedReadPort(AsyncReadPort[P, D]):
+    """An AsyncReadPort backed by a ReadQueryModel + AsyncExecutor pair."""
+
+    def __init__(self, query: ReadQueryModel[P, D], executor: AsyncExecutor) -> None:
+        self._query = query
+        self._executor = executor
+
+    async def fetch(self, params: P) -> list[D]:
+        return await self._executor.read(self._query, params)

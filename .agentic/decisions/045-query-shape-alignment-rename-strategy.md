@@ -124,10 +124,17 @@ three query paths share **one construction shape** (`Query(identifiers=...)`) an
   `BaseModel`, the binding runs in `model_post_init` (Pydantic v2): validate the raw
   identifiers against `self.identifiers_schema or NoIdentifiers` into `self._identifiers`,
   mirroring `CypherReadQuery.__init__`. The five serialized fields are untouched.
-- `build(self, params: BaseModel) -> CypherQueryData`: validate `params` against
-  `self.params_schema`, render the template with `self._identifiers`, return
-  `CypherQueryData(rendered, params.model_dump(exclude_unset=True))`. NO `**kwargs`,
-  NO `identifiers` parameter — identical to `CypherReadQuery.build`.
+- `build(self, params: BaseModel) -> CypherQueryData`: render the template with
+  `self._identifiers`, return `CypherQueryData(rendered, params.model_dump(exclude_unset=True))`.
+  NO `**kwargs`, NO `identifiers` parameter — identical to `TypedCypherReadQueryModel.build`.
+  **`build` does NOT re-validate `params` against `params_schema`** — it trusts the
+  caller-supplied model, exactly as the typed path's `build(self, params: P)` does. The
+  executor still validates inbound raw params in `_prepare_statement`
+  (`params_model.model_validate(raw_params)`), so the validation guarantee is preserved
+  on the executor path; only a *direct* `query.build(model)` call now trusts its typed
+  argument rather than re-running `model_validate`. (As-implemented note: an earlier
+  draft of this bullet said "validate `params` against `self.params_schema`"; that was
+  dropped for symmetry with the typed path — the relaxation is intentional.)
 
 **Behaviour preservation:** For `NoIdentifiers` queries (every query that flows through
 the executor today), `self._identifiers` is the empty `NoIdentifiers()` and render is a

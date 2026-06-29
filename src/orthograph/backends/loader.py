@@ -9,6 +9,7 @@ from typing import Any
 from orthograph.backends.neo4j.inspector import Neo4jInspectionStrategy
 from orthograph.backends.registry import (
     BACKENDS,
+    AsyncExecutorClass,
     BackendCapabilities,
     BackendSpec,
     ExecutorClass,
@@ -24,6 +25,7 @@ __all__ = [
     "Neo4jInspectionStrategy",
     "backend_names",
     "capabilities",
+    "load_async_executor",
     "load_executor",
     "load_inspector",
     "run_inspection",
@@ -143,3 +145,31 @@ def load_executor(name: str) -> ExecutorClass:
         )
     require(name)
     return spec.executor()
+
+
+def load_async_executor(name: str) -> AsyncExecutorClass:
+    """Return the AsyncExecutor class for ``name`` after verifying its dependencies.
+
+    Raises
+    ------
+    MissingDependencyError
+        If ``name`` is unknown, its dependencies are not installed, or async
+        execution is not available for this backend.
+    """
+    spec = BACKENDS.get(name)
+    if spec is not None and spec.deferred_executor_reason is not None:
+        raise MissingDependencyError(spec.deferred_executor_reason)
+    if spec is None or spec.async_executor is None:
+        known = ", ".join(
+            sorted(
+                n
+                for n, s in BACKENDS.items()
+                if s.async_executor is not None
+                or s.deferred_executor_reason is not None
+            )
+        )
+        raise MissingDependencyError(
+            f"Unknown execution backend {name!r}. Known backends: {known}."
+        )
+    require(name)
+    return spec.async_executor()

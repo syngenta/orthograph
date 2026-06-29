@@ -83,7 +83,7 @@ notebooks = [
 # some notebooks use dependecies that are not required for the code
 notebooks_integration_extensions = [
     "fastapi>=0.100",
-    "httpx>=0.24",
+    "httpx2>=2.0",
     "dash>=4.3.0",
     "dash_bootstrap_components>=2.0.0"
 ]
@@ -104,6 +104,7 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "pytest-mock>=3.0",
+    "pytest-asyncio>=0.23",
     "ruff>=0.9",
     "mypy>=1.10",
     "pre-commit>=3.0",
@@ -142,6 +143,7 @@ push = true
 [tool.pytest.ini_options]
 testpaths = ["tests", "notebooks"]
 addopts = "-v --strict-markers --tb=short --nbval-lax"
+asyncio_mode = "auto"
 markers = [
     "slow: marks tests as slow",
     "neo4j: requires a live Neo4j instance (run with --neo4j)",

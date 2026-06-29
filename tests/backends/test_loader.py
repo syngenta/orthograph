@@ -293,3 +293,40 @@ def test_run_inspection_no_kwargs_constructs_with_none(
 def test_run_inspection_unknown_backend_raises() -> None:
     with pytest.raises(MissingDependencyError, match="Unknown backend"):
         loader.run_inspection("nonsense", object())
+
+
+# ---------------------------------------------------------------------------
+# load_async_executor — happy paths
+# ---------------------------------------------------------------------------
+
+
+def test_load_async_executor_neo4j_produces_async_executor_instance() -> None:
+    from orthograph.cypher.query_execution import AsyncCypherExecutor
+
+    cls = loader.load_async_executor("neo4j")
+    assert isinstance(cls(lambda: None), AsyncCypherExecutor)
+
+
+def test_load_async_executor_neo4j_and_memgraph_share_async_cypher_executor() -> None:
+    assert loader.load_async_executor("neo4j") is loader.load_async_executor("memgraph")
+
+
+# ---------------------------------------------------------------------------
+# load_async_executor — error paths
+# ---------------------------------------------------------------------------
+
+
+def test_load_async_executor_gqlalchemy_raises_missing_dependency_error() -> None:
+    with pytest.raises(MissingDependencyError, match="not available"):
+        loader.load_async_executor("gqlalchemy")
+
+
+def test_load_async_executor_unknown_raises_missing_dependency_error() -> None:
+    with pytest.raises(MissingDependencyError, match="Unknown execution backend"):
+        loader.load_async_executor("nonsense")
+
+
+def test_load_async_executor_networkx_raises_unknown_execution_backend() -> None:
+    # networkx has no async executor.
+    with pytest.raises(MissingDependencyError, match="Unknown execution backend"):
+        loader.load_async_executor("networkx")

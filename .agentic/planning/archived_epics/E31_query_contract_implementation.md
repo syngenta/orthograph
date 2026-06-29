@@ -1,3 +1,8 @@
+> **Status:** ARCHIVED — Superseded by E34, E36, E38, E60
+> **Reason:** E60/ADR-045 hard-renamed core vocabulary (Params→params_schema, Identifiers→identifiers_schema, name→query_id). Work items completed under current names by successor epics. See E34 (RETURN→Output alignment), E36/E38 (query naming/params), E60 (full vocabulary alignment).
+
+---
+
 # Epic E31: Query Contract Ergonomics — Implementation
 
 > **Priority:** High (blocker for public release)

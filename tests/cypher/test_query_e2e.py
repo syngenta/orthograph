@@ -1,4 +1,4 @@
-"""End-to-end tests for CypherQuery via CypherExecutor against a live
+"""End-to-end tests for CypherQuery via CypherQueryExecutor against a live
 Neo4j DB.
 
 These tests require a running Neo4j instance.  They are skipped by default and
@@ -22,8 +22,6 @@ What is covered
   without a DB round-trip (static, but shown in the e2e file for completeness)
 """
 
-# mypy: disable-error-code="arg-type"
-
 from typing import Any
 
 import pytest
@@ -31,7 +29,7 @@ import pytest
 from orthograph.cypher.bindings import NoIdentifiers
 from orthograph.cypher.query import CypherQuery
 from orthograph.cypher.query_execution import (
-    CypherExecutor,
+    CypherQueryExecutor,
     CypherWriteResultSummary,
 )
 from orthograph.cypher.validation import validate_query_catalogue
@@ -97,9 +95,9 @@ def _seed(driver: Any) -> None:
     )
 
 
-def _make_executor(driver: Any) -> CypherExecutor:
-    """Return a CypherExecutor backed by the live driver session."""
-    return CypherExecutor(driver.session)
+def _make_executor(driver: Any) -> CypherQueryExecutor:
+    """Return a CypherQueryExecutor backed by the live driver session."""
+    return CypherQueryExecutor(driver.session)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +126,7 @@ def test_yaml_query_read_returns_matching_rows(
     query = queries[0]
     executor = _make_executor(neo4j_driver)
 
-    rows: list[dict[str, Any]] = executor.read(query, {"title": "The Matrix"})
+    rows: list[dict[str, Any]] = executor.fetch(query, {"title": "The Matrix"})
 
     assert len(rows) == 1
     assert rows[0]["m.title"] == "The Matrix"
@@ -150,7 +148,7 @@ def test_cypher_query_read_all_movies(neo4j_driver: Any, neo4j_clean: None) -> N
     )
     executor = _make_executor(neo4j_driver)
 
-    rows: list[dict[str, Any]] = executor.read(query, {})
+    rows: list[dict[str, Any]] = executor.fetch(query, {})
 
     titles = [r["m.title"] for r in rows]
     assert sorted(titles) == ["Speed", "The Matrix"]
@@ -178,7 +176,7 @@ def test_cypher_query_read_with_typed_params(
     )
     executor = _make_executor(neo4j_driver)
 
-    rows: list[dict[str, Any]] = executor.read(query, {"released": 1994})
+    rows: list[dict[str, Any]] = executor.fetch(query, {"released": 1994})
 
     assert len(rows) == 1
     assert rows[0]["m.title"] == "Speed"
@@ -202,7 +200,7 @@ def test_cypher_query_read_optional_param_excluded_when_absent(
     executor = _make_executor(neo4j_driver)
 
     # No limit supplied — query returns all movies without error
-    rows: list[dict[str, Any]] = executor.read(query, {})
+    rows: list[dict[str, Any]] = executor.fetch(query, {})
 
     assert len(rows) == 2
 
@@ -230,7 +228,7 @@ def test_cypher_query_read_actors_for_movie(
     )
     executor = _make_executor(neo4j_driver)
 
-    rows: list[dict[str, Any]] = executor.read(query, {"title": "The Matrix"})
+    rows: list[dict[str, Any]] = executor.fetch(query, {"title": "The Matrix"})
 
     assert len(rows) == 1
     assert rows[0]["p.name"] == "Keanu Reeves"
@@ -261,7 +259,7 @@ def test_cypher_query_write_create_returns_nodes_created(
     )
     executor = _make_executor(neo4j_driver)
 
-    summary: CypherWriteResultSummary = executor.write(
+    summary: CypherWriteResultSummary = executor.execute(
         query,
         {"title": "Inception", "released": 2010},
     )
@@ -298,7 +296,7 @@ def test_cypher_query_write_set_returns_properties_set(
     )
     executor = _make_executor(neo4j_driver)
 
-    summary: CypherWriteResultSummary = executor.write(
+    summary: CypherWriteResultSummary = executor.execute(
         query,
         {"title": "The Matrix", "genre": "sci-fi"},
     )
@@ -332,7 +330,7 @@ def test_cypher_query_write_create_relationship(
     )
     executor = _make_executor(neo4j_driver)
 
-    summary: CypherWriteResultSummary = executor.write(
+    summary: CypherWriteResultSummary = executor.execute(
         query,
         {"actor": "Sandra Bullock", "movie": "The Matrix", "role": "Trinity"},
     )
