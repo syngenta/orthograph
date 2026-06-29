@@ -23,8 +23,8 @@ import pytest
 
 from orthograph.cypher.parser import (
     ReturnKind,
+    _validate_cypher,
     extract_return_columns,
-    validate_cypher,
 )
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
@@ -170,7 +170,7 @@ def test_p1_merge_set_return_is_valid(graph_definition: GraphDefinition) -> None
     Result: Validates correctly ✓
     """  # NOQA E501
     query = "MERGE (m:Movie {title: $title}) SET m.year = $year, m.comment = $comment RETURN m"  # NOQA E501
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid
 
 
@@ -205,7 +205,7 @@ def test_p1_merge_set_unknown_label_rejected(graph_definition: GraphDefinition) 
     Result: Correctly rejects ✓
     """
     query = "MERGE (f:Film {title: $title}) SET f.year = $year RETURN f"
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert not result.is_valid
     assert any(e.code == "QUERY_UNKNOWN_NODE_LABEL" for e in result.errors)
 
@@ -224,7 +224,7 @@ def test_p1_merge_set_unknown_property_rejected(
     Result: Correctly rejects ✓
     """
     query = "MERGE (m:Movie {title: $title}) SET m.budget = $budget RETURN m"
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert not result.is_valid
     assert any(e.code == "QUERY_UNKNOWN_PROPERTY" for e in result.errors)
 
@@ -262,7 +262,7 @@ def test_p2_two_match_merge_return_three_is_valid(
         "MATCH (p:Person {name: $name}) MATCH (m:Movie {title: $title}) "
         "MERGE (p)-[r:ACTED_IN]->(m) RETURN p, r, m"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid
 
 
@@ -294,7 +294,7 @@ def test_p2_two_match_merge_endpoint_blind_spot(
         "MATCH (m:Movie {title: $title}) MATCH (p:Person {name: $name}) "
         "MERGE (m)-[r:ACTED_IN]->(p) RETURN m, r, p"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     # This should fail but doesn't because endpoints are not checked
     assert result.is_valid  # Documents the blind spot
 
@@ -318,7 +318,7 @@ def test_p4_match_return_node_is_valid(graph_definition: GraphDefinition) -> Non
     Result: All validation passes ✓
     """
     query = "MATCH (m:Movie {title: $title}) RETURN m"
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid
 
 
@@ -337,7 +337,7 @@ def test_p4_match_unknown_property_in_where_rejected(
     Result: Correctly rejects ✓
     """
     query = "MATCH (m:Movie {title: $title}) WHERE m.budget > 100 RETURN m"
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert not result.is_valid
     assert any(e.code == "QUERY_UNKNOWN_PROPERTY" for e in result.errors)
 
@@ -366,7 +366,7 @@ def test_p5_unwind_local_var_is_valid(graph_definition: GraphDefinition) -> None
     Result: Validates correctly ✓
     """
     query = "UNWIND $titles AS title MATCH (m:Movie {title: title}) RETURN m"
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid
 
 
@@ -406,7 +406,7 @@ def test_g1_pipe_rel_types_vl_path_unknown_rel_type(
     query = (
         "MATCH (f:Festival) -[:FEATURED_IN|HAS_SCREENING*]-(m:Movie) RETURN DISTINCT m"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     # Parser treats the pipe string as a literal rel-type,
     # so we get QUERY_UNKNOWN_REL_TYPE
     assert any(e.code == "QUERY_UNKNOWN_REL_TYPE" for e in result.errors)
@@ -444,7 +444,7 @@ def test_g1_double_vl_path_with_pipes_parse_error(
         "MATCH (p)-[:IS_REVIEWED_BY|HAS_SCREENING*]->(s:Screening) "
         "RETURN DISTINCT s"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert any(e.code == "QUERY_PARSE_ERROR" for e in result.errors)
 
 
@@ -497,7 +497,7 @@ def test_b1_reverse_vl_path_false_positive_endpoint_check(
     query = (
         "MATCH (m:Movie)-[:ACTED_IN*]-(p:Person) RETURN p.name AS person_name LIMIT 1"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     # Current (incorrect) behavior: fires QUERY_INVALID_ENDPOINT
     assert any(e.code == "QUERY_INVALID_ENDPOINT" for e in result.errors)
     # Desired (correct) behavior: should be valid
@@ -520,7 +520,7 @@ def test_b1_forward_vl_path_is_valid_control(graph_definition: GraphDefinition) 
     This contrasts with B1 to show the directional bias in the validator.
     """
     query = "MATCH (p:Person)-[:ACTED_IN*]-(m:Movie) RETURN m.title AS title LIMIT 1"
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid
 
 
@@ -570,7 +570,7 @@ def test_b2_multi_match_merge_blind_to_wrong_endpoints(
         "MATCH (m:Movie {title: $title}) MATCH (p:Person {name: $name}) "
         "MERGE (m)-[r:ACTED_IN]->(p) RETURN m, r, p"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     # Currently passes (documents blind spot)
     assert result.is_valid
 
@@ -606,7 +606,7 @@ def test_g2_foreach_parse_error(graph_definition: GraphDefinition) -> None:
         "MATCH (m:Movie {title: $title}) WITH m, collect(m) AS items "
         "FOREACH (node IN items | DETACH DELETE node)"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert any(e.code == "QUERY_PARSE_ERROR" for e in result.errors)
 
 
@@ -641,7 +641,7 @@ def test_match_chain_linear_path_validated(graph_definition: GraphDefinition) ->
         "-[r2:HAS_REVIEW]->(rv:Review) "
         "RETURN p, r1, m, r2, rv ORDER BY rv.id"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid
     cols = extract_return_columns(query)
     assert cols is not None
@@ -674,7 +674,7 @@ def test_match_with_delete_and_return_props_validated(
         "MATCH (m:Movie {title: $title}) WITH m, properties(m) AS deleted_movie "
         "DETACH DELETE m RETURN deleted_movie AS m"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid
 
 
@@ -695,7 +695,7 @@ def test_unwind_match_delete_validated(graph_definition: GraphDefinition) -> Non
     Result: Validates correctly ✓
     """
     query = "UNWIND $titles AS title MATCH (m:Movie {title: title}) DETACH DELETE m"
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid
 
 
@@ -723,7 +723,7 @@ def test_optional_match_with_aliased_return_validated(
         "OPTIONAL MATCH (rv)-[:INDUCES]->(a:Award) "
         "RETURN p AS person, m AS movie, rv AS review, a AS award"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid
     cols = extract_return_columns(query)
     assert cols is not None
@@ -756,7 +756,7 @@ def test_aggregation_skips_return_validation(graph_definition: GraphDefinition) 
         "MATCH (p)-[:ACTED_IN]->(m2:Movie) "
         "RETURN count(DISTINCT m2) AS total"
     )
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid
     cols = extract_return_columns(query)
     assert cols is None  # Aggregation skips extraction
@@ -783,5 +783,5 @@ def test_set_map_update_validated(graph_definition: GraphDefinition) -> None:
     Result: Validates correctly (with known limitation) ✓
     """
     query = "MATCH (m:Movie {title: $title}) SET m += $properties RETURN m"
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     assert result.is_valid

@@ -2,7 +2,7 @@
 
 Covers: assembled catalogue load (the ergonomics fix vs the old list-returning
 ``load_query_catalogue``), empty-catalogue authoring, simple-query building,
-auto-CRUD generation, and the three validation verbs.
+auto-CRUD generation, and the six validation verbs (2×2 matrix).
 """
 
 from pathlib import Path
@@ -161,23 +161,83 @@ def test_simple_query_defaults_to_no_params() -> None:
     assert query.identifiers_schema in (None, NoIdentifiers)
 
 
-def test_validate_query_accepts_string(person_definition: GraphDefinition) -> None:
-    result = queries.validate_query(
+def test_all_six_validate_verbs_importable() -> None:
+    """All six public validation verbs are importable from orthograph.queries."""
+    from orthograph.queries import (  # noqa: F401
+        check_cypher_spec,
+        check_syntax,
+        validate,
+        validate_catalogue,
+        validate_catalogue_against_profile,
+        validate_cypher_spec,
+    )
+
+
+# 2×2 matrix: object mode × phase
+def test_check_syntax_object_mode_str(person_definition: GraphDefinition) -> None:
+    """check_syntax: object mode, str input, syntax only."""
+    result = queries.check_syntax("MATCH (p:Person {name: $name}) RETURN p")
+    assert isinstance(result, ValidationResult)
+    assert result.is_valid
+
+
+def test_check_syntax_object_mode_cypher_query(
+    person_definition: GraphDefinition,
+) -> None:
+    """check_syntax: object mode, CypherQuery input, syntax only."""
+    query = queries.simple_query(
+        "find_person",
+        "MATCH (p:Person {name: $name}) RETURN p",
+        params=_name_params_model(),
+    )
+    result = queries.check_syntax(query)
+    assert isinstance(result, ValidationResult)
+    assert result.is_valid
+
+
+def test_validate_object_mode_str(person_definition: GraphDefinition) -> None:
+    """validate: object mode, str input, syntax + semantics."""
+    result = queries.validate(
         "MATCH (p:Person {name: $name}) RETURN p", person_definition
     )
     assert isinstance(result, ValidationResult)
     assert result.is_valid
 
 
-def test_validate_query_accepts_cypher_query(
+def test_validate_object_mode_cypher_query(
     person_definition: GraphDefinition,
 ) -> None:
+    """validate: object mode, CypherQuery input, syntax + semantics."""
     query = queries.simple_query(
         "find_person",
         "MATCH (p:Person {name: $name}) RETURN p",
         params=_name_params_model(),
     )
-    result = queries.validate_query(query, person_definition)
+    result = queries.validate(query, person_definition)
+    assert isinstance(result, ValidationResult)
+    assert result.is_valid
+
+
+# 2×2 matrix: pieces mode × phase
+def test_check_cypher_spec_pieces_mode(person_definition: GraphDefinition) -> None:
+    """check_cypher_spec: pieces mode, syntax only — no definition."""
+    result = queries.check_cypher_spec(
+        cypher="MATCH (p:Person {name: $name}) RETURN p",
+        params_fields={"name"},
+        query_name="find_person",
+    )
+    assert isinstance(result, ValidationResult)
+    assert result.is_valid
+
+
+def test_validate_cypher_spec_pieces_mode(person_definition: GraphDefinition) -> None:
+    """validate_cypher_spec: pieces mode, syntax + semantics."""
+    result = queries.validate_cypher_spec(
+        cypher="MATCH (p:Person {name: $name}) RETURN p",
+        params_fields={"name"},
+        query_name="find_person",
+        graph_definition=person_definition,
+    )
     assert isinstance(result, ValidationResult)
     assert result.is_valid
 

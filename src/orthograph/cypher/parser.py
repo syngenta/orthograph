@@ -346,7 +346,7 @@ def extract_return_columns(query: str) -> list[ReturnColumn] | None:
     return _DEFAULT_PARSER.extract_return_columns(query)
 
 
-def validate_cypher(
+def _validate_cypher(
     query: str,
     graph_definition: GraphDefinition,
     parser: CypherParserStrategy | None = None,

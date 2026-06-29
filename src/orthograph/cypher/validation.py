@@ -1,4 +1,22 @@
-"""Static validation of a :class:`QueryCatalogue` against a :class:`GraphDefinition`.
+"""Static validation of Cypher queries and query catalogues against a graph model.
+
+Dispatch table
+--------------
+:func:`_extract_query_spec` accepts any query object and routes to one of two
+branch extractors:
+
+    kind                    | extractor                    | guards
+    ------------------------|------------------------------|--------------------
+    CypherQuery             | _extract_cypher_query_spec   | none
+    ReadQuery / WriteQuery  | _extract_typed_query_spec    | non-Cypher backend,
+                            |                              | imperative (no
+                            |                              | template), identifier
+                            |                              | injection
+
+Each extractor returns either a 4-tuple ``(cypher, params_fields,
+identifier_fields, output_model)`` ready for :func:`validate_cypher_spec`, or a
+:class:`ValidationResult` already populated with ``QUERY_UNVERIFIABLE`` when a
+guard fires.
 
 Declarative Cypher queries (``cypher_template`` set) are validated against the
 model.  Imperative or non-Cypher queries are reported as ``QUERY_UNVERIFIABLE``
@@ -19,11 +37,12 @@ from orthograph.cypher.bindings import (
     extract_cypher_params,
 )
 from orthograph.cypher.parser import (
+    CypherParserStrategy,
     ReturnColumn,
     ReturnKind,
+    _validate_cypher,
     extract_return_columns,
     parse_cypher,
-    validate_cypher,
 )
 from orthograph.cypher.query import CypherQuery
 from orthograph.diagnostics.classification import EntityType, Severity
@@ -246,7 +265,100 @@ def _check_identifier_injection(
     return []
 
 
-def validate_cypher_spec(
+def _unverifiable_result(query_name: str, reason: str) -> ValidationResult:
+    """Return a ValidationResult with a single QUERY_UNVERIFIABLE issue."""
+    result = ValidationResult()
+    result.add(_unverifiable(query_name, reason=reason))
+    return result
+
+
+def _inner_model_fields(query_type: type, attr: str) -> set[str]:
+    """Return the field names of an inner Pydantic model, or an empty set."""
+    cls = getattr(query_type, attr, None)
+    if isinstance(cls, type) and issubclass(cls, BaseModel):
+        return set(cls.model_fields)
+    return set()
+
+
+def _extract_cypher_query_spec(
+    query: CypherQuery,
+) -> tuple[str, set[str], set[str], type[BaseModel] | None]:
+    """Extract the spec 4-tuple from a CypherQuery. No guards needed."""
+    params_fields = set(query.params_schema.model_fields)
+    identifier_fields = set((query.identifiers_schema or NoIdentifiers).model_fields)
+    return (query.cypher_template, params_fields, identifier_fields, None)
+
+
+def _extract_typed_query_spec(
+    query_name: str,
+    query: "ReadQuery[Any, Any] | WriteQuery[Any, Any]",
+) -> "tuple[str, set[str], set[str], type[BaseModel] | None] | ValidationResult":
+    """Extract the spec 4-tuple from a typed (ReadQuery / WriteQuery).
+
+    Returns a ValidationResult sentinel when any guard fires:
+      1. Non-Cypher backend.
+      2. Imperative query (no cypher_template).
+      3. Identifier injection (<<...>> placeholders).
+    """
+    if query.backend != Backend.CYPHER:
+        return _unverifiable_result(
+            query_name,
+            f"backend is {query.backend.value}; "
+            f"this validator only checks Cypher queries",
+        )
+
+    template: str | None = getattr(type(query), "cypher_template", None)
+    if template is None:
+        return _unverifiable_result(
+            query_name,
+            "query is imperative "
+            "(no 'cypher_template'); its Cypher is only known at build() time",
+        )
+
+    if injection_issues := _check_identifier_injection(template, query_name):
+        result = ValidationResult()
+        for issue in injection_issues:
+            result.add(issue)
+        result.add(
+            _unverifiable(
+                query_name,
+                "query uses identifier injection (<<...>> placeholders); "
+                "Cypher template validation is incomplete "
+                "without runtime identifier values",
+            )
+        )
+        return result
+
+    query_type = type(query)
+    params_fields = _inner_model_fields(query_type, "Params")
+    identifier_fields = _inner_model_fields(query_type, "Identifiers")
+    output_cls: type[BaseModel] | None = (
+        getattr(query_type, "Output", None) if isinstance(query, ReadQuery) else None
+    )
+    return (template, params_fields, identifier_fields, output_cls)
+
+
+def _extract_query_spec(
+    query_name: str,
+    query: "CypherQuery | ReadQuery[Any, Any] | WriteQuery[Any, Any]",
+) -> "tuple[str, set[str], set[str], type[BaseModel] | None] | ValidationResult":
+    """Dispatch to the appropriate spec extractor based on query kind.
+
+    Returns a 4-tuple ``(cypher, params_fields, identifier_fields, output_model)``
+    ready for :func:`validate_cypher_spec`, or a :class:`ValidationResult` with
+    ``QUERY_UNVERIFIABLE`` when a guard fires.
+
+    Dispatch table:
+
+        CypherQuery            → :func:`_extract_cypher_query_spec` (no guards)
+        ReadQuery / WriteQuery → :func:`_extract_typed_query_spec` (3 guards)
+    """
+    if isinstance(query, CypherQuery):
+        return _extract_cypher_query_spec(query)
+    return _extract_typed_query_spec(query_name, query)
+
+
+def _cypher_spec_core(
     *,
     cypher: str,
     params_fields: set[str],
@@ -254,26 +366,19 @@ def validate_cypher_spec(
     identifier_fields: set[str] | None = None,
     graph_definition: GraphDefinition | None = None,
     output_model: type[BaseModel] | None = None,
+    parser: CypherParserStrategy | None = None,
 ) -> ValidationResult:
-    """Validate a Cypher query spec from primitives (no class or instance required).
+    """Internal engine: run all validation stages.
 
-    Shared validation core used by both the simple path (``CypherQuery``) and the
-    typed path (``validate_query_catalogue``).  Composes only existing helpers:
-
-    * Syntactic parse via ``parse_cypher`` → ``QUERY_PARSE_ERROR`` on failure.
-    * ``$param`` ↔ ``params_fields`` and ``<<id>>`` ↔ ``identifier_fields``
-      alignment → ``QUERY_PARAM_ALIGNMENT_ERROR`` on mismatch.
-    * Semantic / domain check via ``validate_cypher`` when
-      ``graph_definition is not None``.
-    * RETURN→Output alignment via ``extract_return_columns`` +
-      ``_check_return_output_alignment`` when ``output_model is not None``.
-    * Identifier-injection INFO via ``_check_identifier_injection``.
+    Both :func:`check_cypher_spec` and :func:`validate_cypher_spec` delegate
+    here.  ``graph_definition=None`` means syntax-only (stages 1–4 + 6);
+    a non-``None`` value also runs stage 5 (domain check).
     """
     result = ValidationResult()
 
     # --- 1. Syntactic parse ---
     try:
-        parse_cypher(cypher)
+        parse_cypher(cypher, parser)
     except Exception as exc:
         result.add(
             ValidationIssue(
@@ -330,7 +435,7 @@ def validate_cypher_spec(
 
     # --- 5. Semantic / domain check ---
     if graph_definition is not None:
-        result.merge(validate_cypher(cypher, graph_definition))
+        result.merge(_validate_cypher(cypher, graph_definition, parser))
 
     # --- 6. RETURN→Output alignment ---
     if output_model is not None:
@@ -344,33 +449,106 @@ def validate_cypher_spec(
     return result
 
 
+def check_cypher_spec(
+    *,
+    cypher: str,
+    params_fields: set[str],
+    query_name: str,
+    identifier_fields: set[str] | None = None,
+    output_model: type[BaseModel] | None = None,
+    parser: CypherParserStrategy | None = None,
+) -> ValidationResult:
+    """Validate a Cypher query spec syntactically — no ``GraphDefinition`` required.
+
+    Runs stages 1–4 and 6 of the shared validation pipeline (parse, param
+    alignment, identifier alignment, identifier-injection INFO, RETURN→Output
+    alignment).  Domain checks (unknown labels / rel-types / properties) are
+    skipped because no ``GraphDefinition`` is provided.
+
+    Use :func:`validate_cypher_spec` when you also want semantic validation
+    against a graph model.
+    """
+    return _cypher_spec_core(
+        cypher=cypher,
+        params_fields=params_fields,
+        query_name=query_name,
+        identifier_fields=identifier_fields,
+        graph_definition=None,
+        output_model=output_model,
+        parser=parser,
+    )
+
+
+def validate_cypher_spec(
+    *,
+    cypher: str,
+    params_fields: set[str],
+    query_name: str,
+    identifier_fields: set[str] | None = None,
+    graph_definition: GraphDefinition,
+    output_model: type[BaseModel] | None = None,
+    parser: CypherParserStrategy | None = None,
+) -> ValidationResult:
+    """Validate a Cypher query spec from primitives (no class or instance required).
+
+    Shared validation core used by both the simple path (``CypherQuery``) and the
+    typed path (``validate_query_catalogue``).  Composes only existing helpers:
+
+    * Syntactic parse via ``parse_cypher`` → ``QUERY_PARSE_ERROR`` on failure.
+    * ``$param`` ↔ ``params_fields`` and ``<<id>>`` ↔ ``identifier_fields``
+      alignment → ``QUERY_PARAM_ALIGNMENT_ERROR`` on mismatch.
+    * Semantic / domain check via ``validate_cypher`` (``graph_definition``
+      is always passed — use :func:`check_cypher_spec` for syntax-only).
+    * RETURN→Output alignment via ``extract_return_columns`` +
+      ``_check_return_output_alignment`` when ``output_model is not None``.
+    * Identifier-injection INFO via ``_check_identifier_injection``.
+
+    ``graph_definition`` is **required**.  To run syntax-only checks without a
+    model, use :func:`check_cypher_spec`.
+    """
+    return _cypher_spec_core(
+        cypher=cypher,
+        params_fields=params_fields,
+        query_name=query_name,
+        identifier_fields=identifier_fields,
+        graph_definition=graph_definition,
+        output_model=output_model,
+        parser=parser,
+    )
+
+
 def _validate_simple_cypher_query(
     query: CypherQuery,
     definition: GraphDefinition | None,
 ) -> ValidationResult:
     """Run the shared spec validation for a simple :class:`CypherQuery`.
 
-    Extracts the ``$param`` and ``<<identifier>>`` field names declared on the
-    query and delegates to :func:`validate_cypher_spec` with no ``Output`` model
-    (simple queries declare no result shape).  This is the single source of the
-    simple-query validation idiom used by both :func:`validate_cypher_query` and the
-    ``CypherQuery`` branch of :func:`validate_query_catalogue`.
+    Delegates to :func:`_extract_query_spec` then :func:`validate_cypher_spec`.
+    Simple queries declare no result shape so ``output_model`` is always None.
     """
-    params_fields: set[str] = set(query.params_schema.model_fields)
-    identifier_fields: set[str] = set(
-        (query.identifiers_schema or NoIdentifiers).model_fields
-    )
+    spec = _extract_query_spec(query.query_id, query)
+    # CypherQuery branch never returns a ValidationResult sentinel.
+    assert not isinstance(spec, ValidationResult)
+    cypher, params_fields, identifier_fields, output_model = spec
+    if definition is None:
+        return check_cypher_spec(
+            cypher=cypher,
+            params_fields=params_fields,
+            query_name=query.query_id,
+            identifier_fields=identifier_fields,
+            output_model=output_model,
+        )
     return validate_cypher_spec(
-        cypher=query.cypher_template,
+        cypher=cypher,
         params_fields=params_fields,
         query_name=query.query_id,
         identifier_fields=identifier_fields,
         graph_definition=definition,
-        output_model=None,
+        output_model=output_model,
     )
 
 
-def validate_cypher_query(
+def _validate_cypher_query(
     query: CypherQuery,
     definition: GraphDefinition | None,
 ) -> ValidationResult:
@@ -398,7 +576,7 @@ def validate_cypher_query(
     return _validate_simple_cypher_query(query, definition)
 
 
-def validate_typed_cypher_query(
+def _validate_typed_cypher_query(
     query: ReadQuery[Any, Any] | WriteQuery[Any, Any],
     graph_definition: GraphDefinition,
 ) -> ValidationResult:
@@ -413,70 +591,20 @@ def validate_typed_cypher_query(
       here rather than inside :func:`validate_cypher_spec` so we bail before
       the deeper checks).
 
-    Otherwise extracts Params / Identifiers / Output from the query class and
-    delegates to :func:`validate_cypher_spec`.
+    Otherwise delegates to :func:`_extract_query_spec` then
+    :func:`validate_cypher_spec`.
     """  # NOQA E501
-    if query.backend != Backend.CYPHER:
-        result = ValidationResult()
-        result.add(
-            _unverifiable(
-                query.name,
-                reason=f"backend is {query.backend.value}; this validator only "
-                "checks Cypher queries",
-            )
-        )
-        return result
-
-    template = getattr(type(query), "cypher_template", None)
-    if template is None:
-        result = ValidationResult()
-        result.add(
-            _unverifiable(
-                query.name,
-                "query is imperative (no 'cypher_template'); its Cypher is "
-                "only known at build() time",
-            )
-        )
-        return result
-
-    # T10: emit injection INFO then bail — extract once, no second call inside
-    # validate_cypher_spec (we return before reaching it).
-    if injection_issues := _check_identifier_injection(template, query.name):
-        result = ValidationResult()
-        for issue in injection_issues:
-            result.add(issue)
-        result.add(
-            _unverifiable(
-                query.name,
-                "query uses identifier injection (<<...>> placeholders); "
-                "Cypher template validation is incomplete without runtime "
-                "identifier values",
-            )
-        )
-        return result
-
-    params_cls = getattr(type(query), "Params", None)
-    params_fields: set[str] = (
-        set(params_cls.model_fields)
-        if isinstance(params_cls, type) and issubclass(params_cls, BaseModel)
-        else set()
-    )
-    identifiers_cls = getattr(type(query), "Identifiers", None)
-    identifier_fields: set[str] = (
-        set(identifiers_cls.model_fields)
-        if isinstance(identifiers_cls, type) and issubclass(identifiers_cls, BaseModel)
-        else set()
-    )
-    output_cls: type[BaseModel] | None = (
-        getattr(type(query), "Output", None) if isinstance(query, ReadQuery) else None
-    )
+    spec = _extract_query_spec(query.name, query)
+    if isinstance(spec, ValidationResult):
+        return spec
+    cypher, params_fields, identifier_fields, output_model = spec
     return validate_cypher_spec(
-        cypher=template,
+        cypher=cypher,
         params_fields=params_fields,
         query_name=query.name,
         identifier_fields=identifier_fields,
         graph_definition=graph_definition,
-        output_model=output_cls,
+        output_model=output_model,
     )
 
 
@@ -507,7 +635,7 @@ def validate_query_catalogue(
         if isinstance(query, CypherQuery):
             result.merge(_validate_simple_cypher_query(query, graph_definition))
         else:
-            result.merge(validate_typed_cypher_query(query, graph_definition))
+            result.merge(_validate_typed_cypher_query(query, graph_definition))
     return result
 
 

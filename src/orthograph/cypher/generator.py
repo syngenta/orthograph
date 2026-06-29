@@ -38,7 +38,7 @@ from orthograph.cypher.exceptions import (
     CypherUnknownPropertyError,
 )
 from orthograph.cypher.identifiers import validate_identifier
-from orthograph.cypher.parser import validate_cypher
+from orthograph.cypher.parser import _validate_cypher
 from orthograph.graph_definition.exceptions import MissingUidFieldError
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
@@ -300,7 +300,7 @@ class CypherGenerator:
     def _assert_valid(self, cypher: str) -> None:
         """Validate ``cypher`` against the model; raise
         ``CypherModelValidationError`` on errors."""
-        result = validate_cypher(cypher, self.graph_definition)
+        result = _validate_cypher(cypher, self.graph_definition)
         if not result.is_valid:
             raise CypherModelValidationError(result.errors)
 

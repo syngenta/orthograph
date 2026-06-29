@@ -112,6 +112,6 @@ def _validate_cypher(
     from orthograph.dependencies import require
 
     require("cypher")
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    return validate_cypher(cypher, graph_definition)
+    return _validate_cypher(cypher, graph_definition)

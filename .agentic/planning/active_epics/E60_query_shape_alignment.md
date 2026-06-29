@@ -207,6 +207,11 @@ and (per ADR) add deprecated aliases or migrate subclasses. Suite + mypy green.
 Delete `CypherExecutor._query_shape` (direct attribute read); simplify
 `QueryCatalogue.describe()` to one comprehension; merge the two extraction
 blocks in `cypher/validation.py`. Each deletion is gated on E60.1.
+> **Note:** if E59 lands first (it should — see E60 §Q5), the
+> `cypher/validation.py` extraction-merge is **already done** by E59.1's
+> `_extract_query_spec` dispatcher. In that case this task only renames the
+> attribute the unified dispatcher reads (`Params` → `params_schema`) and the
+> merge bullet is satisfied-by-E59.1 — do not redo it.
 
 #### E60.3 — Resolve the adapters (per Q4) — **Sonnet/Opus**
 Either delete the adapters (if `CypherQuery.build` gains a single-model overload)

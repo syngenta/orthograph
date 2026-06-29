@@ -166,9 +166,9 @@ def test_parse_empty_query_raises():
 
 
 def test_validate_valid_query(graph_definition: GraphDefinition) -> None:
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (n:Person)-[r:ACTED_IN]->(m:Movie) RETURN n",
         graph_definition,
     )
@@ -176,9 +176,9 @@ def test_validate_valid_query(graph_definition: GraphDefinition) -> None:
 
 
 def test_validate_unknown_node_label(graph_definition: GraphDefinition) -> None:
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (n:Animal) RETURN n",
         graph_definition,
     )
@@ -187,9 +187,9 @@ def test_validate_unknown_node_label(graph_definition: GraphDefinition) -> None:
 
 
 def test_validate_unknown_rel_type(graph_definition: GraphDefinition) -> None:
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH ()-[r:FRIEND_OF]->() RETURN r",
         graph_definition,
     )
@@ -198,9 +198,9 @@ def test_validate_unknown_rel_type(graph_definition: GraphDefinition) -> None:
 
 
 def test_validate_unknown_property(graph_definition: GraphDefinition) -> None:
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (n:Person) WHERE n.salary > 100 RETURN n",
         graph_definition,
     )
@@ -209,9 +209,9 @@ def test_validate_unknown_property(graph_definition: GraphDefinition) -> None:
 
 
 def test_validate_valid_property(graph_definition: GraphDefinition) -> None:
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (n:Person) WHERE n.age > 21 RETURN n.name",
         graph_definition,
     )
@@ -219,10 +219,10 @@ def test_validate_valid_property(graph_definition: GraphDefinition) -> None:
 
 
 def test_validate_invalid_endpoint(graph_definition: GraphDefinition) -> None:
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
     # ACTED_IN connects Person->Movie, not Person->City
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (n:Person)-[:ACTED_IN]->(c:City) RETURN n",
         graph_definition,
     )
@@ -231,9 +231,9 @@ def test_validate_invalid_endpoint(graph_definition: GraphDefinition) -> None:
 
 
 def test_validate_multi_pattern_valid(graph_definition: GraphDefinition) -> None:
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Person)-[:ACTED_IN]->(b:Movie), "
         "(a)-[:LIVES_IN]->(c:City) RETURN a, b, c",
         graph_definition,
@@ -260,10 +260,10 @@ def test_validate_cypher_accepts_custom_strategy(
 ) -> None:
     from orthograph.cypher.parser import (
         GraphglotParser,
-        validate_cypher,
+        _validate_cypher,
     )
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (n:Person) RETURN n",
         graph_definition,
         parser=GraphglotParser(),
@@ -278,9 +278,9 @@ def test_validate_undirected_same_type_forward_valid(
     social_model: GraphDefinition,
 ) -> None:
     """Undirected same-type: forward direction is valid."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Person)-[:FRIEND_OF]->(b:Person) RETURN a, b",
         social_model,
     )
@@ -291,9 +291,9 @@ def test_validate_undirected_same_type_reverse_valid(
     social_model: GraphDefinition,
 ) -> None:
     """Undirected same-type: reverse direction is also valid (trivially, same types)."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Person)-[:FRIEND_OF]->(b:Person) RETURN a, b",
         social_model,
     )
@@ -304,9 +304,9 @@ def test_validate_undirected_cross_type_forward_valid(
     cross_undirected_model: GraphDefinition,
 ) -> None:
     """Undirected cross-type: Person->Company (forward) is valid."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Person)-[:COLLABORATES]->(b:Company) RETURN a, b",
         cross_undirected_model,
     )
@@ -317,9 +317,9 @@ def test_validate_undirected_cross_type_reverse_valid(
     cross_undirected_model: GraphDefinition,
 ) -> None:
     """Undirected cross-type: Company->Person (reversed) should also be valid."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Company)-[:COLLABORATES]->(b:Person) RETURN a, b",
         cross_undirected_model,
     )
@@ -330,9 +330,9 @@ def test_validate_undirected_cross_type_wrong_types_rejected(
     cross_undirected_model: GraphDefinition,
 ) -> None:
     """Undirected cross-type: completely wrong types still rejected."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Person)-[:COLLABORATES]->(b:Person) RETURN a, b",
         cross_undirected_model,
     )
@@ -344,9 +344,9 @@ def test_validate_directed_cross_type_reverse_rejected(
     graph_definition: GraphDefinition,
 ) -> None:
     """Directed: reverse direction is still rejected."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Movie)-[:ACTED_IN]->(b:Person) RETURN a, b",
         graph_definition,
     )
@@ -361,10 +361,10 @@ def test_validate_cypher_unparseable_returns_result_not_exception(
     graph_definition: GraphDefinition,
 ) -> None:
     """A syntactically unparseable query must return a ValidationResult, not raise."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
     from orthograph.diagnostics.result import ValidationResult
 
-    result = validate_cypher("THIS IS NOT CYPHER %%%", graph_definition)
+    result = _validate_cypher("THIS IS NOT CYPHER %%%", graph_definition)
     assert isinstance(result, ValidationResult)
 
 
@@ -372,9 +372,9 @@ def test_validate_cypher_unparseable_is_not_valid(
     graph_definition: GraphDefinition,
 ) -> None:
     """An unparseable query must produce is_valid == False."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher("THIS IS NOT CYPHER %%%", graph_definition)
+    result = _validate_cypher("THIS IS NOT CYPHER %%%", graph_definition)
     assert not result.is_valid
 
 
@@ -382,9 +382,9 @@ def test_validate_cypher_unparseable_has_parse_error_code(
     graph_definition: GraphDefinition,
 ) -> None:
     """An unparseable query must surface a QUERY_PARSE_ERROR issue."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher("THIS IS NOT CYPHER %%%", graph_definition)
+    result = _validate_cypher("THIS IS NOT CYPHER %%%", graph_definition)
     assert any(e.code == "QUERY_PARSE_ERROR" for e in result.errors)
 
 
@@ -392,10 +392,10 @@ def test_validate_cypher_parse_error_entity_id_contains_query(
     graph_definition: GraphDefinition,
 ) -> None:
     """The QUERY_PARSE_ERROR issue entity_id should be the query string."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
     query = "TOTALLY BROKEN ###"
-    result = validate_cypher(query, graph_definition)
+    result = _validate_cypher(query, graph_definition)
     parse_errors = [e for e in result.errors if e.code == "QUERY_PARSE_ERROR"]
     assert len(parse_errors) == 1
     assert parse_errors[0].entity_id == query
@@ -517,9 +517,9 @@ def test_validate_multi_shape_correct_person_pattern(
     multi_shape_model: GraphDefinition,
 ) -> None:
     """Person-KNOWS->Person pattern resolves the Person shape and is valid."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a, b",
         multi_shape_model,
     )
@@ -530,9 +530,9 @@ def test_validate_multi_shape_correct_company_pattern(
     multi_shape_model: GraphDefinition,
 ) -> None:
     """Company-KNOWS->Company pattern resolves the Company shape and is valid."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Company)-[:KNOWS]->(b:Company) RETURN a, b",
         multi_shape_model,
     )
@@ -543,9 +543,9 @@ def test_validate_multi_shape_mismatched_endpoints_rejected(
     multi_shape_model: GraphDefinition,
 ) -> None:
     """Person-KNOWS->Company matches no declared triple → QUERY_INVALID_ENDPOINT."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Person)-[:KNOWS]->(b:Company) RETURN a, b",
         multi_shape_model,
     )
@@ -557,9 +557,9 @@ def test_validate_multi_shape_unknown_label_still_caught(
     multi_shape_model: GraphDefinition,
 ) -> None:
     """Unknown rel type not in multi-shape model still raises QUERY_UNKNOWN_REL_TYPE."""
-    from orthograph.cypher.parser import validate_cypher
+    from orthograph.cypher.parser import _validate_cypher
 
-    result = validate_cypher(
+    result = _validate_cypher(
         "MATCH (a:Person)-[:FRIEND_OF]->(b:Person) RETURN a",
         multi_shape_model,
     )

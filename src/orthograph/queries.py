@@ -12,8 +12,23 @@ reach into ``orthograph.query.*`` or ``orthograph.cypher.*``:
   (the ergonomics fix over the deprecated ``model.load_query_catalogue``).
 * **generate** — :func:`generate_crud` synthesises typed get/merge/create/delete
   queries for every node type that declares a UID.
-* **validate** — :func:`validate_query`, :func:`validate_catalogue`, and
-  :func:`validate_catalogue_against_profile` are the three static checks.
+* **validate** — six public verbs organised on a 2×2 matrix: phase × input grade.
+
+  Universal rule: a ``check_*`` verb runs syntax only and never takes a
+  :class:`~orthograph.graph_definition.graph_definition.GraphDefinition`.  A
+  ``validate*`` verb runs syntax + semantics and always requires one.  Holds in
+  both object mode (whole query) and pieces mode (raw cypher + field sets).
+
+  +----------------+-------------------------------+-----------------------------------+
+  | Phase          | Object mode                   | Pieces mode                       |
+  +================+===============================+===================================+
+  | Syntax only    | :func:`check_syntax`          | :func:`check_cypher_spec`         |
+  +----------------+-------------------------------+-----------------------------------+
+  | Syntax + sem.  | :func:`validate`              | :func:`validate_cypher_spec`      |
+  +----------------+-------------------------------+-----------------------------------+
+
+  :func:`validate_catalogue` and :func:`validate_catalogue_against_profile` are
+  catalogue-level counterparts to :func:`validate`.
 
 These delegate only — no query logic lives here.
 """
@@ -26,15 +41,20 @@ from pydantic import BaseModel
 import orthograph.cypher.validation as _cypher_validation
 from orthograph.comparison.rules import Rule
 from orthograph.cypher.base_models import CypherReadQuery, CypherWriteQuery
-from orthograph.cypher.bindings import NoIdentifiers, NoParams
+from orthograph.cypher.bindings import NoIdentifiers, NoParams, extract_cypher_params
 from orthograph.cypher.exceptions import (
     CypherCatalogueLoadError,
     CypherQueryDefinitionError,
     CypherQueryError,
 )
 from orthograph.cypher.generator import CypherGenerator
-from orthograph.cypher.parser import parse_cypher, validate_cypher
+from orthograph.cypher.parser import (
+    CypherParserStrategy,
+    _validate_cypher,
+    parse_cypher,
+)
 from orthograph.cypher.query import CypherQuery
+from orthograph.cypher.validation import check_cypher_spec, validate_cypher_spec
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_profile.models import GraphProfile
@@ -66,10 +86,12 @@ __all__ = [
     "generate_crud",
     # validate
     "parse_cypher",
-    "validate_cypher",
-    "validate_query",
+    "check_syntax",
+    "validate",
     "validate_catalogue",
     "validate_catalogue_against_profile",
+    "check_cypher_spec",
+    "validate_cypher_spec",
 ]
 
 
@@ -121,7 +143,7 @@ def simple_query(
     Operand: a Cypher string. ``params`` declares the ``$value`` parameters
     (default :class:`NoParams`); ``identifiers`` declares the ``<<name>>``
     identifier slots (default none). Returns a catalogue-citizen query — validate
-    it with :func:`validate_query` before use.
+    it with :func:`check_syntax` or :func:`validate` before use.
     """
     return CypherQuery(
         query_id=name,
@@ -153,20 +175,49 @@ def generate_crud(definition: GraphDefinition) -> QueryCatalogue:
     return catalogue
 
 
-def validate_query(
+def check_syntax(
+    query: str | CypherQuery,
+    *,
+    parser: CypherParserStrategy | None = None,
+) -> ValidationResult:
+    """Check a single query syntactically — no :class:`GraphDefinition` required.
+
+    Operand: one query — a raw Cypher ``str`` or a :class:`CypherQuery`.  Runs
+    parse, param alignment, identifier alignment, and RETURN→Output alignment
+    (stages 1–4 + 6 of the shared pipeline).  Domain checks are skipped.
+
+    Use :func:`validate` when you also want semantic validation against a graph
+    model.
+    """
+    if isinstance(query, CypherQuery):
+        return _cypher_validation._validate_cypher_query(query, None)
+    # Raw str: syntax-only — extract actual params so alignment trivially passes.
+    return _cypher_validation.check_cypher_spec(
+        cypher=query,
+        params_fields=extract_cypher_params(query),
+        query_name="<string>",
+        parser=parser,
+    )
+
+
+def validate(
     query: str | CypherQuery,
     definition: GraphDefinition,
+    *,
+    parser: CypherParserStrategy | None = None,
 ) -> ValidationResult:
     """Validate a single query against ``definition`` (static, no DB).
 
-    Operand: one query — a raw Cypher ``str`` (checked via ``validate_cypher``)
-    or a :class:`CypherQuery` (checked via its full spec validation). Check
-    ``.is_valid`` or iterate ``.issues`` on the returned
+    Operand: one query — a raw Cypher ``str`` (syntax + semantic checks) or a
+    :class:`CypherQuery` (full spec validation including param alignment).
+    Check ``.is_valid`` or iterate ``.issues`` on the returned
     :class:`~orthograph.diagnostics.result.ValidationResult`.
+
+    Use :func:`check_syntax` for syntax-only checks without a model.
     """
     if isinstance(query, CypherQuery):
-        return _cypher_validation.validate_cypher_query(query, definition)
-    return validate_cypher(query=query, graph_definition=definition)
+        return _cypher_validation._validate_cypher_query(query, definition)
+    return _validate_cypher(query=query, graph_definition=definition, parser=parser)
 
 
 def validate_catalogue(
