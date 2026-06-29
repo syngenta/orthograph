@@ -8,10 +8,27 @@ This module implements the symmetric diff rules.
 
 Two questions, two rule families:
 
-- **Satisfaction** (profile ↔ definition): ``standard_rules()`` — asymmetric,
-  uses left=declared/right=observed semantics, emits ERROR/WARNING/INFO.
-- **Diff** (profile ↔ profile, definition ↔ definition): ``diff_rules()`` —
-  symmetric, neutral left/right semantics, emits INFO only.
+- **Satisfaction** (profile ↔ definition): ``standard_rules()`` in ``rules.py``
+  — asymmetric, uses left=declared/right=observed semantics, emits
+  ERROR/WARNING/INFO.
+- **Diff** (profile ↔ profile, definition ↔ definition): ``diff_rules()`` here
+  — symmetric, neutral left/right semantics, emits INFO only.
+
+Why this module's type-comparison logic is not consolidated with ``rules.py``:
+the apparent similarity is coincidental.  ``PropertyTypeMismatchRule``
+(satisfaction) checks observed types against *one* declared storage type and
+modulates severity by prevalence — inputs are always ``(TypeInfo,
+PropertyProfile)``.  ``PropertyTypeChangedRule`` (diff) compares two *sets* of
+resolved Python types, or two declared ``python_type`` fields, for equality —
+inputs are same-kind pairs ``(TypeInfo, TypeInfo)`` or ``(PropertyProfile,
+PropertyProfile)``.  A shared core would need to dispatch across these shapes,
+adding more machinery than it removes.  Likewise, ``_rel_operand_kind`` exists
+here because the diff path must distinguish profile↔profile from
+definition↔definition at runtime; the satisfaction path has a structurally fixed
+``(DefinitionView, ProfileView)`` pairing set at the engine call site, so no
+runtime dispatch is needed there.  The only genuinely shared piece — the
+DB-type-string → Python-type mapping — already lives in ``type_mapping.py``
+and is imported by both modules.
 
 Address conventions (set by the engine, same as ``rules.py``; the ``extra``
 keys are named by the ``ADDRESS_TYPE`` / ``LABEL`` / ``PROP_NAME`` /

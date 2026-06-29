@@ -173,8 +173,8 @@ def compare_profile_to_definition(
         :func:`~orthograph.comparison.rules.standard_rules`.
         Pass a custom list to extend or replace the standard behaviour.
 
-    Implementation note
-    -------------------
+    Implementation note — the left/right inversion
+    -----------------------------------------------
     The public parameter order is ``(profile, graph_definition)`` but the
     internal :func:`_compare_views` call passes them *reversed*:
     ``left = DefinitionView(graph_definition)``,
@@ -186,6 +186,20 @@ def compare_profile_to_definition(
     ``context.left`` to read declared constraints and ``context.right`` to
     read observed data — the public argument order is just a convenience for
     callers who think in terms of "does my profile satisfy this definition?".
+
+    Why the inversion is not removed, and why ``RuleContext`` has no
+    ``declared``/``observed`` fields: :class:`~orthograph.comparison.rules.RuleContext`
+    is shared with the symmetric diff rules in ``diff_rules.py``, which treat
+    ``left`` and ``right`` as **neutral positional** operands — there is no
+    declared/observed axis in a profile↔profile or definition↔definition diff.
+    Adding role-bearing fields would bloat the shared dataclass with fields
+    that are meaningless for every diff evaluation.  Inverting the rule
+    convention instead (making satisfaction rules read ``context.right`` as
+    declared) would re-key all satisfaction rules to remove a single call-site
+    swap — a net-zero change with a large blast radius.  The inversion here is
+    the smallest, most localised expression of the convention: one reversal at
+    the one call site that crosses from the public convenience order to the
+    internal rule order.
     """
     active = rules if rules is not None else standard_rules()
     return _compare_views(DefinitionView(definition), ProfileView(profile), active)
