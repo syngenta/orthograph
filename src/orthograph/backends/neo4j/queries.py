@@ -21,7 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from orthograph.cypher.base_models import CypherReadQuery
+from orthograph.cypher.base_models import TypedCypherReadQueryModel
 from orthograph.cypher.bindings import (
     CypherQueryData,
     NoIdentifiers,
@@ -235,24 +235,24 @@ def _normalise_apoc_type_name(raw_type: str) -> str:
     return _APOC_TYPE_NAME_MAP.get(raw_type, raw_type)
 
 
-class InspectNodeLabelsQuery(CypherReadQuery[NoParams, NodeLabelRow]):
+class InspectNodeLabelsQuery(TypedCypherReadQueryModel[NoParams, NodeLabelRow]):
     """Return all node labels present in the database."""
 
-    Params = NoParams
+    params_schema = NoParams
     Output = NodeLabelRow
-    name = "neo4j.inspect.node_labels"
+    query_id = "neo4j.inspect.node_labels"
     cypher_template = "CALL db.labels() YIELD label RETURN label"
 
     def materialize(self, raw: Any) -> NodeLabelRow:
         return NodeLabelRow(label=raw["label"])
 
 
-class InspectRelTypesQuery(CypherReadQuery[NoParams, RelTypeLabelRow]):
+class InspectRelTypesQuery(TypedCypherReadQueryModel[NoParams, RelTypeLabelRow]):
     """Return all relationship types present in the database."""
 
-    Params = NoParams
+    params_schema = NoParams
     Output = RelTypeLabelRow
-    name = "neo4j.inspect.rel_types"
+    query_id = "neo4j.inspect.rel_types"
     cypher_template = (
         "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType"
     )
@@ -267,15 +267,17 @@ class InspectRelTypesQuery(CypherReadQuery[NoParams, RelTypeLabelRow]):
 with _warnings.catch_warnings():
     _warnings.simplefilter("ignore", UserWarning)
 
-    class InspectNeo4jConstraintsQuery(CypherReadQuery[NoParams, ConstraintInfo]):
+    class InspectNeo4jConstraintsQuery(
+        TypedCypherReadQueryModel[NoParams, ConstraintInfo]
+    ):
         """Return all constraints via ``SHOW CONSTRAINTS``.
 
         Uses imperative ``build()`` because the command is not standard Cypher.
         """
 
-        Params = NoParams
+        params_schema = NoParams
         Output = ConstraintInfo
-        name = "neo4j.inspect.constraints"
+        query_id = "neo4j.inspect.constraints"
         _CYPHER = (
             "SHOW CONSTRAINTS YIELD name, type, entityType,"
             " labelsOrTypes, properties, propertyType"
@@ -305,17 +307,17 @@ with _warnings.catch_warnings():
 with _warnings.catch_warnings():
     _warnings.simplefilter("ignore", UserWarning)
 
-    class ApocNodePropertiesQuery(CypherReadQuery[NoParams, NodePropertyRow]):
+    class ApocNodePropertiesQuery(TypedCypherReadQueryModel[NoParams, NodePropertyRow]):
         """Node property metadata via ``apoc.meta.nodeTypeProperties``.
 
         Uses imperative ``build()`` because ``CALL apoc.meta.* ... WHERE`` is
         not standard Cypher.
         """
 
-        Params = NoParams
+        params_schema = NoParams
         Output = NodePropertyRow
-        name = "neo4j.inspect.apoc.node_properties"
-        Identifiers = NodeLabelIdentifiers
+        query_id = "neo4j.inspect.apoc.node_properties"
+        identifiers_schema = NodeLabelIdentifiers
 
         def build(self, params: NoParams) -> CypherQueryData:
             label = render_with_identifiers(
@@ -342,7 +344,7 @@ with _warnings.catch_warnings():
                 total_observations=raw.get("totalObservations", 0),
             )
 
-    class ApocRelTypesQuery(CypherReadQuery[NoParams, DbSchemaRelTypeRow]):
+    class ApocRelTypesQuery(TypedCypherReadQueryModel[NoParams, DbSchemaRelTypeRow]):
         """Bulk relationship-property **types** via ``apoc.meta.relTypeProperties``.
 
         Under ADR-037 §6a the per-shape relationship property *counts* come from
@@ -356,10 +358,10 @@ with _warnings.catch_warnings():
         Cypher.
         """
 
-        Params = NoParams
+        params_schema = NoParams
         Output = DbSchemaRelTypeRow
-        name = "neo4j.inspect.apoc.rel_types"
-        Identifiers = NoIdentifiers
+        query_id = "neo4j.inspect.apoc.rel_types"
+        identifiers_schema = NoIdentifiers
         _CYPHER = (
             "CALL apoc.meta.relTypeProperties({sample: -1})"
             " YIELD relType, propertyName, propertyTypes"
@@ -425,7 +427,7 @@ class PresentCountRow(BaseModel):
     present_count: int
 
 
-class NodeCountQuery(CypherReadQuery[NoParams, CountRow]):
+class NodeCountQuery(TypedCypherReadQueryModel[NoParams, CountRow]):
     """Authoritative instance count for a node label (independent of properties).
 
     Property-derived counts are zero for a label/rel-type that has *no*
@@ -433,17 +435,17 @@ class NodeCountQuery(CypherReadQuery[NoParams, CountRow]):
     come from a dedicated ``count()`` that does not depend on any property.
     """
 
-    Params = NoParams
+    params_schema = NoParams
     Output = CountRow
-    name = "neo4j.inspect.node_count"
-    Identifiers = NodeLabelIdentifiers
+    query_id = "neo4j.inspect.node_count"
+    identifiers_schema = NodeLabelIdentifiers
     cypher_template = "MATCH (n:`<<label>>`) RETURN count(n) AS count"
 
     def materialize(self, raw: Any) -> CountRow:
         return CountRow(count=raw["count"])
 
 
-class RelCountQuery(CypherReadQuery[NoParams, CountRow]):
+class RelCountQuery(TypedCypherReadQueryModel[NoParams, CountRow]):
     """Authoritative instance count for one relationship *shape*.
 
     Endpoint-filtered: counts only edges of ``<<rel_type>>`` whose source carries
@@ -451,10 +453,10 @@ class RelCountQuery(CypherReadQuery[NoParams, CountRow]):
     belongs to exactly one ``(source, rel, target)`` shape.
     """
 
-    Params = NoParams
+    params_schema = NoParams
     Output = CountRow
-    name = "neo4j.inspect.rel_count"
-    Identifiers = RelTypeIdentifiers
+    query_id = "neo4j.inspect.rel_count"
+    identifiers_schema = RelTypeIdentifiers
     cypher_template = (
         "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " RETURN count(r) AS count"
@@ -464,7 +466,7 @@ class RelCountQuery(CypherReadQuery[NoParams, CountRow]):
         return CountRow(count=raw["count"])
 
 
-class NodePresentCountQuery(CypherReadQuery[NoParams, PresentCountRow]):
+class NodePresentCountQuery(TypedCypherReadQueryModel[NoParams, PresentCountRow]):
     """Authoritative non-null count for one node property.
 
     Supersedes APOC's sampled ``propertyObservations`` on the APOC no-scan path.
@@ -473,10 +475,10 @@ class NodePresentCountQuery(CypherReadQuery[NoParams, PresentCountRow]):
     (label-grammar), never an interpolated value.
     """
 
-    Params = NoParams
+    params_schema = NoParams
     Output = PresentCountRow
-    name = "neo4j.inspect.node_present_count"
-    Identifiers = _NodePropertyScanIdentifiers
+    query_id = "neo4j.inspect.node_present_count"
+    identifiers_schema = _NodePropertyScanIdentifiers
     cypher_template = (
         "MATCH (n:`<<label>>`)"
         " WHERE n.`<<property_name>>` IS NOT NULL"
@@ -487,7 +489,7 @@ class NodePresentCountQuery(CypherReadQuery[NoParams, PresentCountRow]):
         return PresentCountRow(present_count=raw["present_count"])
 
 
-class RelPresentCountQuery(CypherReadQuery[NoParams, PresentCountRow]):
+class RelPresentCountQuery(TypedCypherReadQueryModel[NoParams, PresentCountRow]):
     """Authoritative non-null count for one relationship property.
 
     Supersedes APOC's sampled ``propertyObservations`` for relationship
@@ -495,10 +497,10 @@ class RelPresentCountQuery(CypherReadQuery[NoParams, PresentCountRow]):
     :class:`NodePresentCountQuery`.
     """
 
-    Params = NoParams
+    params_schema = NoParams
     Output = PresentCountRow
-    name = "neo4j.inspect.rel_present_count"
-    Identifiers = _RelPropertyScanIdentifiers
+    query_id = "neo4j.inspect.rel_present_count"
+    identifiers_schema = _RelPropertyScanIdentifiers
     cypher_template = (
         "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " WHERE r.`<<property_name>>` IS NOT NULL"
@@ -509,16 +511,16 @@ class RelPresentCountQuery(CypherReadQuery[NoParams, PresentCountRow]):
         return PresentCountRow(present_count=raw["present_count"])
 
 
-class CypherNodePropertiesQuery(CypherReadQuery[NoParams, NodePropertyRow]):
+class CypherNodePropertiesQuery(TypedCypherReadQueryModel[NoParams, NodePropertyRow]):
     """Node property metadata via a two-pass MATCH/UNWIND scan (no APOC).
 
     ``propertyTypes`` is always ``[]``.  ``totalObservations`` is the node count.
     """
 
-    Params = NoParams
+    params_schema = NoParams
     Output = NodePropertyRow
-    name = "neo4j.inspect.cypher.node_properties"
-    Identifiers = NodeLabelIdentifiers
+    query_id = "neo4j.inspect.cypher.node_properties"
+    identifiers_schema = NodeLabelIdentifiers
     cypher_template = (
         "MATCH (n:`<<label>>`)"
         " WITH count(n) AS total"
@@ -540,7 +542,7 @@ class CypherNodePropertiesQuery(CypherReadQuery[NoParams, NodePropertyRow]):
         )
 
 
-class CypherRelPropertiesQuery(CypherReadQuery[NoParams, NodePropertyRow]):
+class CypherRelPropertiesQuery(TypedCypherReadQueryModel[NoParams, NodePropertyRow]):
     """Per-shape relationship property metadata via MATCH/UNWIND scan (no APOC).
 
     Endpoint-filtered: scans only edges of ``<<rel_type>>`` between
@@ -549,10 +551,10 @@ class CypherRelPropertiesQuery(CypherReadQuery[NoParams, NodePropertyRow]):
     ``db.schema`` map, keyed by bare rel type).
     """
 
-    Params = NoParams
+    params_schema = NoParams
     Output = NodePropertyRow
-    name = "neo4j.inspect.cypher.rel_properties"
-    Identifiers = RelTypeIdentifiers
+    query_id = "neo4j.inspect.cypher.rel_properties"
+    identifiers_schema = RelTypeIdentifiers
     cypher_template = (
         "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " WITH count(r) AS total"
@@ -586,13 +588,15 @@ class CypherRelPropertiesQuery(CypherReadQuery[NoParams, NodePropertyRow]):
 with _warnings.catch_warnings():
     _warnings.simplefilter("ignore", UserWarning)
 
-    class DbSchemaNodeTypesQuery(CypherReadQuery[NoParams, DbSchemaNodeTypeRow]):
+    class DbSchemaNodeTypesQuery(
+        TypedCypherReadQueryModel[NoParams, DbSchemaNodeTypeRow]
+    ):
         """Bulk node-property types via ``db.schema.nodeTypeProperties()``."""
 
-        Params = NoParams
+        params_schema = NoParams
         Output = DbSchemaNodeTypeRow
-        name = "neo4j.inspect.schema.node_types"
-        Identifiers = NoIdentifiers
+        query_id = "neo4j.inspect.schema.node_types"
+        identifiers_schema = NoIdentifiers
         _CYPHER = (
             "CALL db.schema.nodeTypeProperties()"
             " YIELD nodeType, nodeLabels, propertyName, propertyTypes, mandatory"
@@ -608,13 +612,15 @@ with _warnings.catch_warnings():
                 observed_types=coerce_types(raw.get("propertyTypes")),
             )
 
-    class DbSchemaRelTypesQuery(CypherReadQuery[NoParams, DbSchemaRelTypeRow]):
+    class DbSchemaRelTypesQuery(
+        TypedCypherReadQueryModel[NoParams, DbSchemaRelTypeRow]
+    ):
         """Bulk relationship-property types via ``db.schema.relTypeProperties()``."""
 
-        Params = NoParams
+        params_schema = NoParams
         Output = DbSchemaRelTypeRow
-        name = "neo4j.inspect.schema.rel_types"
-        Identifiers = NoIdentifiers
+        query_id = "neo4j.inspect.schema.rel_types"
+        identifiers_schema = NoIdentifiers
         _CYPHER = (
             "CALL db.schema.relTypeProperties()"
             " YIELD relType, propertyName, propertyTypes, mandatory"
@@ -640,7 +646,7 @@ with _warnings.catch_warnings():
 # ---------------------------------------------------------------------------
 
 
-class ApocNodeTypeCountsQuery(CypherReadQuery[NoParams, TypeCountRow]):
+class ApocNodeTypeCountsQuery(TypedCypherReadQueryModel[NoParams, TypeCountRow]):
     """Exact per-type counts for a node property (group by runtime type).
 
     Groups the property's non-null values by ``apoc.meta.cypher.type(v)`` and
@@ -648,10 +654,10 @@ class ApocNodeTypeCountsQuery(CypherReadQuery[NoParams, TypeCountRow]):
     and exact even on a UID / free-text column.
     """
 
-    Params = NoParams
+    params_schema = NoParams
     Output = TypeCountRow
-    name = "neo4j.inspect.apoc.node_type_counts"
-    Identifiers = _NodePropertyScanIdentifiers
+    query_id = "neo4j.inspect.apoc.node_type_counts"
+    identifiers_schema = _NodePropertyScanIdentifiers
     cypher_template = (
         "MATCH (n:`<<label>>`)"
         " WHERE n.`<<property_name>>` IS NOT NULL"
@@ -667,13 +673,13 @@ class ApocNodeTypeCountsQuery(CypherReadQuery[NoParams, TypeCountRow]):
         )
 
 
-class ApocRelTypeCountsQuery(CypherReadQuery[NoParams, TypeCountRow]):
+class ApocRelTypeCountsQuery(TypedCypherReadQueryModel[NoParams, TypeCountRow]):
     """Exact per-type counts for a relationship property (group by runtime type)."""
 
-    Params = NoParams
+    params_schema = NoParams
     Output = TypeCountRow
-    name = "neo4j.inspect.apoc.rel_type_counts"
-    Identifiers = _RelPropertyScanIdentifiers
+    query_id = "neo4j.inspect.apoc.rel_type_counts"
+    identifiers_schema = _RelPropertyScanIdentifiers
     cypher_template = (
         "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " WHERE r.`<<property_name>>` IS NOT NULL"
@@ -689,7 +695,9 @@ class ApocRelTypeCountsQuery(CypherReadQuery[NoParams, TypeCountRow]):
         )
 
 
-class ApocNodeValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow]):
+class ApocNodeValueHistogramQuery(
+    TypedCypherReadQueryModel[TopNParams, ValueHistogramRow]
+):
     """Bounded value histogram for a node property (group by value, LIMIT top_n).
 
     The only truncating part of the scan: groups by the JSON-coerced value,
@@ -714,10 +722,10 @@ class ApocNodeValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow]
     remainder is reconciled into ``other_count`` by the inspector (E46.2).
     """
 
-    Params = TopNParams
+    params_schema = TopNParams
     Output = ValueHistogramRow
-    name = "neo4j.inspect.apoc.node_value_histogram"
-    Identifiers = _NodePropertyScanIdentifiers
+    query_id = "neo4j.inspect.apoc.node_value_histogram"
+    identifiers_schema = _NodePropertyScanIdentifiers
     cypher_template = (
         "MATCH (n:`<<label>>`)"
         " WHERE n.`<<property_name>>` IS NOT NULL"
@@ -735,7 +743,9 @@ class ApocNodeValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow]
         )
 
 
-class ApocRelValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow]):
+class ApocRelValueHistogramQuery(
+    TypedCypherReadQueryModel[TopNParams, ValueHistogramRow]
+):
     """Bounded value histogram for a relationship property (group by value).
 
     Uses ``apoc.convert.toJson(value)`` as the grouping key so all Neo4j storage
@@ -745,10 +755,10 @@ class ApocRelValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow])
     the NetworkX ``str(value)`` tie-break.
     """
 
-    Params = TopNParams
+    params_schema = TopNParams
     Output = ValueHistogramRow
-    name = "neo4j.inspect.apoc.rel_value_histogram"
-    Identifiers = _RelPropertyScanIdentifiers
+    query_id = "neo4j.inspect.apoc.rel_value_histogram"
+    identifiers_schema = _RelPropertyScanIdentifiers
     cypher_template = (
         "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " WHERE r.`<<property_name>>` IS NOT NULL"
@@ -781,7 +791,9 @@ class ApocRelValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow])
 # ---------------------------------------------------------------------------
 
 
-class CypherNodeValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow]):
+class CypherNodeValueHistogramQuery(
+    TypedCypherReadQueryModel[TopNParams, ValueHistogramRow]
+):
     """Bounded scalar value histogram for a node property (no APOC).
 
     Groups on ``toStringOrNull(value)`` — the list-safe scalar key: a list / map /
@@ -792,10 +804,10 @@ class CypherNodeValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRo
     fold into ``other_count`` via the inspector.
     """
 
-    Params = TopNParams
+    params_schema = TopNParams
     Output = ValueHistogramRow
-    name = "neo4j.inspect.cypher.node_value_histogram"
-    Identifiers = _NodePropertyScanIdentifiers
+    query_id = "neo4j.inspect.cypher.node_value_histogram"
+    identifiers_schema = _NodePropertyScanIdentifiers
     cypher_template = (
         "MATCH (n:`<<label>>`)"
         " WITH toStringOrNull(n.`<<property_name>>`) AS value"
@@ -813,17 +825,19 @@ class CypherNodeValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRo
         )
 
 
-class CypherRelValueHistogramQuery(CypherReadQuery[TopNParams, ValueHistogramRow]):
+class CypherRelValueHistogramQuery(
+    TypedCypherReadQueryModel[TopNParams, ValueHistogramRow]
+):
     """Bounded scalar value histogram for a relationship property (no APOC).
 
     Mirrors :class:`CypherNodeValueHistogramQuery` (``toStringOrNull`` key,
     scalars only, lists dropped, ``LIMIT $top_n``) for relationship properties.
     """
 
-    Params = TopNParams
+    params_schema = TopNParams
     Output = ValueHistogramRow
-    name = "neo4j.inspect.cypher.rel_value_histogram"
-    Identifiers = _RelPropertyScanIdentifiers
+    query_id = "neo4j.inspect.cypher.rel_value_histogram"
+    identifiers_schema = _RelPropertyScanIdentifiers
     cypher_template = (
         "MATCH (:`<<source_label>>`)-[r:`<<rel_type>>`]->(:`<<target_label>>`)"
         " WITH toStringOrNull(r.`<<property_name>>`) AS value"

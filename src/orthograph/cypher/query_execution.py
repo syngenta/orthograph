@@ -10,11 +10,16 @@ driver), runs the statement, and materialises each record.
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from pydantic import BaseModel
-
 from orthograph.cypher.exceptions import CypherSyntaxError
 from orthograph.cypher.parser import parse_cypher
-from orthograph.query.base_models import D, Executor, P, R, ReadQuery, WriteQuery
+from orthograph.query.base_models import (
+    D,
+    Executor,
+    P,
+    R,
+    ReadQueryModel,
+    WriteQueryModel,
+)
 
 
 @dataclass
@@ -28,7 +33,7 @@ class CypherWriteResultSummary:
 
     Example::
 
-        # In a CypherWriteQuery.interpret_result implementation:
+        # In a TypedCypherWriteQueryModel.interpret_result implementation:
         def interpret_result(self, raw: WriteResultSummary) -> int:
             return raw.nodes_created
     """
@@ -82,54 +87,37 @@ class CypherExecutor(Executor):
                 f"Query '{query_name}' produced unparseable Cypher: {exc}"
             ) from exc
 
-    @staticmethod
-    def _query_shape(query: Any) -> tuple[type[BaseModel], str]:
-        """Return ``(params_model, query_identity)`` for either query shape.
-
-        This is the **single** place in the executor that knows two query
-        shapes coexist: the typed ``ReadQuery``/``WriteQuery`` (``Params`` /
-        ``name``) and the simple ``CypherQuery``-fed adapters (``params_schema``
-        / ``query_id``).  Both names describe the *same* concept; the divergence
-        is accidental and slated for removal — the typed shape will adopt the
-        Cypher names (``params_schema`` / ``query_id``) so the two paths share
-        one vocabulary and this reconciliation disappears.  See E59
-        (query-shape alignment) and ADR-042.  Until then, every other method
-        reads through this one mapping rather than re-spelling the fallback.
-        """
-        params_model = getattr(query, "params_schema", None) or query.Params
-        query_identity = getattr(query, "query_id", None) or query.name
-        return params_model, query_identity
-
     def _prepare_statement(
         self, query: Any, raw_params: Any
     ) -> tuple[str, dict[str, Any], str]:
-        """Shared read/write prologue: resolve shape → validate → build → parse.
+        """Shared read/write prologue: validate → build → parse.
 
         Returns ``(cypher, qparams, query_identity)`` ready to hand to a
         session.  The only difference between ``read`` and ``write`` is what
         happens *after* this — transaction handling — so the prologue lives
         here once and the two verbs keep their distinct I/O tails.
         """
-        params_model, query_identity = self._query_shape(query)
+        params_model = query.params_schema
+        query_identity = query.query_id
         params = params_model.model_validate(raw_params)
         cypher, qparams = query.build(params)
         self._validate_cypher(cypher, query_identity)  # runtime syntax check
         return cypher, qparams, query_identity
 
-    def read(self, query: ReadQuery[P, D], raw_params: Any) -> list[D]:
+    def read(self, query: ReadQueryModel[P, D], raw_params: Any) -> list[D]:
         """Validate params → build → parse Cypher → run → materialise (no commit)."""
         cypher, qparams, _ = self._prepare_statement(query, raw_params)
         with self._driver_factory() as session:  # only I/O seam
             # Auto-commit: read() runs a single statement via session.run() and
             # does not open an explicit transaction (unlike write()). This is
-            # deliberate — the typed Params/build contract produces exactly one
+            # deliberate — the typed params/build contract produces exactly one
             # statement per query, so multi-statement read isolation is out of
             # scope. A read that needs read-isolation across statements is not
             # representable here and is not a supported use case.
             records = list(session.run(cypher, **qparams))
             return [query.materialize(dict(rec)) for rec in records]
 
-    def write(self, query: WriteQuery[P, R], raw_params: Any) -> R:
+    def write(self, query: WriteQueryModel[P, R], raw_params: Any) -> R:
         """Validate params → build → parse Cypher → run → commit.
 
         The driver result is consumed immediately via
@@ -159,73 +147,3 @@ class CypherExecutor(Executor):
                     pass
                 raise
             return interpreted
-
-
-class CypherQueryReadAdapter:
-    """Thin adapter that lets a :class:`~orthograph.cypher.query.CypherQuery`
-    be passed to :meth:`CypherExecutor.read`.
-
-    The adapter bridges the ``CypherQuery.build(**kwargs)`` signature to the
-    ``ReadQuery.build(params)`` shape that ``CypherExecutor`` expects.  Read
-    results are returned as ``list[dict]`` via an identity materialiser — raw
-    rows for the untyped on-ramp.
-
-    Usage::
-
-        adapter = CypherQueryReadAdapter(query)
-        rows = executor.read(adapter, {"movie_id": "M-001"})
-        # rows is list[dict[str, Any]]
-    """
-
-    def __init__(self, query: Any) -> None:  # query: CypherQuery
-        self._query = query
-        self.params_schema: type[BaseModel] = query.params_schema
-        self.query_id: str = query.query_id
-        self.backend = query.backend
-
-    def build(self, params: BaseModel) -> Any:
-        """Delegate to the wrapped query, unpacking the params model.
-
-        Optional args defaulting to ``None`` are excluded so they do not
-        appear in the Cypher parameter dict (matches the simple path contract).
-        """
-        return self._query.build(**params.model_dump(exclude_none=True))
-
-    def materialize(self, raw: dict[str, Any]) -> dict[str, Any]:
-        """Identity materialiser — returns raw rows as plain dicts."""
-        return dict(raw)
-
-
-class CypherQueryWriteAdapter:
-    """Thin adapter that lets a :class:`~orthograph.cypher.query.CypherQuery`
-    be passed to :meth:`CypherExecutor.write`.
-
-    Write result is the full :class:`CypherWriteResultSummary` — raw counters
-    for the untyped on-ramp, matching the read adapter's identity-materialiser
-    philosophy.  The caller inspects whichever counter(s) they need.
-
-    Usage::
-
-        adapter = CypherQueryWriteAdapter(query)
-        summary = executor.write(adapter, {"movie_id": "M-001"})
-        # summary is CypherWriteResultSummary
-        print(summary.properties_set, summary.nodes_created)
-    """
-
-    def __init__(self, query: Any) -> None:  # query: CypherQuery
-        self._query = query
-        self.params_schema: type[BaseModel] = query.params_schema
-        self.query_id: str = query.query_id
-        self.backend = query.backend
-
-    def build(self, params: BaseModel) -> Any:
-        """Delegate to the wrapped query, unpacking the params model.
-
-        Optional args defaulting to ``None`` are excluded so they do not
-        appear in the Cypher parameter dict (matches the simple path contract).
-        """
-        return self._query.build(**params.model_dump(exclude_none=True))
-
-    def interpret_result(self, raw: Any) -> Any:
-        """Return the write summary unchanged — raw for the untyped on-ramp."""
-        return raw

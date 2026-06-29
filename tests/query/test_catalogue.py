@@ -1,6 +1,6 @@
 """Tests for QueryCatalogue and QueryDescription.
 
-The catalogue is a typed object registry: it stores ReadQuery / WriteQuery
+The catalogue is a typed object registry: it stores ReadQueryModel / WriteQueryModel
 instances and introspects them via describe(). Queries reference their Output
 model by direct import — there is no string-key model lookup.
 """
@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from orthograph.query.base_models import Backend, ReadQuery, WriteQuery
+from orthograph.query.base_models import Backend, ReadQueryModel, WriteQueryModel
 from orthograph.query.catalogue import QueryCatalogue, QueryDescription
 
 
@@ -23,10 +23,10 @@ class SampleOutput(BaseModel):
     label: str
 
 
-class SamplesByProtocol(ReadQuery[ProtocolParams, SampleOutput]):
-    Params = ProtocolParams
+class SamplesByProtocol(ReadQueryModel[ProtocolParams, SampleOutput]):
+    params_schema = ProtocolParams
     Output = SampleOutput
-    name = "samples_by_protocol"
+    query_id = "samples_by_protocol"
     backend = Backend.CYPHER
 
     def build(self, params: ProtocolParams) -> tuple[str, dict[str, Any]]:
@@ -36,12 +36,12 @@ class SamplesByProtocol(ReadQuery[ProtocolParams, SampleOutput]):
         return SampleOutput(**raw)
 
 
-class SamplesByProtocolSql(ReadQuery[ProtocolParams, SampleOutput]):
+class SamplesByProtocolSql(ReadQueryModel[ProtocolParams, SampleOutput]):
     """Same logical read, different backend, identical Output type."""
 
-    Params = ProtocolParams
+    params_schema = ProtocolParams
     Output = SampleOutput
-    name = "samples_by_protocol_sql"
+    query_id = "samples_by_protocol_sql"
     backend = Backend.SQLALCHEMY
 
     def build(self, params: ProtocolParams) -> str:
@@ -51,9 +51,9 @@ class SamplesByProtocolSql(ReadQuery[ProtocolParams, SampleOutput]):
         return SampleOutput(**raw)
 
 
-class CreateSample(WriteQuery[ProtocolParams, int]):
-    Params = ProtocolParams
-    name = "create_sample"
+class CreateSample(WriteQueryModel[ProtocolParams, int]):
+    params_schema = ProtocolParams
+    query_id = "create_sample"
     backend = Backend.CYPHER
 
     def build(self, params: ProtocolParams) -> tuple[str, dict[str, Any]]:
@@ -63,10 +63,10 @@ class CreateSample(WriteQuery[ProtocolParams, int]):
         return 1
 
 
-class CreateSampleWithOutput(WriteQuery[ProtocolParams, dict[str, Any]]):
-    Params = ProtocolParams
+class CreateSampleWithOutput(WriteQueryModel[ProtocolParams, dict[str, Any]]):
+    params_schema = ProtocolParams
     Output = SampleOutput
-    name = "create_sample_with_output"
+    query_id = "create_sample_with_output"
     backend = Backend.CYPHER
 
     def build(self, params: ProtocolParams) -> tuple[str, dict[str, Any]]:
@@ -104,7 +104,7 @@ def test_describe_returns_read_and_write() -> None:
     query_catalogue.register_read(SamplesByProtocol())
     query_catalogue.register_write(CreateSample())
 
-    descriptions = {d.name: d for d in query_catalogue.describe()}
+    descriptions = {d.query_id: d for d in query_catalogue.describe()}
 
     assert set(descriptions) == {"samples_by_protocol", "create_sample"}
     assert all(isinstance(d, QueryDescription) for d in descriptions.values())
@@ -179,9 +179,9 @@ def test_duplicate_write_name_raises_value_error() -> None:
 def test_read_and_write_sharing_a_name_raises_value_error() -> None:
     """A read and a write cannot share a name within one catalogue."""
 
-    class ClashingWrite(WriteQuery[ProtocolParams, int]):
-        Params = ProtocolParams
-        name = "samples_by_protocol"  # same name as the read
+    class ClashingWrite(WriteQueryModel[ProtocolParams, int]):
+        params_schema = ProtocolParams
+        query_id = "samples_by_protocol"  # same name as the read
         backend = Backend.CYPHER
 
         def build(self, params: ProtocolParams) -> tuple[str, dict[str, Any]]:
@@ -210,7 +210,7 @@ def test_two_backends_same_logical_read_share_output_schema() -> None:
     query_catalogue.register_read(SamplesByProtocol())  # CYPHER
     query_catalogue.register_read(SamplesByProtocolSql())  # SQLALCHEMY
 
-    by_name = {d.name: d for d in query_catalogue.describe()}
+    by_name = {d.query_id: d for d in query_catalogue.describe()}
     cypher = by_name["samples_by_protocol"]
     sql = by_name["samples_by_protocol_sql"]
 
@@ -226,11 +226,11 @@ def test_describe_filtered_by_backend() -> None:
     query_catalogue.register_write(CreateSample())  # CYPHER write
 
     cypher = query_catalogue.describe(backend=Backend.CYPHER)
-    assert {d.name for d in cypher} == {"samples_by_protocol", "create_sample"}
+    assert {d.query_id for d in cypher} == {"samples_by_protocol", "create_sample"}
     assert all(d.backend == Backend.CYPHER for d in cypher)
 
     sql = query_catalogue.describe(backend=Backend.SQLALCHEMY)
-    assert {d.name for d in sql} == {"samples_by_protocol_sql"}
+    assert {d.query_id for d in sql} == {"samples_by_protocol_sql"}
 
 
 def test_describe_no_backend_returns_all() -> None:
@@ -346,7 +346,7 @@ def test_get_returns_description_for_registered_read() -> None:
     query_catalogue.register_read(SamplesByProtocol())
 
     desc = query_catalogue.get("samples_by_protocol")
-    assert desc.name == "samples_by_protocol"
+    assert desc.query_id == "samples_by_protocol"
     assert desc.kind == "read"
     assert desc.output_class is SampleOutput
 
@@ -357,7 +357,7 @@ def test_get_returns_description_for_registered_write() -> None:
     query_catalogue.register_write(CreateSample())
 
     desc = query_catalogue.get("create_sample")
-    assert desc.name == "create_sample"
+    assert desc.query_id == "create_sample"
     assert desc.kind == "write"
 
 

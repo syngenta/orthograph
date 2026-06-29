@@ -84,7 +84,7 @@ def test_from_import_resolves() -> None:
     from orthograph.compare import Rule, profile_to_definition
     from orthograph.definition import CardinalitySpec, GraphDefinition, NodeModel
     from orthograph.discovery import available
-    from orthograph.execution import ReadQuery, WriteQuery
+    from orthograph.execution import ReadQueryModel, WriteQueryModel
     from orthograph.profile import GraphProfile, inspect_networkx
     from orthograph.queries import QueryCatalogue, new_catalogue
     from orthograph.rendering import RenderFormat, render_model
@@ -98,8 +98,8 @@ def test_from_import_resolves() -> None:
     assert Rule is not None
     assert QueryCatalogue is not None
     assert new_catalogue is not None
-    assert ReadQuery is not None
-    assert WriteQuery is not None
+    assert ReadQueryModel is not None
+    assert WriteQueryModel is not None
     assert available is not None
     assert render_model is not None
     assert RenderFormat is not None
@@ -150,10 +150,10 @@ def test_key_types_reachable() -> None:
     assert orthograph.profile.GraphProfile is not None
     assert orthograph.queries.QueryCatalogue is not None
     assert orthograph.queries.CypherQuery is not None
-    assert orthograph.queries.CypherReadQuery is not None
-    assert orthograph.queries.CypherWriteQuery is not None
-    assert orthograph.execution.ReadQuery is not None
-    assert orthograph.execution.WriteQuery is not None
+    assert orthograph.queries.TypedCypherReadQueryModel is not None
+    assert orthograph.queries.TypedCypherWriteQueryModel is not None
+    assert orthograph.execution.ReadQueryModel is not None
+    assert orthograph.execution.WriteQueryModel is not None
     assert orthograph.rendering.RenderFormat is not None
 
 

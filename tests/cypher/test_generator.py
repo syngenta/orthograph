@@ -5,8 +5,8 @@ from typing import Optional
 import pytest
 
 from orthograph.cypher.base_models import (
-    CypherReadQuery,
-    CypherWriteQuery,
+    TypedCypherReadQueryModel,
+    TypedCypherWriteQueryModel,
 )
 from orthograph.cypher.exceptions import (
     CypherIdentifierError,
@@ -527,9 +527,9 @@ def test_create_relationship_declared_property_unchanged(
 
 # --- Typed-query emission --------------------------------------------------
 #
-# The generator can emit CypherReadQuery / CypherWriteQuery instances that
-# register in a QueryCatalogue, carry Params/Output models, bake the model-fixed
-# label as a validated literal, and pass the definition-time $param ↔ Params
+# The generator can emit TypedCypherReadQueryModel /
+# TypedCypherWriteQueryModel instances that register in a QueryCatalogue, carry
+# Params/Output models, bake the model-fixed label as a validated literal, and
 # alignment check.
 
 
@@ -550,14 +550,13 @@ class _InjectedLabelUidNode(NodeModel):
 def test_match_by_uid_query_returns_typed_read(
     graph_definition: GraphDefinition,
 ) -> None:
-    """match_by_uid_query(Person) returns a CYPHER CypherReadQuery whose Output
-    is Person and whose build() parameterises the UID."""
+    """match_by_uid_query returns read query with Output=node type."""
     gen = CypherGenerator(graph_definition)
     query = gen.match_by_uid_query(Person)
-    assert isinstance(query, CypherReadQuery)
+    assert isinstance(query, TypedCypherReadQueryModel)
     assert query.backend is Backend.CYPHER
     assert query.Output is Person
-    cypher, params = query.build(query.Params(name="Alice"))
+    cypher, params = query.build(query.params_schema(name="Alice"))
     assert params == {"name": "Alice"}
 
 
@@ -567,7 +566,7 @@ def test_match_by_uid_query_references_only_model_identifiers(
     """The generated query references only model identifiers (:Person, $name)."""
     gen = CypherGenerator(graph_definition)
     query = gen.match_by_uid_query(Person)
-    cypher, _ = query.build(query.Params(name="Alice"))
+    cypher, _ = query.build(query.params_schema(name="Alice"))
     assert ":Person" in cypher
     assert "$name" in cypher
 
@@ -580,27 +579,27 @@ def test_match_by_uid_query_passes_definition_time_validation(
     gen = CypherGenerator(graph_definition)
     # Construction itself runs the class-definition-time validator.
     query = gen.match_by_uid_query(Movie)
-    assert isinstance(query, CypherReadQuery)
+    assert isinstance(query, TypedCypherReadQueryModel)
 
 
 def test_merge_query_returns_typed_write(graph_definition: GraphDefinition) -> None:
-    """merge_query(Person) returns a CYPHER CypherWriteQuery merging by UID."""
+    """merge_query returns write query merging node by UID."""
     gen = CypherGenerator(graph_definition)
     query = gen.merge_query(Person)
-    assert isinstance(query, CypherWriteQuery)
+    assert isinstance(query, TypedCypherWriteQueryModel)
     assert query.backend is Backend.CYPHER
-    cypher, params = query.build(query.Params(name="Alice", age=30))
+    cypher, params = query.build(query.params_schema(name="Alice", age=30))
     assert "MERGE (n:Person {name: $name})" in cypher
     assert "SET" in cypher
     assert params == {"name": "Alice", "age": 30, "email": None}
 
 
 def test_create_query_returns_typed_write(graph_definition: GraphDefinition) -> None:
-    """create_query(Person) returns a CYPHER CypherWriteQuery creating a node."""
+    """create_query returns write query creating a node."""
     gen = CypherGenerator(graph_definition)
     query = gen.create_query(Person)
-    assert isinstance(query, CypherWriteQuery)
-    cypher, _ = query.build(query.Params(name="Alice", age=30))
+    assert isinstance(query, TypedCypherWriteQueryModel)
+    cypher, _ = query.build(query.params_schema(name="Alice", age=30))
     assert cypher.startswith("CREATE (n:Person {")
     assert ":Person" in cypher
 
@@ -611,8 +610,8 @@ def test_delete_by_uid_query_produces_detach_delete(
     """delete_by_uid_query(Person) produces a DETACH DELETE with a parameterised UID."""
     gen = CypherGenerator(graph_definition)
     query = gen.delete_by_uid_query(Person)
-    assert isinstance(query, CypherWriteQuery)
-    cypher, params = query.build(query.Params(name="Alice"))
+    assert isinstance(query, TypedCypherWriteQueryModel)
+    cypher, params = query.build(query.params_schema(name="Alice"))
     assert "DETACH DELETE" in cypher
     assert "$name" in cypher
     assert params == {"name": "Alice"}
@@ -643,7 +642,7 @@ def test_generated_queries_register_in_catalogue(
 
     descriptions = query_catalogue.describe()
     assert len(descriptions) == 4
-    kinds = {d.name: d.kind for d in descriptions}
+    kinds = {d.query_id: d.kind for d in descriptions}
     assert kinds["match_person_by_uid"] == "read"
     assert kinds["merge_person"] == "write"
     assert kinds["create_person"] == "write"
@@ -681,7 +680,7 @@ def test_create_query_works_without_uid_field() -> None:
     )
     gen = CypherGenerator(no_uid_model)
     query = gen.create_query(_NoUidNodeT4)
-    cypher, params = query.build(query.Params(name="x"))
+    cypher, params = query.build(query.params_schema(name="x"))
     assert cypher.startswith("CREATE (n:Tag {")
     assert params == {"name": "x"}
 

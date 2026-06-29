@@ -1,9 +1,9 @@
 """Query base classes for the GQLAlchemy builder dialect.
 
 ``build()`` returns a GQLAlchemy builder object (not a ``(cypher, dict)`` tuple).
-``Identifiers`` field values are validated via ``validated_label`` before being
-passed to ``node(labels=...)`` or ``.to(relationship_type=...)``.
-``Params`` values go into ``.where(...)`` bindings.
+``identifiers_schema`` field values are validated via ``validated_label`` before
+being passed to ``node(labels=...)`` or ``.to(relationship_type=...)``.
+``params_schema`` values go into ``.where(...)`` bindings.
 ``materialize()`` is abstract for reads; ``interpret_result()`` is abstract for writes.
 """
 
@@ -14,7 +14,14 @@ from pydantic import BaseModel
 
 from orthograph.cypher.bindings import NoIdentifiers, identifier_kind
 from orthograph.cypher.identifiers import validate_identifier
-from orthograph.query.base_models import Backend, D, P, R, ReadQuery, WriteQuery
+from orthograph.query.base_models import (
+    Backend,
+    D,
+    P,
+    R,
+    ReadQueryModel,
+    WriteQueryModel,
+)
 
 
 def validated_label(value: str, *, field_name: str = "label") -> str:
@@ -26,15 +33,15 @@ def validated_label(value: str, *, field_name: str = "label") -> str:
     return validate_identifier(value, kind=identifier_kind(field_name))
 
 
-class GqlAlchemyReadQuery(ReadQuery[P, D], Generic[P, D]):
+class GqlAlchemyReadQueryModel(ReadQueryModel[P, D], Generic[P, D]):
     """Read query base for the GQLAlchemy builder dialect."""
 
     backend = Backend.GQLALCHEMY
-    Identifiers: ClassVar[type[BaseModel]] = NoIdentifiers
+    identifiers_schema: ClassVar[type[BaseModel]] = NoIdentifiers
 
     def __init__(self, identifiers: BaseModel | dict[str, Any] | None = None) -> None:
         identifiers = {} if identifiers is None else identifiers
-        self._identifiers = type(self).Identifiers.model_validate(identifiers)
+        self._identifiers = type(self).identifiers_schema.model_validate(identifiers)
 
     @abstractmethod
     def build(self, params: P) -> Any:
@@ -45,15 +52,15 @@ class GqlAlchemyReadQuery(ReadQuery[P, D], Generic[P, D]):
         """Pure per-record mapping from a raw GQLAlchemy result row to Output."""
 
 
-class GqlAlchemyWriteQuery(WriteQuery[P, R], Generic[P, R]):
+class GqlAlchemyWriteQueryModel(WriteQueryModel[P, R], Generic[P, R]):
     """Write query base for the GQLAlchemy builder dialect."""
 
     backend = Backend.GQLALCHEMY
-    Identifiers: ClassVar[type[BaseModel]] = NoIdentifiers
+    identifiers_schema: ClassVar[type[BaseModel]] = NoIdentifiers
 
     def __init__(self, identifiers: BaseModel | dict[str, Any] | None = None) -> None:
         identifiers = {} if identifiers is None else identifiers
-        self._identifiers = type(self).Identifiers.model_validate(identifiers)
+        self._identifiers = type(self).identifiers_schema.model_validate(identifiers)
 
     @abstractmethod
     def build(self, params: P) -> Any:

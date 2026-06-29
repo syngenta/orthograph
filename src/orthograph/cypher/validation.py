@@ -8,8 +8,8 @@ branch extractors:
     kind                    | extractor                    | guards
     ------------------------|------------------------------|--------------------
     CypherQuery             | _extract_cypher_query_spec   | none
-    ReadQuery / WriteQuery  | _extract_typed_query_spec    | non-Cypher backend,
-                            |                              | imperative (no
+    ReadQueryModel /        | _extract_typed_query_spec    | non-Cypher backend,
+    WriteQueryModel         |                              | imperative (no
                             |                              | template), identifier
                             |                              | injection
 
@@ -50,7 +50,7 @@ from orthograph.diagnostics.result import ValidationIssue, ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel, RelationshipModel
 from orthograph.graph_profile.models import GraphProfile
-from orthograph.query.base_models import Backend, ReadQuery, WriteQuery
+from orthograph.query.base_models import Backend, ReadQueryModel, WriteQueryModel
 from orthograph.query.catalogue import QueryCatalogue
 
 
@@ -291,9 +291,9 @@ def _extract_cypher_query_spec(
 
 def _extract_typed_query_spec(
     query_name: str,
-    query: "ReadQuery[Any, Any] | WriteQuery[Any, Any]",
+    query: "ReadQueryModel[Any, Any] | WriteQueryModel[Any, Any]",
 ) -> "tuple[str, set[str], set[str], type[BaseModel] | None] | ValidationResult":
-    """Extract the spec 4-tuple from a typed (ReadQuery / WriteQuery).
+    """Extract the spec 4-tuple from a typed (ReadQueryModel / WriteQueryModel).
 
     Returns a ValidationResult sentinel when any guard fires:
       1. Non-Cypher backend.
@@ -330,17 +330,19 @@ def _extract_typed_query_spec(
         return result
 
     query_type = type(query)
-    params_fields = _inner_model_fields(query_type, "Params")
-    identifier_fields = _inner_model_fields(query_type, "Identifiers")
+    params_fields = _inner_model_fields(query_type, "params_schema")
+    identifier_fields = _inner_model_fields(query_type, "identifiers_schema")
     output_cls: type[BaseModel] | None = (
-        getattr(query_type, "Output", None) if isinstance(query, ReadQuery) else None
+        getattr(query_type, "Output", None)
+        if isinstance(query, ReadQueryModel)
+        else None
     )
     return (template, params_fields, identifier_fields, output_cls)
 
 
 def _extract_query_spec(
     query_name: str,
-    query: "CypherQuery | ReadQuery[Any, Any] | WriteQuery[Any, Any]",
+    query: "CypherQuery | ReadQueryModel[Any, Any] | WriteQueryModel[Any, Any]",
 ) -> "tuple[str, set[str], set[str], type[BaseModel] | None] | ValidationResult":
     """Dispatch to the appropriate spec extractor based on query kind.
 
@@ -350,8 +352,9 @@ def _extract_query_spec(
 
     Dispatch table:
 
-        CypherQuery            → :func:`_extract_cypher_query_spec` (no guards)
-        ReadQuery / WriteQuery → :func:`_extract_typed_query_spec` (3 guards)
+        CypherQuery → :func:`_extract_cypher_query_spec` (no guards)
+        ReadQueryModel / WriteQueryModel → :func:`_extract_typed_query_spec`
+        (3 guards)
     """
     if isinstance(query, CypherQuery):
         return _extract_cypher_query_spec(query)
@@ -577,10 +580,10 @@ def _validate_cypher_query(
 
 
 def _validate_typed_cypher_query(
-    query: ReadQuery[Any, Any] | WriteQuery[Any, Any],
+    query: ReadQueryModel[Any, Any] | WriteQueryModel[Any, Any],
     graph_definition: GraphDefinition,
 ) -> ValidationResult:
-    """Validate a typed (ReadQuery / WriteQuery) Cypher query against *graph_definition*.
+    """Validate a typed (ReadQueryModel / WriteQueryModel) Cypher query against *graph_definition*.
 
     Guards (all specific to the typed path — CypherQuery never reaches this):
 
@@ -594,14 +597,14 @@ def _validate_typed_cypher_query(
     Otherwise delegates to :func:`_extract_query_spec` then
     :func:`validate_cypher_spec`.
     """  # NOQA E501
-    spec = _extract_query_spec(query.name, query)
+    spec = _extract_query_spec(query.query_id, query)
     if isinstance(spec, ValidationResult):
         return spec
     cypher, params_fields, identifier_fields, output_model = spec
     return validate_cypher_spec(
         cypher=cypher,
         params_fields=params_fields,
-        query_name=query.name,
+        query_name=query.query_id,
         identifier_fields=identifier_fields,
         graph_definition=graph_definition,
         output_model=output_model,
@@ -618,13 +621,13 @@ def validate_query_catalogue(
     checked against the graph_definition; imperative or non-Cypher queries are
     reported as ``QUERY_UNVERIFIABLE`` (INFO) with the reason.
 
-    For :class:`~orthograph.query.base_models.ReadQuery` instances that declare
+    For :class:`~orthograph.query.base_models.ReadQueryModel` instances that declare
     both a ``cypher_template`` and an ``Output`` model, the RETURN→Output
     alignment is checked.  Required scalar fields missing from the RETURN clause
     produce an ERROR ``QUERY_RETURN_OUTPUT_MISMATCH``; whole-node returns against
     a matching NodeModel Output produce no noise.  The check is skipped for
     ``RETURN *``, queries with aggregation functions, and all
-    :class:`~orthograph.query.base_models.WriteQuery` instances (writes expose
+    :class:`~orthograph.query.base_models.WriteQueryModel` instances (writes expose
     only mutation counters, not projected rows).
 
     For any declarative Cypher query with ``<<name>>`` identifier injection

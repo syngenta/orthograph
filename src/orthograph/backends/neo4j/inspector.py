@@ -29,7 +29,7 @@ from orthograph.backends.neo4j.queries import (
     ValueHistogramRow,
 )
 from orthograph.comparison.engine import compare_profile_to_definition
-from orthograph.cypher.base_models import CypherReadQuery
+from orthograph.cypher.base_models import TypedCypherReadQueryModel
 from orthograph.diagnostics.result import ValidationResult
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import ConditionalCardinality
@@ -760,7 +760,9 @@ class Neo4jInspector(CypherInspector):
     def _run_fallback_histogram(
         self,
         connection: Any,
-        histogram_query_cls: type[CypherReadQuery[TopNParams, ValueHistogramRow]],
+        histogram_query_cls: type[
+            TypedCypherReadQueryModel[TopNParams, ValueHistogramRow]
+        ],
         identifiers: dict[str, str],
         present_count: int,
         top_n: int,

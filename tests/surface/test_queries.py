@@ -148,7 +148,7 @@ def test_simple_query_builds_usable_cypher_query() -> None:
     )
     assert isinstance(query, CypherQuery)
     assert query.query_id == "find_person"
-    built = query.build(name="Alice")
+    built = query.build(query.params_schema(name="Alice"))
     assert built.params == {"name": "Alice"}
 
 

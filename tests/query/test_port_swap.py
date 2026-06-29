@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from orthograph.cypher.base_models import CypherReadQuery
+from orthograph.cypher.base_models import TypedCypherReadQueryModel
 from orthograph.cypher.query_execution import CypherExecutor
 from orthograph.graph_definition.models import NodeModel
 from orthograph.query.base_models import (
@@ -44,12 +44,12 @@ RECORDS_SHAPE_B: list[dict[str, Any]] = [
 ]
 
 
-class SamplesByProtocolShapeA(CypherReadQuery[ProtocolParams, Sample]):
+class SamplesByProtocolShapeA(TypedCypherReadQueryModel[ProtocolParams, Sample]):
     """Materialises the dotted-key record shape (``s.sample_id``)."""
 
-    Params = ProtocolParams
+    params_schema = ProtocolParams
     Output = Sample
-    name = "samples_by_protocol_shape_a"
+    query_id = "samples_by_protocol_shape_a"
     cypher_template = (
         "MATCH (s:Sample {protocol_id: $protocol_id}) RETURN s.sample_id, s.label"
     )
@@ -58,12 +58,12 @@ class SamplesByProtocolShapeA(CypherReadQuery[ProtocolParams, Sample]):
         return Sample(sample_id=raw["s.sample_id"], label=raw["s.label"])
 
 
-class SamplesByProtocolShapeB(CypherReadQuery[ProtocolParams, Sample]):
+class SamplesByProtocolShapeB(TypedCypherReadQueryModel[ProtocolParams, Sample]):
     """Same logical read and Output, but materialises the plain-key shape."""
 
-    Params = ProtocolParams
+    params_schema = ProtocolParams
     Output = Sample
-    name = "samples_by_protocol_shape_b"
+    query_id = "samples_by_protocol_shape_b"
     cypher_template = (
         "MATCH (s:Sample {protocol_id: $protocol_id}) "
         "RETURN s.sample_id AS sample_id, s.label AS label"

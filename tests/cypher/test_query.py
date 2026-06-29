@@ -5,7 +5,7 @@ Covers construction, argument listing, building queries, and validation against 
 Coverage:
 - Construction: required params_schema, optional identifiers_schema, description
 - list_arguments: derives required/optional from params_schema.model_fields
-- build: validates kwargs, returns CypherQueryData
+- build: takes a params model, returns CypherQueryData
 - _validate_cypher_query: free function in cypher.validation, runs shared validate_cypher_spec core
 - Identifiers: opt-in identifier injection
 - model_dump: JSON-Schema serialization via params_schema / identifiers_schema
@@ -16,9 +16,8 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from orthograph.cypher.base_models import CypherReadQuery
+from orthograph.cypher.base_models import TypedCypherReadQueryModel
 from orthograph.cypher.bindings import NoIdentifiers, NoParams
-from orthograph.cypher.exceptions import CypherQueryError
 from orthograph.cypher.query import CypherQuery
 from orthograph.cypher.validation import (
     _validate_cypher_query,
@@ -187,7 +186,7 @@ def test_build_returns_cypher_and_params() -> None:
         params_schema=FindMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    cypher, params = q.build(movie_id="M-001")
+    cypher, params = q.build(FindMovieParams(movie_id="M-001"))
     assert cypher == "MATCH (m:Movie {movie_id: $movie_id}) RETURN m"
     assert params == {"movie_id": "M-001"}
 
@@ -205,7 +204,7 @@ def test_build_optional_arg_included_when_provided() -> None:
         params_schema=MovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    cypher, params = q.build(movie_id="M-001", title="Inception")
+    cypher, params = q.build(MovieParams(movie_id="M-001", title="Inception"))
     assert params == {"movie_id": "M-001", "title": "Inception"}
 
 
@@ -222,40 +221,8 @@ def test_build_optional_arg_omitted_not_in_params() -> None:
         params_schema=MovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    _, params = q.build(movie_id="M-001")
+    _, params = q.build(MovieParams(movie_id="M-001"))
     assert "title" not in params
-
-
-def test_build_missing_required_arg_raises() -> None:
-    """build raises when required argument missing."""
-
-    class FindMovieParams(BaseModel):
-        movie_id: str
-
-    q = CypherQuery(
-        query_id="find_movie",
-        cypher_template="MATCH (m:Movie {movie_id: $movie_id}) RETURN m",
-        params_schema=FindMovieParams,
-        identifiers_schema=NoIdentifiers,
-    )
-    with pytest.raises(CypherQueryError, match="Missing required"):
-        q.build()
-
-
-def test_build_unknown_arg_raises() -> None:
-    """build raises when unknown argument supplied."""
-
-    class FindMovieParams(BaseModel):
-        movie_id: str
-
-    q = CypherQuery(
-        query_id="find_movie",
-        cypher_template="MATCH (m:Movie {movie_id: $movie_id}) RETURN m",
-        params_schema=FindMovieParams,
-        identifiers_schema=NoIdentifiers,
-    )
-    with pytest.raises(CypherQueryError, match="Unknown"):
-        q.build(movie_id="M-001", typo_arg="x")
 
 
 def test_build_no_args_query_builds_with_empty_params() -> None:
@@ -266,7 +233,7 @@ def test_build_no_args_query_builds_with_empty_params() -> None:
         params_schema=NoParams,
         identifiers_schema=NoIdentifiers,
     )
-    cypher, params = q.build()
+    cypher, params = q.build(NoParams())
     assert params == {}
 
 
@@ -283,7 +250,7 @@ def test_build_params_model_validates_types() -> None:
         params_schema=MovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    _, params = q.build(movie_id="M-001", limit=5)
+    _, params = q.build(MovieParams(movie_id="M-001", limit=5))
     assert params["limit"] == 5
 
 
@@ -299,7 +266,7 @@ def test_build_params_model_coerces_compatible_types() -> None:
         params_schema=LimitParams,
         identifiers_schema=NoIdentifiers,
     )
-    _, params = q.build(limit="5")
+    _, params = q.build(LimitParams(limit="5"))
     assert params["limit"] == 5
 
 
@@ -316,7 +283,7 @@ def test_build_params_model_rejects_incompatible_type() -> None:
         identifiers_schema=NoIdentifiers,
     )
     with pytest.raises(ValidationError):
-        q.build(limit="not_an_int")
+        q.build(LimitParams(limit="not_an_int"))
 
 
 def test_build_returns_tuple() -> None:
@@ -327,7 +294,7 @@ def test_build_returns_tuple() -> None:
         params_schema=NoParams,
         identifiers_schema=NoIdentifiers,
     )
-    result = q.build()
+    result = q.build(NoParams())
     assert isinstance(result, tuple)
     assert len(result) == 2
 
@@ -345,7 +312,7 @@ def test_build_first_element_is_cypher_string() -> None:
         params_schema=FindMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    result_cypher, _ = q.build(movie_id="M-001")
+    result_cypher, _ = q.build(FindMovieParams(movie_id="M-001"))
     assert result_cypher == cypher_str
 
 
@@ -361,7 +328,7 @@ def test_build_second_element_is_params_dict() -> None:
         params_schema=FindMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    _, params = q.build(movie_id="M-001")
+    _, params = q.build(FindMovieParams(movie_id="M-001"))
     assert isinstance(params, dict)
     assert params == {"movie_id": "M-001"}
 
@@ -383,7 +350,7 @@ def test_build_with_multiple_required_args() -> None:
         params_schema=FestivalMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    cypher, params = q.build(festival_id="F-001", movie_id="M-001")
+    cypher, params = q.build(FestivalMovieParams(festival_id="F-001", movie_id="M-001"))
     assert params == {"festival_id": "F-001", "movie_id": "M-001"}
     assert cypher == q.cypher_template
 
@@ -401,7 +368,7 @@ def test_build_with_multiple_optional_args() -> None:
         params_schema=PaginationParams,
         identifiers_schema=NoIdentifiers,
     )
-    cypher, params = q.build(limit=10, offset=5)
+    cypher, params = q.build(PaginationParams(limit=10, offset=5))
     assert params == {"limit": 10, "offset": 5}
 
 
@@ -419,7 +386,7 @@ def test_build_partial_optional_args() -> None:
         params_schema=SearchParams,
         identifiers_schema=NoIdentifiers,
     )
-    cypher, params = q.build(limit=10)
+    cypher, params = q.build(SearchParams(limit=10))
     assert params == {"limit": 10}
     assert "offset" not in params
     assert "sort" not in params
@@ -441,10 +408,12 @@ def test_build_with_complex_parameters() -> None:
         identifiers_schema=NoIdentifiers,
     )
     _, params = q.build(
-        movie_id="M-001",
-        year=2024,
-        rating=8.5,
-        is_available=True,
+        ComplexParams(
+            movie_id="M-001",
+            year=2024,
+            rating=8.5,
+            is_available=True,
+        )
     )
     assert params["movie_id"] == "M-001"
     assert params["year"] == 2024
@@ -465,48 +434,9 @@ def test_params_model_with_defaults_excludes_unset() -> None:
         params_schema=MovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    _, params = q.build(movie_id="M-001")
+    _, params = q.build(MovieParams(movie_id="M-001"))
     assert params["movie_id"] == "M-001"
     assert "limit" not in params  # Not supplied → excluded by exclude_unset
-
-
-def test_error_message_clear_for_missing_required_args() -> None:
-    """Error message for missing args clearly states which args are missing."""
-
-    class FindMovieParams(BaseModel):
-        movie_id: str
-        title: str
-
-    q = CypherQuery(
-        query_id="find_movie",
-        cypher_template="MATCH (m:Movie {movie_id: $movie_id, title: $title}) RETURN m",
-        params_schema=FindMovieParams,
-        identifiers_schema=NoIdentifiers,
-    )
-    with pytest.raises(CypherQueryError) as exc_info:
-        q.build(movie_id="M-001")
-    error_msg = str(exc_info.value)
-    assert "title" in error_msg
-    assert "Missing required" in error_msg
-
-
-def test_error_message_clear_for_unknown_args() -> None:
-    """Error message for unknown args clearly states which args are invalid."""
-
-    class FindMovieParams(BaseModel):
-        movie_id: str
-
-    q = CypherQuery(
-        query_id="find_movie",
-        cypher_template="MATCH (m:Movie {movie_id: $movie_id}) RETURN m",
-        params_schema=FindMovieParams,
-        identifiers_schema=NoIdentifiers,
-    )
-    with pytest.raises(CypherQueryError) as exc_info:
-        q.build(movie_id="M-001", invalid_arg="x")
-    error_msg = str(exc_info.value)
-    assert "invalid_arg" in error_msg
-    assert "Unknown" in error_msg
 
 
 def test_multiple_queries_independent() -> None:
@@ -795,7 +725,7 @@ def test_identifiers_value_only_query_renders_byte_identical() -> None:
         params_schema=FindMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    result_cypher, _ = q.build(movie_id="M-001")
+    result_cypher, _ = q.build(FindMovieParams(movie_id="M-001"))
     assert result_cypher == cypher_str
 
 
@@ -810,8 +740,9 @@ def test_identifiers_valid_label_splices_safely() -> None:
         cypher_template="MATCH (n:<<label>>) RETURN n",
         params_schema=NoParams,
         identifiers_schema=LabelIds,
+        identifiers=LabelIds(label="Movie"),
     )
-    result_cypher, _ = q.build(identifiers=LabelIds(label="Movie"))
+    result_cypher, _ = q.build(NoParams())
     assert result_cypher == "MATCH (n:Movie) RETURN n"
 
 
@@ -827,9 +758,10 @@ def test_identifiers_unsafe_value_raises_cypher_identifier_error() -> None:
         cypher_template="MATCH (n:<<label>>) RETURN n",
         params_schema=NoParams,
         identifiers_schema=LabelIds,
+        identifiers=LabelIds(label="Bad Label!"),
     )
     with pytest.raises(CypherIdentifierError):
-        q.build(identifiers=LabelIds(label="Bad Label!"))
+        q.build(NoParams())
 
 
 def test_identifiers_missing_field_raises_at_build() -> None:
@@ -844,9 +776,10 @@ def test_identifiers_missing_field_raises_at_build() -> None:
         cypher_template="MATCH (n:<<label>>) RETURN n",
         params_schema=NoParams,
         identifiers_schema=LabelIds,
+        identifiers=LabelIds(other_field="Movie"),
     )
     with pytest.raises(CypherQueryDefinitionError):
-        q.build(identifiers=LabelIds(other_field="Movie"))
+        q.build(NoParams())
 
 
 # ---------------------------------------------------------------------------
@@ -953,10 +886,10 @@ def test_cypher_query_validate_parity_with_typed_query(
     }
 
     # Typed path — use same cypher; Output declared separately (not compared here).
-    class TypedBadLabel(CypherReadQuery[ReleasedParams, Movie]):
-        Params = ReleasedParams
+    class TypedBadLabel(TypedCypherReadQueryModel[ReleasedParams, Movie]):
+        params_schema = ReleasedParams
         Output = Movie
-        name = "typed_bad_label_parity"
+        query_id = "typed_bad_label_parity"
         cypher_template = cypher_str
 
         def materialize(self, raw: dict[str, Any]) -> Movie:
@@ -1050,3 +983,36 @@ def test_cypher_query_with_identifiers_round_trips() -> None:
     assert reloaded.identifiers_schema is not None
     assert set(reloaded.identifiers_schema.model_fields.keys()) == {"label"}
     assert reloaded.identifiers_schema.model_fields["label"].is_required()
+
+
+def test_construction_bound_identifiers_do_not_leak_into_model_dump() -> None:
+    """E60.3 guard: identifiers bound at construction are a PrivateAttr.
+
+    They must NOT appear in ``model_dump`` — the YAML wire format stays
+    schema-only (exactly query_id / cypher_template / description /
+    params_schema / identifiers_schema), proving the PrivateAttr did not leak.
+    """
+
+    class LabelIds(BaseModel):
+        label: str
+
+    q = CypherQuery(
+        query_id="nodes_by_label",
+        cypher_template="MATCH (n:<<label>>) RETURN n",
+        description="dynamic label",
+        params_schema=NoParams,
+        identifiers_schema=LabelIds,
+        identifiers=LabelIds(label="Movie"),
+    )
+
+    dumped = q.model_dump(by_alias=True)
+
+    assert set(dumped.keys()) == {
+        "query_id",
+        "cypher_template",
+        "description",
+        "params_schema",
+        "identifiers_schema",
+    }
+    assert "identifiers" not in dumped
+    assert "_identifiers" not in dumped

@@ -936,7 +936,7 @@ def test_type_counts_reconcile_with_present_count(
         ApocNodeValueHistogramQuery(
             identifiers={"label": "Person", "property_name": "born"}
         ),
-        ApocNodeValueHistogramQuery.Params(top_n=100),
+        ApocNodeValueHistogramQuery.params_schema(top_n=100),
     )
     type_total = sum(r.type_count for r in type_rows)
     hist_total = sum(r.value_count for r in hist_rows)
@@ -992,7 +992,7 @@ def test_value_histogram_truncates_while_type_stays_exact(
         ApocNodeValueHistogramQuery(
             identifiers={"label": "Widget", "property_name": "uid"}
         ),
-        ApocNodeValueHistogramQuery.Params(top_n=top_n),
+        ApocNodeValueHistogramQuery.params_schema(top_n=top_n),
     )
     # The histogram is capped at top_n (the truncating part).
     assert len(hist_rows) == top_n

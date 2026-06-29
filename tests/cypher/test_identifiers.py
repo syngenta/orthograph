@@ -1,4 +1,4 @@
-"""Tests for cypher.identifiers — safe-identifier validation/escaping (E17 T1).
+"""Tests for cypher.identifiers_schema — safe-identifier validation/escaping (E17 T1).
 
 Pure string rules; no model, no generator, no session.
 """

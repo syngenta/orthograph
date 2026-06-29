@@ -321,11 +321,13 @@ def test_memgraph_catalogue_all_reads_have_output_schema() -> None:
     query_catalogue = build_memgraph_catalogue()
     for desc in query_catalogue.describe():
         if desc.kind == "read":
-            assert desc.output_schema is not None, f"{desc.name} has no output_schema"
+            assert desc.output_schema is not None, (
+                f"{desc.query_id} has no output_schema"
+            )
 
 
 # ---------------------------------------------------------------------------
-# Value-scan queries (E46.3, ADR-035) — type counts + scalar histogram
+# Value-scan queries — type counts + scalar histogram
 # ---------------------------------------------------------------------------
 
 

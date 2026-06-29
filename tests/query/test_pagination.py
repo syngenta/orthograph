@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from orthograph.query.base_models import Backend, ReadQuery
+from orthograph.query.base_models import Backend, ReadQueryModel
 from orthograph.query.catalogue import QueryCatalogue
 from orthograph.query.pagination import PaginatedParams
 
@@ -93,7 +93,7 @@ def test_paginated_params_composes_into_query_params() -> None:
 
 
 def test_paginated_params_in_read_query_without_errors() -> None:
-    """A ReadQuery can use a Params model that inherits from PaginatedParams.
+    """A ReadQueryModel can use a Params model that inherits from PaginatedParams.
 
     This test confirms __init_subclass__ enforcement still works correctly
     when Params inherits from PaginatedParams.
@@ -108,8 +108,8 @@ def test_paginated_params_in_read_query_without_errors() -> None:
         released: int
 
     # Should not raise TypeError during class definition
-    class GetMoviesByYear(ReadQuery[MoviesByYearParams, MovieOutput]):
-        name = "movies_by_year"
+    class GetMoviesByYear(ReadQueryModel[MoviesByYearParams, MovieOutput]):
+        query_id = "movies_by_year"
         backend = Backend.CYPHER
 
         def build(self, params: MoviesByYearParams) -> tuple[str, dict[str, Any]]:
@@ -148,8 +148,8 @@ def test_paginated_params_appears_in_query_description() -> None:
     class MoviesByYearParams(PaginatedParams):
         released: int
 
-    class GetMoviesByYear(ReadQuery[MoviesByYearParams, MovieOutput]):
-        name = "movies_by_year"
+    class GetMoviesByYear(ReadQueryModel[MoviesByYearParams, MovieOutput]):
+        query_id = "movies_by_year"
         backend = Backend.CYPHER
 
         def build(self, params: MoviesByYearParams) -> tuple[str, dict[str, Any]]:
@@ -162,7 +162,7 @@ def test_paginated_params_appears_in_query_description() -> None:
     cat.register_read(GetMoviesByYear())
     descriptions = cat.describe()
     # Find the query description for our query
-    desc = next((d for d in descriptions if d.name == "movies_by_year"), None)
+    desc = next((d for d in descriptions if d.query_id == "movies_by_year"), None)
     assert desc is not None
 
     # params_schema should be the JSON schema of MoviesByYearParams

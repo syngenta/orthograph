@@ -4,8 +4,8 @@ One module for the whole Cypher query capability, so consumers never
 reach into ``orthograph.query.*`` or ``orthograph.cypher.*``:
 
 * **author** — :func:`simple_query` builds a :class:`CypherQuery`; the typed
-  bases (:class:`CypherReadQuery` / :class:`CypherWriteQuery`) are re-exported
-  for subclassing.
+  bases (:class:`TypedCypherReadQueryModel` / :class:`TypedCypherWriteQueryModel`)
+  are re-exported for subclassing.
 * **build** — :func:`new_catalogue` returns an empty :class:`QueryCatalogue`.
 * **catalogue** — :func:`load_catalogue` loads YAML specs and returns an
   **assembled** :class:`QueryCatalogue` (every spec registered), not a bare list
@@ -40,7 +40,10 @@ from pydantic import BaseModel
 
 import orthograph.cypher.validation as _cypher_validation
 from orthograph.comparison.rules import Rule
-from orthograph.cypher.base_models import CypherReadQuery, CypherWriteQuery
+from orthograph.cypher.base_models import (
+    TypedCypherReadQueryModel,
+    TypedCypherWriteQueryModel,
+)
 from orthograph.cypher.bindings import NoIdentifiers, NoParams, extract_cypher_params
 from orthograph.cypher.exceptions import (
     CypherCatalogueLoadError,
@@ -69,8 +72,8 @@ __all__ = [
     # authoring primitives
     "QueryCatalogue",
     "CypherQuery",
-    "CypherReadQuery",
-    "CypherWriteQuery",
+    "TypedCypherReadQueryModel",
+    "TypedCypherWriteQueryModel",
     "NoParams",
     "NoIdentifiers",
     "CypherQueryError",

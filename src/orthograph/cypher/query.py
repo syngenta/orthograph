@@ -4,8 +4,8 @@ Two parallel paths for defining Cypher queries
 -----------------------------------------------
 Orthograph offers two parallel authoring styles:
 
-* **Typed path** — :class:`~orthograph.cypher.base_models.CypherReadQuery` /
-  :class:`~orthograph.cypher.base_models.CypherWriteQuery`.  Abstract bases you
+* **Typed path** — :class:`~orthograph.cypher.base_models.TypedCypherReadQueryModel` /
+  :class:`~orthograph.cypher.base_models.TypedCypherWriteQueryModel`.  Abstract bases you
   subclass.  Enforce a full typed contract at class-definition time: ``params_schema``
   model required, ``Output`` model required, ``materialize()`` / ``interpret_result()``
   implementation required.  Results are statically typed.
@@ -32,9 +32,9 @@ Design goals
 * **Required typed identifiers_schema.** An ``identifiers_schema`` Pydantic model is
   **required**.  For queries with no ``<<name>>`` identifier splicing, pass
   ``identifiers_schema = NoIdentifiers`` (the canonical empty sentinel from
-  :mod:`orthograph.cypher.bindings`).  Identifier *values* are **not** stored on
-  the query — they are passed to :meth:`build` at call time, symmetric with
-  ``params_schema``.
+  :mod:`orthograph.cypher.bindings`).  Identifier *values* are bound at
+  **construction** (``CypherQuery(..., identifiers=...)``), symmetric with the
+  typed path; :meth:`build` takes only a ``params`` model.
 * **Full shared validation.** Use :func:`~orthograph.cypher.validation._validate_cypher_query`
   (a free function in :mod:`orthograph.cypher.validation`) to validate a
   ``CypherQuery`` against a
@@ -67,7 +67,7 @@ Usage — Python (simple path)::
          identifiers_schema=NoIdentifiers,
      )
      result = _validate_cypher_query(query, my_graph_definition)   # static, no DB
-     query_data = query.build(movie_id="M-001")
+     query_data = query.build(FindMovieParams(movie_id="M-001"))
      await session.run(query_data.cypher, query_data.params)
 
 Usage — identifier splicing::
@@ -80,8 +80,9 @@ Usage — identifier splicing::
          cypher_template="MATCH (n:<<label>>) RETURN n",
          params_schema=NoParams,
          identifiers_schema=LabelIds,
+         identifiers=LabelIds(label="Movie"),
      )
-     query_data = query.build(identifiers=LabelIds(label="Movie"))
+     query_data = query.build(NoParams())
 
 Usage — zero-arg query::
 
@@ -112,6 +113,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     field_serializer,
     field_validator,
 )
@@ -121,7 +123,6 @@ from orthograph.cypher.bindings import (
     NoIdentifiers,
     render_with_identifiers,
 )
-from orthograph.cypher.exceptions import CypherQueryError
 from orthograph.cypher.schema_codec import model_from_json_schema, model_to_json_schema
 from orthograph.query.base_models import Backend
 
@@ -131,8 +132,8 @@ class CypherQuery(BaseModel):
 
     Instantiate directly — do not subclass.  For typed queries with full
     ``params_schema`` / ``Output`` / ``materialize()`` contracts, use
-    :class:`~orthograph.cypher.base_models.CypherReadQuery` or
-    :class:`~orthograph.cypher.base_models.CypherWriteQuery` instead.
+    :class:`~orthograph.cypher.base_models.TypedCypherReadQueryModel` or
+    :class:`~orthograph.cypher.base_models.TypedCypherWriteQueryModel` instead.
 
     Parameters
     ----------
@@ -153,8 +154,8 @@ class CypherQuery(BaseModel):
         A Pydantic ``BaseModel`` subclass declaring ``<<name>>`` identifier
         slots.  **Required** — pass ``NoIdentifiers`` for queries with no
         identifier splicing.  Optional field omitted from serialization when absent.
-        Identifier *values* are passed to :meth:`build` at call time, not
-        stored on the query instance.  This field holds a *class* (``type[BaseModel]``),
+        Identifier *values* are passed at construction (``identifiers=``), not
+        to :meth:`build`.  This field holds a *class* (``type[BaseModel]``),
         not an instance.
     description:
         Human-readable description of what this query does.
@@ -172,6 +173,34 @@ class CypherQuery(BaseModel):
     description: str | None = Field(default=None)
     params_schema: type[BaseModel] = Field(...)
     identifiers_schema: type[BaseModel] | None = Field(default=None)
+
+    # Bound identifier *values* (not a Pydantic field — never serialised, so the
+    # YAML wire format stays schema-only).  Symmetric with the typed path's
+    # ``TypedCypherReadQueryModel.__init__`` which also binds ``self._identifiers``.
+    # ``None`` means "no identifier values supplied" — only the schema is known
+    # (e.g. a YAML-loaded query carries the schema but no values); a template
+    # with ``<<name>>`` slots then errors at ``build`` time, as before.
+    _identifiers: BaseModel | None = PrivateAttr(default=None)
+
+    def __init__(
+        self, *, identifiers: BaseModel | dict[str, Any] | None = None, **data: Any
+    ) -> None:
+        """Construct the query and bind identifier *values* at construction.
+
+        ``identifiers`` (when supplied) is validated against
+        ``identifiers_schema`` and stored on a ``PrivateAttr`` — it does not
+        enter ``model_dump``/JSON-Schema, so the YAML wire format is unchanged.
+        This mirrors the typed path, where identifier values are likewise bound
+        at construction and ``build`` takes only a ``params`` model.
+
+        When ``identifiers`` is omitted, no values are bound — the simple path
+        is then ``NoIdentifiers``-only (the de facto execution contract); a
+        template carrying ``<<name>>`` slots raises at ``build`` time.
+        """
+        super().__init__(**data)
+        if identifiers is not None:
+            schema = self.identifiers_schema or NoIdentifiers
+            self._identifiers = schema.model_validate(identifiers)
 
     @field_serializer("params_schema")
     def _serialize_params_schema(self, value: type[BaseModel]) -> dict[str, Any]:
@@ -216,81 +245,44 @@ class CypherQuery(BaseModel):
         ]
         return {"required": required, "optional": optional}
 
-    def build(
-        self, identifiers: BaseModel | None = None, **kwargs: Any
-    ) -> CypherQueryData:
+    def build(self, params: BaseModel) -> CypherQueryData:
         """Validate arguments and return ``CypherQueryData(cypher, params)``.
 
         The returned value is ready to pass directly to a driver session::
 
-            query_data = query.build(movie_id="M-001")
+            query_data = query.build(FindMovieParams(movie_id="M-001"))
             await session.run(query_data.cypher, query_data.params)
 
-        For queries with identifier splicing, pass an ``identifiers_schema`` model
-        instance::
+        Identifier values are bound at *construction* (see :meth:`__init__`) and
+        spliced into their ``<<name>>`` slots here — symmetric with the typed
+        path.  ``build`` takes only the ``params`` model.
 
-            query_data = query.build(identifiers=LabelIds(label="Movie"))
-
-        Uses ``model_validate`` + ``exclude_unset=True`` so only the fields
-        the caller supplied are included in the params dict (Pydantic defaults
-        for omitted optional fields are **not** injected into the driver call).
+        Uses ``model_dump(exclude_unset=True)`` so only the fields the caller
+        supplied are included in the params dict (Pydantic defaults for omitted
+        optional fields are **not** injected into the driver call).
 
         Parameters
         ----------
-        identifiers:
-            Optional model instance matching ``identifiers_schema``.  When ``None`` (the
-            default) and ``identifiers_schema`` is not ``NoIdentifiers``, the
-            ``cypher_template`` must contain no ``<<name>>`` placeholders
-            or a ``CypherQueryDefinitionError`` will be raised by
-            ``render_with_identifiers``.  Pass ``None`` for queries declared
-            with ``identifiers_schema=NoIdentifiers``.
-        **kwargs:
-            ``$value`` parameter values validated against ``params_schema``.
-
-        Raises
-        ------
-        CypherQueryError
-            If a required argument is missing or an unknown argument is
-            supplied.
-        pydantic.ValidationError
-            If the supplied values fail ``params_schema`` validation.
+        params:
+            A ``params_schema`` model instance carrying the ``$value`` parameters.
         """
-        self._validate_call_kwargs(kwargs)
-
-        validated = self.params_schema.model_validate(kwargs)
-        params = validated.model_dump(exclude_unset=True)
-
-        cypher = self.cypher_template
-        bound = (
-            identifiers
-            if identifiers is not None
-            else (self.identifiers_schema or NoIdentifiers)()
+        cypher = render_with_identifiers(
+            self.cypher_template, self._identifiers or NoIdentifiers()
         )
-        cypher = render_with_identifiers(cypher, bound)
+        return CypherQueryData(cypher, params.model_dump(exclude_unset=True))
 
-        return CypherQueryData(cypher, params)
+    def materialize(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Identity materialiser — returns raw rows as plain dicts.
 
-    def _validate_call_kwargs(self, kwargs: dict[str, Any]) -> None:
-        """Check that all required args are present and no unknown args supplied."""
-        required = [
-            n for n, f in self.params_schema.model_fields.items() if f.is_required()
-        ]
-        known = set(self.params_schema.model_fields)
+        The simple path declares no ``Output`` model, so reads via
+        :class:`~orthograph.cypher.query_execution.CypherExecutor` yield raw
+        ``list[dict]`` rows.
+        """
+        return dict(raw)
 
-        missing = [arg for arg in required if arg not in kwargs]
-        if missing:
-            raise CypherQueryError(
-                f"Query '{self.query_id}': Missing required argument(s): "
-                f"{', '.join(missing)}"
-            )
-
-        unknown = [arg for arg in kwargs if arg not in known]
-        if unknown:
-            raise CypherQueryError(
-                f"Query '{self.query_id}': Unknown argument(s): "
-                f"{', '.join(unknown)}. "
-                f"Declared on params_schema: {sorted(known)}"
-            )
+    def interpret_result(self, raw: Any) -> Any:
+        """Return the write summary unchanged — raw counters for the on-ramp."""
+        return raw
 
     def __repr__(self) -> str:
         id_name = (

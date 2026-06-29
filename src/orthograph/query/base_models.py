@@ -1,6 +1,6 @@
 """Typed query base models and Executor seam.
 
-Defines the pure build/materialise contract (ReadQuery, WriteQuery) and the
+Defines the pure build/materialise contract (ReadQueryModel, WriteQueryModel) and the
 single I/O seam (Executor) that separates construction from execution.
 
 Orthograph never owns a connection. Executor implementations receive a factory
@@ -63,11 +63,11 @@ def _check_backend_attr(cls: type, problems: list[str]) -> None:
         problems.append(f"backend must be a Backend value, got {backend!r}")
 
 
-def _check_name_attr(cls: type, problems: list[str]) -> None:
-    """Append a problem if ``name`` is present but not a str."""
-    name = getattr(cls, "name", None)
-    if name is not None and not isinstance(name, str):
-        problems.append(f"name must be a str, got {name!r}")
+def _check_query_id_attr(cls: type, problems: list[str]) -> None:
+    """Append a problem if ``query_id`` is present but not a str."""
+    query_id = getattr(cls, "query_id", None)
+    if query_id is not None and not isinstance(query_id, str):
+        problems.append(f"query_id must be a str, got {query_id!r}")
 
 
 def _extract_generic_args(cls: type, base_cls: type) -> tuple[Any, ...] | None:
@@ -119,19 +119,19 @@ def _enforce_query_contract(
     _check_model_attrs(cls, model_attrs, problems)
     if "backend" in other_attrs:
         _check_backend_attr(cls, problems)
-    if "name" in other_attrs:
-        _check_name_attr(cls, problems)
+    if "query_id" in other_attrs:
+        _check_query_id_attr(cls, problems)
     if problems:
         raise TypeError(f"{cls.__name__}: " + "; ".join(problems))
 
 
-class ReadQuery(ABC, Generic[P, D]):
+class ReadQueryModel(ABC, Generic[P, D]):
     """Abstract generic base for typed read queries.
 
     Subclasses MUST define:
-      - ``Params``  — the Pydantic model class that declares accepted parameters
+      - ``params_schema``  — the Pydantic model class that declares accepted parameters
       - ``Output``  — the Pydantic model class that declares the returned record shape
-      - ``name``    — unique string identifier within a catalogue
+      - ``query_id``    — unique string identifier within a catalogue
       - ``backend`` — ``Backend`` enum value
 
     The two abstract methods keep construction and execution strictly separated:
@@ -139,9 +139,9 @@ class ReadQuery(ABC, Generic[P, D]):
       - ``materialize()`` — pure, per-record; maps a raw storage record to ``Output``
     """
 
-    Params: ClassVar[type[BaseModel]]
+    params_schema: ClassVar[type[BaseModel]]
     Output: ClassVar[type[BaseModel]]
-    name: ClassVar[str]
+    query_id: ClassVar[str]
     backend: ClassVar[Backend]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -150,14 +150,16 @@ class ReadQuery(ABC, Generic[P, D]):
         # leave at least one abstractmethod unimplemented).
         if inspect.isabstract(cls):
             return
-        # T6: auto-populate Params and Output from generic args when the class
-        # directly parameterises ReadQuery[P, D] with concrete types.
-        args = _extract_generic_args(cls, ReadQuery)
+        # T6: auto-populate params_schema and Output from generic args when the
+        # class directly parameterises ReadQueryModel[P, D] with concrete types.
+        args = _extract_generic_args(cls, ReadQueryModel)
         if args and len(args) >= 2:
-            _auto_populate_classvar(cls, "Params", args[0])
+            _auto_populate_classvar(cls, "params_schema", args[0])
             _auto_populate_classvar(cls, "Output", args[1])
         _enforce_query_contract(
-            cls, model_attrs=("Params", "Output"), other_attrs=("name", "backend")
+            cls,
+            model_attrs=("params_schema", "Output"),
+            other_attrs=("query_id", "backend"),
         )
 
     @abstractmethod
@@ -169,12 +171,12 @@ class ReadQuery(ABC, Generic[P, D]):
         """Pure per-record mapping from a raw storage record to the Output type."""
 
 
-class WriteQuery(ABC, Generic[P, R]):
+class WriteQueryModel(ABC, Generic[P, R]):
     """Abstract generic base for typed write queries.
 
     Subclasses MUST define:
-      - ``Params``  — the Pydantic model class that declares accepted parameters
-      - ``name``    — unique string identifier within a catalogue
+      - ``params_schema``  — the Pydantic model class that declares accepted parameters
+      - ``query_id``    — unique string identifier within a catalogue
       - ``backend`` — ``Backend`` enum value
 
     Subclasses MAY define:
@@ -185,21 +187,21 @@ class WriteQuery(ABC, Generic[P, R]):
     ``interpret_result()``.
     """
 
-    Params: ClassVar[type[BaseModel]]
+    params_schema: ClassVar[type[BaseModel]]
     Output: ClassVar[type[BaseModel] | None] = None
-    name: ClassVar[str]
+    query_id: ClassVar[str]
     backend: ClassVar[Backend]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         if inspect.isabstract(cls):
             return
-        # T6: auto-populate Params from the first generic arg.
-        args = _extract_generic_args(cls, WriteQuery)
+        # T6: auto-populate params_schema from the first generic arg.
+        args = _extract_generic_args(cls, WriteQueryModel)
         if args and len(args) >= 1:
-            _auto_populate_classvar(cls, "Params", args[0])
+            _auto_populate_classvar(cls, "params_schema", args[0])
         _enforce_query_contract(
-            cls, model_attrs=("Params",), other_attrs=("name", "backend")
+            cls, model_attrs=("params_schema",), other_attrs=("query_id", "backend")
         )
 
     @abstractmethod
@@ -229,11 +231,11 @@ class Executor(ABC):
     """
 
     @abstractmethod
-    def read(self, query: ReadQuery[P, D], raw_params: Any) -> list[D]:
+    def read(self, query: ReadQueryModel[P, D], raw_params: Any) -> list[D]:
         """Validate params → build() (pure) → execute → materialize. No commit."""
 
     @abstractmethod
-    def write(self, query: WriteQuery[P, R], raw_params: Any) -> R:
+    def write(self, query: WriteQueryModel[P, R], raw_params: Any) -> R:
         """Validate params → build() (pure) → execute → commit → interpret_result."""
 
 
@@ -241,7 +243,7 @@ class ReadPort(ABC, Generic[P, D]):
     """A named read capability with a store-neutral signature.
 
     Consuming code depends on a ``ReadPort`` subclass, never on a specific
-    ``ReadQuery`` or ``Executor``. The composition root binds the port to a
+    ``ReadQueryModel`` or ``Executor``. The composition root binds the port to a
     concrete query + executor, making the read store swappable at one point
     without touching callers.
     """
@@ -251,13 +253,13 @@ class ReadPort(ABC, Generic[P, D]):
 
 
 class QueryBackedReadPort(ReadPort[P, D]):
-    """A ``ReadPort`` backed by a ``ReadQuery`` + ``Executor`` pair.
+    """A ``ReadPort`` backed by a ``ReadQueryModel`` + ``Executor`` pair.
 
     Constructed at the composition root and injected into callers as a
     ``ReadPort``. Swap the query or executor without changing any caller.
     """
 
-    def __init__(self, query: ReadQuery[P, D], executor: Executor) -> None:
+    def __init__(self, query: ReadQueryModel[P, D], executor: Executor) -> None:
         self._query = query
         self._executor = executor
 

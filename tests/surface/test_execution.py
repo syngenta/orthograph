@@ -15,9 +15,12 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from orthograph.cypher.base_models import CypherReadQuery, CypherWriteQuery
+from orthograph.cypher.base_models import (
+    TypedCypherReadQueryModel,
+    TypedCypherWriteQueryModel,
+)
 from orthograph.dependencies import MissingDependencyError
-from orthograph.execution import ReadQuery, WriteQuery, run_read, run_write
+from orthograph.execution import ReadQueryModel, WriteQueryModel, run_read, run_write
 from orthograph.graph_definition.models import NodeModel
 
 
@@ -37,19 +40,19 @@ class ReleasedYearParams(BaseModel):
     released: int
 
 
-class MoviesByYear(CypherReadQuery[ReleasedYearParams, Movie]):
-    Params = ReleasedYearParams
+class MoviesByYear(TypedCypherReadQueryModel[ReleasedYearParams, Movie]):
+    params_schema = ReleasedYearParams
     Output = Movie
-    name = "exec_movies_by_year"
+    query_id = "exec_movies_by_year"
     cypher_template = "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
 
     def materialize(self, raw: dict[str, Any]) -> Movie:
         return Movie(title=raw["m.title"], released=raw["m.released"])
 
 
-class CreateMovie(CypherWriteQuery[ReleasedYearParams, int]):
-    Params = ReleasedYearParams
-    name = "exec_create_movie"
+class CreateMovie(TypedCypherWriteQueryModel[ReleasedYearParams, int]):
+    params_schema = ReleasedYearParams
+    query_id = "exec_create_movie"
     cypher_template = "CREATE (m:Movie {released: $released})"
 
     def interpret_result(self, raw: Any) -> int:
@@ -211,5 +214,5 @@ def test_run_write_unknown_backend_raises() -> None:
 
 
 def test_typed_query_bases_are_reexported() -> None:
-    assert ReadQuery is not None
-    assert WriteQuery is not None
+    assert ReadQueryModel is not None
+    assert WriteQueryModel is not None

@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from orthograph.cypher.base_models import CypherReadQuery
+from orthograph.cypher.base_models import TypedCypherReadQueryModel
 from orthograph.cypher.validation import (
     validate_query_catalogue_against_profile,
 )
@@ -77,20 +77,20 @@ class TitleParams(BaseModel):
     title: str
 
 
-class MoviesByYear(CypherReadQuery[ReleasedYearParams, Movie]):
-    Params = ReleasedYearParams
+class MoviesByYear(TypedCypherReadQueryModel[ReleasedYearParams, Movie]):
+    params_schema = ReleasedYearParams
     Output = Movie
-    name = "movies_by_year"
+    query_id = "movies_by_year"
     cypher_template = "MATCH (m:Movie {released: $released}) RETURN m"
 
     def materialize(self, raw: dict[str, Any]) -> Movie:
         return Movie(**raw["m"])
 
 
-class MoviesByBadLabel(CypherReadQuery[TitleParams, Movie]):
-    Params = TitleParams
+class MoviesByBadLabel(TypedCypherReadQueryModel[TitleParams, Movie]):
+    params_schema = TitleParams
     Output = Movie
-    name = "movies_by_bad_label"
+    query_id = "movies_by_bad_label"
     cypher_template = "MATCH (f:Film {title: $title}) RETURN f.title"
 
     def materialize(self, raw: dict[str, Any]) -> Movie:

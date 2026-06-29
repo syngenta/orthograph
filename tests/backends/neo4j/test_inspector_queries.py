@@ -512,7 +512,7 @@ def test_apoc_node_value_histogram_build_limits_by_param() -> None:
     q = ApocNodeValueHistogramQuery(
         identifiers={"label": "Person", "property_name": "born"}
     )
-    cypher, params = q.build(q.Params(top_n=10))
+    cypher, params = q.build(q.params_schema(top_n=10))
     assert "`Person`" in cypher
     assert "`born`" in cypher
     # The histogram groups by value and truncates with a parameterised LIMIT.
@@ -580,7 +580,7 @@ def test_apoc_node_value_histogram_injected_label_raises() -> None:
         identifiers={"label": "1Bad", "property_name": "born"}
     )
     with pytest.raises(CypherIdentifierError, match="label"):
-        q.build(q.Params(top_n=10))
+        q.build(q.params_schema(top_n=10))
 
 
 def test_apoc_rel_value_histogram_build_limits_by_param() -> None:
@@ -592,7 +592,7 @@ def test_apoc_rel_value_histogram_build_limits_by_param() -> None:
             "property_name": "role",
         }
     )
-    cypher, params = q.build(q.Params(top_n=5))
+    cypher, params = q.build(q.params_schema(top_n=5))
     assert "`ACTED_IN`" in cypher
     assert "`role`" in cypher
     assert "LIMIT $top_n" in cypher
@@ -625,7 +625,7 @@ def test_cypher_node_value_histogram_uses_to_string_or_null() -> None:
     q = CypherNodeValueHistogramQuery(
         identifiers={"label": "Person", "property_name": "born"}
     )
-    cypher, params = q.build(q.Params(top_n=10))
+    cypher, params = q.build(q.params_schema(top_n=10))
     assert "`Person`" in cypher
     assert "`born`" in cypher
     # The scalar-safe value key: toStringOrNull returns null for list/map values,
@@ -657,7 +657,7 @@ def test_cypher_node_value_histogram_injected_label_raises() -> None:
         identifiers={"label": "1Bad", "property_name": "born"}
     )
     with pytest.raises(CypherIdentifierError, match="label"):
-        q.build(q.Params(top_n=10))
+        q.build(q.params_schema(top_n=10))
 
 
 def test_cypher_rel_value_histogram_uses_to_string_or_null() -> None:
@@ -669,7 +669,7 @@ def test_cypher_rel_value_histogram_uses_to_string_or_null() -> None:
             "property_name": "role",
         }
     )
-    cypher, params = q.build(q.Params(top_n=5))
+    cypher, params = q.build(q.params_schema(top_n=5))
     assert "`ACTED_IN`" in cypher
     assert "`role`" in cypher
     assert "toStringOrNull(r.`role`)" in cypher
@@ -802,5 +802,5 @@ def test_catalogue_all_reads_have_output_schema() -> None:
         for desc in query_catalogue.describe():
             if desc.kind == "read":
                 assert desc.output_schema is not None, (
-                    f"{desc.name} has no output_schema"
+                    f"{desc.query_id} has no output_schema"
                 )

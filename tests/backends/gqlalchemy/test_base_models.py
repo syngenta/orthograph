@@ -1,4 +1,4 @@
-"""Tests for GqlAlchemyReadQuery / GqlAlchemyWriteQuery (E8.1).
+"""Tests for GqlAlchemyReadQueryModel / GqlAlchemyWriteQueryModel (E8.1).
 
 Exercises the three validation-report sketches: value-only (no Identifiers),
 label-only, and relationship (label + rel_type). No live database — build()
@@ -12,8 +12,8 @@ from gqlalchemy import match
 from pydantic import BaseModel
 
 from orthograph.backends.gqlalchemy.base_models import (
-    GqlAlchemyReadQuery,
-    GqlAlchemyWriteQuery,
+    GqlAlchemyReadQueryModel,
+    GqlAlchemyWriteQueryModel,
     validated_label,
 )
 from orthograph.cypher.bindings import NoParams
@@ -42,10 +42,10 @@ class NameParams(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PeopleByName(GqlAlchemyReadQuery[NameParams, PersonRow]):
-    Params = NameParams
+class PeopleByName(GqlAlchemyReadQueryModel[NameParams, PersonRow]):
+    params_schema = NameParams
     Output = PersonRow
-    name = "people_by_name"
+    query_id = "people_by_name"
 
     def build(self, params: NameParams) -> Any:
         return (
@@ -64,13 +64,13 @@ class PeopleByName(GqlAlchemyReadQuery[NameParams, PersonRow]):
 # ---------------------------------------------------------------------------
 
 
-class NodesByLabel(GqlAlchemyReadQuery[NoParams, PersonRow]):
-    class Identifiers(BaseModel):
+class NodesByLabel(GqlAlchemyReadQueryModel[NoParams, PersonRow]):
+    class identifiers_schema(BaseModel):
         label: str
 
-    Params = NoParams
+    params_schema = NoParams
     Output = PersonRow
-    name = "nodes_by_label"
+    query_id = "nodes_by_label"
 
     def build(self, params: NoParams) -> Any:
         label = validated_label(self._identifiers.label, field_name="label")  # type: ignore[attr-defined]
@@ -85,14 +85,14 @@ class NodesByLabel(GqlAlchemyReadQuery[NoParams, PersonRow]):
 # ---------------------------------------------------------------------------
 
 
-class RelByType(GqlAlchemyReadQuery[NoParams, PersonRow]):
-    class Identifiers(BaseModel):
+class RelByType(GqlAlchemyReadQueryModel[NoParams, PersonRow]):
+    class identifiers_schema(BaseModel):
         label: str
         rel_type: str
 
-    Params = NoParams
+    params_schema = NoParams
     Output = PersonRow
-    name = "rel_by_type"
+    query_id = "rel_by_type"
 
     def build(self, params: NoParams) -> Any:
         label = validated_label(self._identifiers.label, field_name="label")  # type: ignore[attr-defined]
@@ -114,9 +114,9 @@ class RelByType(GqlAlchemyReadQuery[NoParams, PersonRow]):
 # ---------------------------------------------------------------------------
 
 
-class CreatePerson(GqlAlchemyWriteQuery[NameParams, int]):
-    Params = NameParams
-    name = "create_person"
+class CreatePerson(GqlAlchemyWriteQueryModel[NameParams, int]):
+    params_schema = NameParams
+    query_id = "create_person"
 
     def build(self, params: NameParams) -> Any:
         from gqlalchemy import create
@@ -134,7 +134,7 @@ class CreatePerson(GqlAlchemyWriteQuery[NameParams, int]):
 
 class _FakeExecutor:
     def read(self, query: Any, raw_params: Any) -> list[Any]:
-        params = query.Params.model_validate(raw_params)
+        params = query.params_schema.model_validate(raw_params)
         builder = query.build(params)  # builder object, not a tuple
         assert hasattr(builder, "construct_query")
         return [query.materialize({"n.name": "Alice"})]
@@ -147,8 +147,8 @@ class _FakeExecutor:
 
 def test_import_gqlalchemy_query_base_models() -> None:
     from orthograph.backends.gqlalchemy.base_models import (  # noqa: F401
-        GqlAlchemyReadQuery,
-        GqlAlchemyWriteQuery,
+        GqlAlchemyReadQueryModel,
+        GqlAlchemyWriteQueryModel,
     )
 
 

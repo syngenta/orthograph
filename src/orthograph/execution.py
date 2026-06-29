@@ -9,7 +9,7 @@ Both receive a **connection factory**: a callable returning a session context
 manager (NOT a driver — that is the ``profile.inspect_*`` argument).
 Orthograph opens and closes every connection per call and stores nothing.
 
-``ReadQuery``/``WriteQuery`` are re-exported here so consumers can type their
+``ReadQueryModel``/``WriteQueryModel`` are re-exported here so consumers can type their
 query subclasses without reaching into ``orthograph.query.*``.
 """
 
@@ -18,8 +18,6 @@ from typing import Any, Callable
 from orthograph.backends import loader
 from orthograph.cypher.query_execution import (
     CypherExecutor,
-    CypherQueryReadAdapter,
-    CypherQueryWriteAdapter,
     CypherWriteResultSummary,
 )
 from orthograph.query.base_models import (
@@ -29,19 +27,17 @@ from orthograph.query.base_models import (
     QueryBackedReadPort,
     R,
     ReadPort,
-    ReadQuery,
-    WriteQuery,
+    ReadQueryModel,
+    WriteQueryModel,
 )
 
 
 __all__ = [
-    "ReadQuery",
-    "WriteQuery",
+    "ReadQueryModel",
+    "WriteQueryModel",
     "run_read",
     "run_write",
     "CypherExecutor",
-    "CypherQueryReadAdapter",
-    "CypherQueryWriteAdapter",
     "CypherWriteResultSummary",
     "ReadPort",
     "QueryBackedReadPort",
@@ -52,7 +48,7 @@ __all__ = [
 def run_read(
     backend: str,
     connection_factory: Callable[[], Any],
-    read_query: ReadQuery[P, D],
+    read_query: ReadQueryModel[P, D],
     params: Any,
 ) -> list[D]:
     """Execute a typed read query against ``backend``; return ``list[Output]``.
@@ -67,7 +63,7 @@ def run_read(
 def run_write(
     backend: str,
     connection_factory: Callable[[], Any],
-    write_query: WriteQuery[P, R],
+    write_query: WriteQueryModel[P, R],
     params: Any,
 ) -> R:
     """Execute a typed write query against ``backend``; return the result.

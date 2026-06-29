@@ -4,7 +4,7 @@ Two authoring styles:
 
   * **Declarative (preferred)** — set a ``cypher_template`` ClassVar. The base
     validates it at class-definition time (dialect parse + ``$param`` ↔
-    ``Params`` alignment and ``<<name>>`` ↔ ``Identifiers`` alignment).
+    ``params_schema`` alignment and ``<<name>>`` ↔ ``identifiers_schema`` alignment).
     ``build()`` is provided automatically.  Subclasses implement only
     ``materialize()``.
 
@@ -19,12 +19,12 @@ Two authoring styles:
 
 Two parameter groups:
 
-  * ``Params`` — value parameters, mapped 1:1 to ``$name`` placeholders and
-    substituted by the driver.
-  * ``Identifiers`` — label/relationship-type/property-key values, mapped 1:1
-    to ``<<name>>`` placeholders and spliced (after safe-identifier validation)
-    by ``build()``.  Defaults to ``NoIdentifiers``; use ``NoParams`` for the
-    value side when there are no driver parameters.
+  * ``params_schema`` — value parameters, mapped 1:1 to ``$name`` placeholders
+    and substituted by the driver.
+  * ``identifiers_schema`` — label/relationship-type/property-key values, mapped
+    1:1 to ``<<name>>`` placeholders and spliced (after safe-identifier
+    validation) by ``build()``.  Defaults to ``NoIdentifiers``; use ``NoParams``
+    for the value side when there are no driver parameters.
 
 Identifier values are bound at construction so ``build(params)`` keeps its
 single-argument signature::
@@ -56,8 +56,8 @@ from orthograph.query.base_models import (
     D,
     P,
     R,
-    ReadQuery,
-    WriteQuery,
+    ReadQueryModel,
+    WriteQueryModel,
     _auto_populate_classvar,
     _extract_generic_args,
 )
@@ -73,8 +73,9 @@ def _validate_declarative_cypher(cls: type) -> None:
     """Validate a query class with a ``cypher_template`` ClassVar at definition time.
 
     Checks: non-empty string, dialect parse (with ``<<name>>`` substituted),
-    and strict 1:1 ``$param`` ↔ ``Params`` / ``<<name>>`` ↔ ``Identifiers``
-    alignment.  Raises ``CypherQueryDefinitionError`` listing all problems.
+    and strict 1:1 ``$param`` ↔ ``params_schema`` / ``<<name>>`` ↔
+    ``identifiers_schema`` alignment.  Raises ``CypherQueryDefinitionError`` listing
+    all problems.
     Emits ``UserWarning`` instead for imperative (no template) classes.
     """
     cypher = getattr(cls, "cypher_template", None)
@@ -120,15 +121,15 @@ def _validate_declarative_cypher(cls: type) -> None:
         raise CypherQueryDefinitionError(f"{cls.__name__}: " + "; ".join(problems))
 
 
-class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
+class TypedCypherReadQueryModel(ReadQueryModel[P, D], Generic[P, D]):
     """Abstract base for typed Cypher read queries.
 
     Declarative style — set ``cypher_template``, implement ``materialize()``::
 
-        class MoviesByYear(CypherReadQuery[ReleasedYearParams, Movie]):
-            Params = ReleasedYearParams
+        class MoviesByYear(TypedCypherReadQueryModel[ReleasedYearParams, Movie]):
+            params_schema = ReleasedYearParams
             Output = Movie
-            name = "movies_by_year"
+            query_id = "movies_by_year"
             cypher_template = "MATCH (m:Movie {released: $released}) RETURN m"
 
             def materialize(self, raw): ...
@@ -137,15 +138,15 @@ class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
 
     **Optional class variables:**
 
-    * ``Identifiers`` — a BaseModel class (defaults to ``NoIdentifiers``). When set,
-      identifier values (like labels, relationship types, or property names) are
-      bound at construction via an ``Identifiers`` model instance. The ``<<name>>``
-      placeholders in the ``cypher_template`` are replaced with safe, validated
-      identifier values (validated against Cypher syntax rules before substitution)
-      by the default ``build()`` method::
+    * ``identifiers_schema`` — a BaseModel class (defaults to ``NoIdentifiers``).
+      When set, identifier values (like labels, relationship types, or property
+      names) are bound at construction via an ``identifiers_schema`` model
+      instance. The ``<<name>>`` placeholders in the ``cypher_template`` are
+      replaced with safe, validated identifier values (validated against Cypher
+      syntax rules before substitution) by the default ``build()`` method::
 
-          class NodesByLabel(CypherReadQuery[NoParams, Movie]):
-              Identifiers = LabelIdentifiers  # declares label: str
+          class NodesByLabel(TypedCypherReadQueryModel[NoParams, Movie]):
+              identifiers_schema = LabelIdentifiers  # declares label: str
               cypher_template = "MATCH (n:`<<label>>`) RETURN n"
 
               def materialize(self, raw): ...
@@ -158,20 +159,21 @@ class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
 
     backend = Backend.CYPHER
     cypher_template: ClassVar[str]
-    Identifiers: ClassVar[type[BaseModel]] = NoIdentifiers
+    identifiers_schema: ClassVar[type[BaseModel]] = NoIdentifiers
 
     def __init__(self, identifiers: BaseModel | dict[str, Any] | None = None) -> None:
-        """Bind and validate ``Identifiers`` values at construction."""
+        """Bind and validate ``identifiers_schema`` values at construction."""
         identifiers = {} if identifiers is None else identifiers
-        self._identifiers = type(self).Identifiers.model_validate(identifiers)
+        self._identifiers = type(self).identifiers_schema.model_validate(identifiers)
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        # T6: auto-populate Params/Output from CypherReadQuery[P, D] generic args
-        # *before* super().__init_subclass__ runs ReadQuery's contract enforcement.
+        # T6: auto-populate params_schema/Output from TypedCypherReadQueryModel[P, D]
+        # generic args *before* super().__init_subclass__ runs ReadQueryModel's
+        # contract enforcement.
         if not inspect.isabstract(cls):
-            args = _extract_generic_args(cls, CypherReadQuery)
+            args = _extract_generic_args(cls, TypedCypherReadQueryModel)
             if args and len(args) >= 2:
-                _auto_populate_classvar(cls, "Params", args[0])
+                _auto_populate_classvar(cls, "params_schema", args[0])
                 _auto_populate_classvar(cls, "Output", args[1])
         super().__init_subclass__(**kwargs)
         _validate_declarative_cypher(cls)
@@ -196,38 +198,41 @@ class CypherReadQuery(ReadQuery[P, D], Generic[P, D]):
         """Pure mapping of one graph record dict to the declared Output type."""
 
 
-class CypherWriteQuery(WriteQuery[P, R], Generic[P, R]):
+class TypedCypherWriteQueryModel(WriteQueryModel[P, R], Generic[P, R]):
     """Abstract base for typed Cypher write queries.
 
     Supports the same declarative and imperative styles, and the same
-    ``Identifiers``/``<<placeholder>>`` mechanism as :class:`CypherReadQuery`.
+    ``identifiers_schema``/``<<placeholder>>`` mechanism as
+    :class:`TypedCypherReadQueryModel`.
 
     **Optional class variables:**
 
-    * ``Identifiers`` — a BaseModel class (defaults to ``NoIdentifiers``). When set,
-      identifier values (like labels, relationship types, or property names) are
-      bound at construction. The ``<<name>>`` placeholders in the ``cypher_template``
-      are replaced with safe, validated identifier values before execution.
+    * ``identifiers_schema`` — a BaseModel class (defaults to ``NoIdentifiers``).
+      When set, identifier values (like labels, relationship types, or property
+      names) are bound at construction. The ``<<name>>`` placeholders in the
+      ``cypher_template`` are replaced with safe, validated identifier values
+      before execution.
 
     ``build()`` returns ``(cypher, params)``.  ``backend`` is fixed to ``CYPHER``.
     """
 
     backend = Backend.CYPHER
     cypher_template: ClassVar[str]
-    Identifiers: ClassVar[type[BaseModel]] = NoIdentifiers
+    identifiers_schema: ClassVar[type[BaseModel]] = NoIdentifiers
 
     def __init__(self, identifiers: BaseModel | dict[str, Any] | None = None) -> None:
-        """Bind and validate ``Identifiers`` values at construction."""
+        """Bind and validate ``identifiers_schema`` values at construction."""
         identifiers = {} if identifiers is None else identifiers
-        self._identifiers = type(self).Identifiers.model_validate(identifiers)
+        self._identifiers = type(self).identifiers_schema.model_validate(identifiers)
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        # T6: auto-populate Params from CypherWriteQuery[P, R] generic arg
-        # *before* super().__init_subclass__ runs WriteQuery's contract enforcement.
+        # T6: auto-populate params_schema from TypedCypherWriteQueryModel[P, R]
+        # generic arg *before* super().__init_subclass__ runs WriteQueryModel's
+        # contract enforcement.
         if not inspect.isabstract(cls):
-            args = _extract_generic_args(cls, CypherWriteQuery)
+            args = _extract_generic_args(cls, TypedCypherWriteQueryModel)
             if args and len(args) >= 1:
-                _auto_populate_classvar(cls, "Params", args[0])
+                _auto_populate_classvar(cls, "params_schema", args[0])
         super().__init_subclass__(**kwargs)
         _validate_declarative_cypher(cls)
 

@@ -148,14 +148,14 @@ def _check_model_alignment(
 def check_placeholder_alignment(cls: type, cypher: str) -> list[str]:
     """Return 1:1 placeholder-to-field alignment problems for a query class.
 
-    Checks both ``$param`` ↔ ``Params`` fields and ``<<name>>`` ↔
-    ``Identifiers`` fields.  A placeholder with no field, or a field with no
-    placeholder, is reported.  Returns a list of human-readable strings; the
+    Checks both ``$param`` ↔ ``params_schema`` fields and ``<<name>>`` ↔
+    ``identifiers_schema`` fields.  A placeholder with no field, or a field with
+    no placeholder, is reported.  Returns a list of human-readable strings; the
     caller raises ``CypherQueryDefinitionError`` if non-empty.
     """
     problems: list[str] = []
 
-    params_model = getattr(cls, "Params", None)
+    params_model = getattr(cls, "params_schema", None)
     if isinstance(params_model, type) and issubclass(params_model, BaseModel):
         problems.extend(
             _check_model_alignment(
@@ -167,7 +167,7 @@ def check_placeholder_alignment(cls: type, cypher: str) -> list[str]:
             )
         )
 
-    identifiers_model = getattr(cls, "Identifiers", None)
+    identifiers_model = getattr(cls, "identifiers_schema", None)
     if isinstance(identifiers_model, type) and issubclass(identifiers_model, BaseModel):
         problems.extend(
             _check_model_alignment(

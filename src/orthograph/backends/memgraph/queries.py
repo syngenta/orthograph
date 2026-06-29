@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from orthograph.cypher.base_models import CypherReadQuery
+from orthograph.cypher.base_models import TypedCypherReadQueryModel
 from orthograph.cypher.bindings import (
     CypherQueryData,
     NoParams,
@@ -156,16 +156,16 @@ with _warnings.catch_warnings():
     _warnings.simplefilter("ignore", UserWarning)
 
     class MemgraphNodePropertiesQuery(
-        CypherReadQuery[NoParams, MemgraphNodePropertyRow]
+        TypedCypherReadQueryModel[NoParams, MemgraphNodePropertyRow]
     ):
         """Bulk node-property metadata via ``schema.node_type_properties()``.
 
         Uses imperative ``build()`` because the procedure is not standard Cypher.
         """
 
-        Params = NoParams
+        params_schema = NoParams
         Output = MemgraphNodePropertyRow
-        name = "memgraph.inspect.node_properties"
+        query_id = "memgraph.inspect.node_properties"
         _CYPHER = (
             "CALL schema.node_type_properties()"
             " YIELD nodeType, nodeLabels, mandatory, propertyName, propertyTypes"
@@ -184,15 +184,17 @@ with _warnings.catch_warnings():
                 property_types=coerce_types(types),
             )
 
-    class MemgraphRelPropertiesQuery(CypherReadQuery[NoParams, MemgraphRelPropertyRow]):
+    class MemgraphRelPropertiesQuery(
+        TypedCypherReadQueryModel[NoParams, MemgraphRelPropertyRow]
+    ):
         """Bulk relationship-property metadata via ``schema.rel_type_properties()``.
 
         Uses imperative ``build()`` because the procedure is not standard Cypher.
         """
 
-        Params = NoParams
+        params_schema = NoParams
         Output = MemgraphRelPropertyRow
-        name = "memgraph.inspect.rel_properties"
+        query_id = "memgraph.inspect.rel_properties"
         _CYPHER = (
             "CALL schema.rel_type_properties()"
             " YIELD relType, mandatory, propertyName, propertyTypes"
@@ -210,15 +212,17 @@ with _warnings.catch_warnings():
                 property_types=coerce_types(types),
             )
 
-    class MemgraphConstraintsQuery(CypherReadQuery[NoParams, MemgraphConstraintRow]):
+    class MemgraphConstraintsQuery(
+        TypedCypherReadQueryModel[NoParams, MemgraphConstraintRow]
+    ):
         """Return all constraints via ``SHOW CONSTRAINT INFO``.
 
         Uses imperative ``build()`` because the command is not standard Cypher.
         """
 
-        Params = NoParams
+        params_schema = NoParams
         Output = MemgraphConstraintRow
-        name = "memgraph.inspect.constraints"
+        query_id = "memgraph.inspect.constraints"
         _CYPHER = "SHOW CONSTRAINT INFO"
 
         def build(self, params: NoParams) -> CypherQueryData:
@@ -250,7 +254,7 @@ class _MemgraphRelTypeIdentifiers(BaseModel):
 with _warnings.catch_warnings():
     _warnings.simplefilter("ignore", UserWarning)
 
-    class MemgraphNodeCountQuery(CypherReadQuery[NoParams, MemgraphCountRow]):
+    class MemgraphNodeCountQuery(TypedCypherReadQueryModel[NoParams, MemgraphCountRow]):
         """Authoritative instance count for a node label (property-independent).
 
         ``schema.node_type_properties()`` yields no observation counts, so the
@@ -261,10 +265,10 @@ with _warnings.catch_warnings():
         (that fabricates ``completeness == 1.0``; "never invent").
         """
 
-        Params = NoParams
+        params_schema = NoParams
         Output = MemgraphCountRow
-        name = "memgraph.inspect.node_count"
-        Identifiers = _MemgraphNodeLabelIdentifiers
+        query_id = "memgraph.inspect.node_count"
+        identifiers_schema = _MemgraphNodeLabelIdentifiers
 
         def build(self, params: NoParams) -> CypherQueryData:
             cypher = render_with_identifiers(
@@ -276,14 +280,14 @@ with _warnings.catch_warnings():
         def materialize(self, raw: Any) -> MemgraphCountRow:
             return MemgraphCountRow(count=raw["count"])
 
-    class MemgraphRelCountQuery(CypherReadQuery[NoParams, MemgraphCountRow]):
+    class MemgraphRelCountQuery(TypedCypherReadQueryModel[NoParams, MemgraphCountRow]):
         """Authoritative instance count for a
         relationship type (property-independent)."""
 
-        Params = NoParams
+        params_schema = NoParams
         Output = MemgraphCountRow
-        name = "memgraph.inspect.rel_count"
-        Identifiers = _MemgraphRelTypeIdentifiers
+        query_id = "memgraph.inspect.rel_count"
+        identifiers_schema = _MemgraphRelTypeIdentifiers
 
         def build(self, params: NoParams) -> CypherQueryData:
             cypher = render_with_identifiers(
@@ -328,7 +332,9 @@ class _MemgraphRelPropertyScanIdentifiers(BaseModel):
 with _warnings.catch_warnings():
     _warnings.simplefilter("ignore", UserWarning)
 
-    class MemgraphNodeTypeCountsQuery(CypherReadQuery[NoParams, MemgraphTypeCountRow]):
+    class MemgraphNodeTypeCountsQuery(
+        TypedCypherReadQueryModel[NoParams, MemgraphTypeCountRow]
+    ):
         """Exact per-type counts for a node property (group by ``valueType``).
 
         Groups the property's non-null values by ``valueType(v)`` and counts each
@@ -336,10 +342,10 @@ with _warnings.catch_warnings():
         even on a UID / free-text column.
         """
 
-        Params = NoParams
+        params_schema = NoParams
         Output = MemgraphTypeCountRow
-        name = "memgraph.inspect.node_type_counts"
-        Identifiers = _MemgraphNodePropertyScanIdentifiers
+        query_id = "memgraph.inspect.node_type_counts"
+        identifiers_schema = _MemgraphNodePropertyScanIdentifiers
 
         def build(self, params: NoParams) -> CypherQueryData:
             cypher = render_with_identifiers(
@@ -358,13 +364,15 @@ with _warnings.catch_warnings():
                 type_count=raw["type_count"],
             )
 
-    class MemgraphRelTypeCountsQuery(CypherReadQuery[NoParams, MemgraphTypeCountRow]):
+    class MemgraphRelTypeCountsQuery(
+        TypedCypherReadQueryModel[NoParams, MemgraphTypeCountRow]
+    ):
         """Exact per-type counts for a relationship property (group by type)."""
 
-        Params = NoParams
+        params_schema = NoParams
         Output = MemgraphTypeCountRow
-        name = "memgraph.inspect.rel_type_counts"
-        Identifiers = _MemgraphRelPropertyScanIdentifiers
+        query_id = "memgraph.inspect.rel_type_counts"
+        identifiers_schema = _MemgraphRelPropertyScanIdentifiers
 
         def build(self, params: NoParams) -> CypherQueryData:
             cypher = render_with_identifiers(
@@ -384,7 +392,7 @@ with _warnings.catch_warnings():
             )
 
     class MemgraphNodeValueHistogramQuery(
-        CypherReadQuery[MemgraphTopNParams, MemgraphValueHistogramRow]
+        TypedCypherReadQueryModel[MemgraphTopNParams, MemgraphValueHistogramRow]
     ):
         """Bounded scalar value histogram for a node property.
 
@@ -395,10 +403,10 @@ with _warnings.catch_warnings():
         the authoritative type-count total.
         """
 
-        Params = MemgraphTopNParams
+        params_schema = MemgraphTopNParams
         Output = MemgraphValueHistogramRow
-        name = "memgraph.inspect.node_value_histogram"
-        Identifiers = _MemgraphNodePropertyScanIdentifiers
+        query_id = "memgraph.inspect.node_value_histogram"
+        identifiers_schema = _MemgraphNodePropertyScanIdentifiers
 
         def build(self, params: MemgraphTopNParams) -> CypherQueryData:
             cypher = render_with_identifiers(
@@ -420,7 +428,7 @@ with _warnings.catch_warnings():
             )
 
     class MemgraphRelValueHistogramQuery(
-        CypherReadQuery[MemgraphTopNParams, MemgraphValueHistogramRow]
+        TypedCypherReadQueryModel[MemgraphTopNParams, MemgraphValueHistogramRow]
     ):
         """Bounded scalar value histogram for a relationship property.
 
@@ -428,10 +436,10 @@ with _warnings.catch_warnings():
         scalars only, ``LIMIT $top_n``) for relationship properties.
         """
 
-        Params = MemgraphTopNParams
+        params_schema = MemgraphTopNParams
         Output = MemgraphValueHistogramRow
-        name = "memgraph.inspect.rel_value_histogram"
-        Identifiers = _MemgraphRelPropertyScanIdentifiers
+        query_id = "memgraph.inspect.rel_value_histogram"
+        identifiers_schema = _MemgraphRelPropertyScanIdentifiers
 
         def build(self, params: MemgraphTopNParams) -> CypherQueryData:
             cypher = render_with_identifiers(
@@ -462,13 +470,13 @@ with _warnings.catch_warnings():
 class MemgraphCardinalityQuery(InspectCardinalityQuery):
     """Cardinality query under the Memgraph catalogue name."""
 
-    name = "memgraph.inspect.cardinality"
+    query_id = "memgraph.inspect.cardinality"
 
 
 class MemgraphEndpointLabelsQuery(InspectEndpointLabelsQuery):
     """Endpoint-labels query under the Memgraph catalogue name."""
 
-    name = "memgraph.inspect.endpoint_labels"
+    query_id = "memgraph.inspect.endpoint_labels"
 
 
 # The partitioned-cardinality queries use imperative build() (variable-width
@@ -483,14 +491,14 @@ with _warnings.catch_warnings():
     ):
         """Source-side partitioned cardinality under the Memgraph catalogue name."""
 
-        name = "memgraph.inspect.partitioned_cardinality.source"
+        query_id = "memgraph.inspect.partitioned_cardinality.source"
 
     class MemgraphTargetPartitionedCardinalityQuery(
         InspectTargetPartitionedCardinalityQuery
     ):
         """Target-side partitioned cardinality under the Memgraph catalogue name."""
 
-        name = "memgraph.inspect.partitioned_cardinality.target"
+        query_id = "memgraph.inspect.partitioned_cardinality.target"
 
 
 # ---------------------------------------------------------------------------

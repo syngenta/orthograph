@@ -1,4 +1,4 @@
-"""End-to-end tests for CypherQuery via adapter + CypherExecutor against a live
+"""End-to-end tests for CypherQuery via CypherExecutor against a live
 Neo4j DB.
 
 These tests require a running Neo4j instance.  They are skipped by default and
@@ -12,9 +12,9 @@ before and after each test.
 
 What is covered
 ---------------
-- YAML-loaded CypherQuery read via CypherQueryReadAdapter → list[dict]
+- YAML-loaded CypherQuery read → list[dict]
 - Python-constructed CypherQuery read with a typed Params model
-- CypherQuery write (CREATE) via CypherQueryWriteAdapter → CypherWriteResultSummary
+- CypherQuery write (CREATE) → CypherWriteResultSummary
 - CypherQuery write (SET) returns properties_set counter
 - validate_query_catalogue on a YAML-loaded catalogue against the live definition
   produces no errors for correct queries
@@ -32,8 +32,6 @@ from orthograph.cypher.bindings import NoIdentifiers
 from orthograph.cypher.query import CypherQuery
 from orthograph.cypher.query_execution import (
     CypherExecutor,
-    CypherQueryReadAdapter,
-    CypherQueryWriteAdapter,
     CypherWriteResultSummary,
 )
 from orthograph.cypher.validation import validate_query_catalogue
@@ -113,7 +111,7 @@ def _make_executor(driver: Any) -> CypherExecutor:
 def test_yaml_query_read_returns_matching_rows(
     neo4j_driver: Any, neo4j_clean: None
 ) -> None:
-    """A YAML-loaded CypherQuery read via adapter returns the expected rows."""
+    """A YAML-loaded CypherQuery read returns the expected rows."""
     _seed(neo4j_driver)
 
     yaml_src = """
@@ -128,10 +126,9 @@ def test_yaml_query_read_returns_matching_rows(
 """
     queries = load_query_catalogue(yaml_src)
     query = queries[0]
-    adapter = CypherQueryReadAdapter(query)
     executor = _make_executor(neo4j_driver)
 
-    rows: list[dict[str, Any]] = executor.read(adapter, {"title": "The Matrix"})
+    rows: list[dict[str, Any]] = executor.read(query, {"title": "The Matrix"})
 
     assert len(rows) == 1
     assert rows[0]["m.title"] == "The Matrix"
@@ -151,10 +148,9 @@ def test_cypher_query_read_all_movies(neo4j_driver: Any, neo4j_clean: None) -> N
         params_schema=NoParams,
         identifiers_schema=NoIdentifiers,
     )
-    adapter = CypherQueryReadAdapter(query)
     executor = _make_executor(neo4j_driver)
 
-    rows: list[dict[str, Any]] = executor.read(adapter, {})
+    rows: list[dict[str, Any]] = executor.read(query, {})
 
     titles = [r["m.title"] for r in rows]
     assert sorted(titles) == ["Speed", "The Matrix"]
@@ -180,10 +176,9 @@ def test_cypher_query_read_with_typed_params(
         params_schema=MovieByYearParams,
         identifiers_schema=NoIdentifiers,
     )
-    adapter = CypherQueryReadAdapter(query)
     executor = _make_executor(neo4j_driver)
 
-    rows: list[dict[str, Any]] = executor.read(adapter, {"released": 1994})
+    rows: list[dict[str, Any]] = executor.read(query, {"released": 1994})
 
     assert len(rows) == 1
     assert rows[0]["m.title"] == "Speed"
@@ -204,11 +199,10 @@ def test_cypher_query_read_optional_param_excluded_when_absent(
         params_schema=NoParams,
         identifiers_schema=NoIdentifiers,
     )
-    adapter = CypherQueryReadAdapter(query)
     executor = _make_executor(neo4j_driver)
 
     # No limit supplied — query returns all movies without error
-    rows: list[dict[str, Any]] = executor.read(adapter, {})
+    rows: list[dict[str, Any]] = executor.read(query, {})
 
     assert len(rows) == 2
 
@@ -234,10 +228,9 @@ def test_cypher_query_read_actors_for_movie(
         params_schema=ActorsForMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    adapter = CypherQueryReadAdapter(query)
     executor = _make_executor(neo4j_driver)
 
-    rows: list[dict[str, Any]] = executor.read(adapter, {"title": "The Matrix"})
+    rows: list[dict[str, Any]] = executor.read(query, {"title": "The Matrix"})
 
     assert len(rows) == 1
     assert rows[0]["p.name"] == "Keanu Reeves"
@@ -266,11 +259,10 @@ def test_cypher_query_write_create_returns_nodes_created(
         params_schema=CreateMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    adapter = CypherQueryWriteAdapter(query)
     executor = _make_executor(neo4j_driver)
 
     summary: CypherWriteResultSummary = executor.write(
-        adapter,
+        query,
         {"title": "Inception", "released": 2010},
     )
 
@@ -304,11 +296,10 @@ def test_cypher_query_write_set_returns_properties_set(
         params_schema=TagMovieParams,
         identifiers_schema=NoIdentifiers,
     )
-    adapter = CypherQueryWriteAdapter(query)
     executor = _make_executor(neo4j_driver)
 
     summary: CypherWriteResultSummary = executor.write(
-        adapter,
+        query,
         {"title": "The Matrix", "genre": "sci-fi"},
     )
 
@@ -339,11 +330,10 @@ def test_cypher_query_write_create_relationship(
         params_schema=AddActorParams,
         identifiers_schema=NoIdentifiers,
     )
-    adapter = CypherQueryWriteAdapter(query)
     executor = _make_executor(neo4j_driver)
 
     summary: CypherWriteResultSummary = executor.write(
-        adapter,
+        query,
         {"actor": "Sandra Bullock", "movie": "The Matrix", "role": "Trinity"},
     )
 

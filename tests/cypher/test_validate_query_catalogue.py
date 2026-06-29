@@ -22,14 +22,17 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from orthograph.cypher.base_models import CypherReadQuery, CypherWriteQuery
+from orthograph.cypher.base_models import (
+    TypedCypherReadQueryModel,
+    TypedCypherWriteQueryModel,
+)
 from orthograph.cypher.bindings import CypherQueryData, NoIdentifiers
 from orthograph.cypher.query import CypherQuery
 from orthograph.cypher.validation import validate_query_catalogue
 from orthograph.diagnostics.classification import EntityType, Severity
 from orthograph.graph_definition.graph_definition import GraphDefinition
 from orthograph.graph_definition.models import NodeModel
-from orthograph.query.base_models import Backend, ReadQuery
+from orthograph.query.base_models import Backend, ReadQueryModel
 from orthograph.query.catalogue import QueryCatalogue
 
 
@@ -53,35 +56,35 @@ class TitleParams(BaseModel):
     title: str
 
 
-class MoviesByYear(CypherReadQuery[ReleasedYearParams, Movie]):
+class MoviesByYear(TypedCypherReadQueryModel[ReleasedYearParams, Movie]):
     """Declarative, model-consistent read — whole-node return against NodeModel."""
 
-    Params = ReleasedYearParams
+    params_schema = ReleasedYearParams
     Output = Movie
-    name = "movies_by_year"
+    query_id = "movies_by_year"
     cypher_template = "MATCH (m:Movie {released: $released}) RETURN m"
 
     def materialize(self, raw: dict[str, Any]) -> Movie:
         return Movie(**raw["m"])
 
 
-class CreateMovie(CypherWriteQuery[ReleasedYearParams, int]):
+class CreateMovie(TypedCypherWriteQueryModel[ReleasedYearParams, int]):
     """Declarative, model-consistent write."""
 
-    Params = ReleasedYearParams
-    name = "create_movie"
+    params_schema = ReleasedYearParams
+    query_id = "create_movie"
     cypher_template = "CREATE (m:Movie {released: $released})"
 
     def interpret_result(self, raw: Any) -> int:
         return 1
 
 
-class MoviesByTitleBadLabel(CypherReadQuery[TitleParams, Movie]):
+class MoviesByTitleBadLabel(TypedCypherReadQueryModel[TitleParams, Movie]):
     """Declarative read referencing a label that is NOT in the model."""
 
-    Params = TitleParams
+    params_schema = TitleParams
     Output = Movie
-    name = "movies_by_title_bad_label"
+    query_id = "movies_by_title_bad_label"
     cypher_template = "MATCH (f:Film {title: $title}) RETURN f.title"
 
     def materialize(self, raw: dict[str, Any]) -> Movie:
@@ -127,10 +130,10 @@ def test_imperative_query_reported_unverifiable_with_reason(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
 
-        class ImperativeRead(CypherReadQuery[ReleasedYearParams, Movie]):
-            Params = ReleasedYearParams
+        class ImperativeRead(TypedCypherReadQueryModel[ReleasedYearParams, Movie]):
+            params_schema = ReleasedYearParams
             Output = Movie
-            name = "imperative_read"
+            query_id = "imperative_read"
 
             def build(self, params: ReleasedYearParams) -> CypherQueryData:
                 return CypherQueryData("MATCH (m:Movie) RETURN m", {})
@@ -160,10 +163,10 @@ def test_non_cypher_query_reported_unverifiable_with_reason(
 ) -> None:
     """A non-Cypher query cannot be checked here and is reported with the reason."""
 
-    class SqlRead(ReadQuery[TitleParams, Movie]):
-        Params = TitleParams
+    class SqlRead(ReadQueryModel[TitleParams, Movie]):
+        params_schema = TitleParams
         Output = Movie
-        name = "sql_read"
+        query_id = "sql_read"
         backend = Backend.SQLALCHEMY
 
         def build(self, params: TitleParams) -> str:
@@ -191,10 +194,10 @@ def test_mixed_catalogue_reports_each_query(graph_definition: GraphDefinition) -
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
 
-        class ImperativeRead(CypherReadQuery[ReleasedYearParams, Movie]):
-            Params = ReleasedYearParams
+        class ImperativeRead(TypedCypherReadQueryModel[ReleasedYearParams, Movie]):
+            params_schema = ReleasedYearParams
             Output = Movie
-            name = "imperative_read_2"
+            query_id = "imperative_read_2"
 
             def build(self, params: ReleasedYearParams) -> CypherQueryData:
                 return CypherQueryData("MATCH (m:Movie) RETURN m", {})
@@ -226,24 +229,28 @@ class MovieTitleOutput(BaseModel):
     released: int
 
 
-class MoviesByYearPartialReturn(CypherReadQuery[ReleasedYearParams, MovieTitleOutput]):
+class MoviesByYearPartialReturn(
+    TypedCypherReadQueryModel[ReleasedYearParams, MovieTitleOutput]
+):
     """Read that projects only m.title AS title — missing 'released' in RETURN."""
 
-    Params = ReleasedYearParams
+    params_schema = ReleasedYearParams
     Output = MovieTitleOutput
-    name = "movies_by_year_partial"
+    query_id = "movies_by_year_partial"
     cypher_template = "MATCH (m:Movie {released: $released}) RETURN m.title AS title"
 
     def materialize(self, raw: dict[str, Any]) -> MovieTitleOutput:
         return MovieTitleOutput(title=raw["title"], released=0)
 
 
-class MoviesByYearFullReturn(CypherReadQuery[ReleasedYearParams, MovieTitleOutput]):
+class MoviesByYearFullReturn(
+    TypedCypherReadQueryModel[ReleasedYearParams, MovieTitleOutput]
+):
     """Read that projects both columns — no mismatch."""
 
-    Params = ReleasedYearParams
+    params_schema = ReleasedYearParams
     Output = MovieTitleOutput
-    name = "movies_by_year_full"
+    query_id = "movies_by_year_full"
     cypher_template = (
         "MATCH (m:Movie {released: $released}) "
         "RETURN m.title AS title, m.released AS released"
@@ -253,12 +260,14 @@ class MoviesByYearFullReturn(CypherReadQuery[ReleasedYearParams, MovieTitleOutpu
         return MovieTitleOutput(title=raw["title"], released=raw["released"])
 
 
-class MoviesByYearReturnStar(CypherReadQuery[ReleasedYearParams, MovieTitleOutput]):
+class MoviesByYearReturnStar(
+    TypedCypherReadQueryModel[ReleasedYearParams, MovieTitleOutput]
+):
     """Read that uses RETURN * — alignment check must be skipped."""
 
-    Params = ReleasedYearParams
+    params_schema = ReleasedYearParams
     Output = MovieTitleOutput
-    name = "movies_by_year_return_star"
+    query_id = "movies_by_year_return_star"
     cypher_template = (
         "MATCH (m:Movie {released: $released}) "
         "RETURN m.title AS title, m.released AS released"
@@ -310,10 +319,10 @@ def test_whole_node_return_against_nodemodel_emits_no_issue(
 ) -> None:
     """RETURN m with Output = Movie (NodeModel) produces no mismatch and is valid."""
 
-    class FindMovies(CypherReadQuery[ReleasedYearParams, Movie]):
-        Params = ReleasedYearParams
+    class FindMovies(TypedCypherReadQueryModel[ReleasedYearParams, Movie]):
+        params_schema = ReleasedYearParams
         Output = Movie
-        name = "find_movies_whole_node"
+        query_id = "find_movies_whole_node"
         cypher_template = "MATCH (m:Movie {released: $released}) RETURN m"
 
         def materialize(self, raw: dict[str, Any]) -> Movie:
@@ -347,10 +356,12 @@ def test_whole_node_return_wrong_label_emits_error(
         __uid_field__ = "name"
         name: str
 
-    class FindMoviesWrongOutput(CypherReadQuery[ReleasedYearParams, PersonModel]):
-        Params = ReleasedYearParams
+    class FindMoviesWrongOutput(
+        TypedCypherReadQueryModel[ReleasedYearParams, PersonModel]
+    ):
+        params_schema = ReleasedYearParams
         Output = PersonModel
-        name = "find_movies_wrong_output"
+        query_id = "find_movies_wrong_output"
         cypher_template = "MATCH (m:Movie {released: $released}) RETURN m"
 
         def materialize(self, raw: dict[str, Any]) -> PersonModel:
@@ -388,10 +399,12 @@ def test_projection_of_whole_nodes_emits_no_mismatch(
         person: PersonModel
         movie: Movie
 
-    class FindActorMoviePairs(CypherReadQuery[ReleasedYearParams, ActorMoviePair]):
-        Params = ReleasedYearParams
+    class FindActorMoviePairs(
+        TypedCypherReadQueryModel[ReleasedYearParams, ActorMoviePair]
+    ):
+        params_schema = ReleasedYearParams
         Output = ActorMoviePair
-        name = "find_actor_movie_pairs"
+        query_id = "find_actor_movie_pairs"
         cypher_template = (
             "MATCH (p:Person)-[:ACTED_IN]->(m:Movie {released: $released}) RETURN p, m"
         )
@@ -453,12 +466,12 @@ def test_aggregation_skips_alignment_check(
 def test_write_query_without_return_emits_no_alignment_issue(
     graph_definition: GraphDefinition,
 ) -> None:
-    """A WriteQuery with Output but no RETURN clause emits no alignment issue."""
+    """A WriteQueryModel with Output but no RETURN clause emits no alignment issue."""
 
-    class CreateMovieWithOutput(CypherWriteQuery[ReleasedYearParams, int]):
-        Params = ReleasedYearParams
+    class CreateMovieWithOutput(TypedCypherWriteQueryModel[ReleasedYearParams, int]):
+        params_schema = ReleasedYearParams
         Output = MovieTitleOutput
-        name = "create_movie_with_output"
+        query_id = "create_movie_with_output"
         cypher_template = "CREATE (m:Movie {released: $released})"
 
         def interpret_result(self, raw: Any) -> int:
@@ -478,23 +491,23 @@ def test_write_query_without_return_emits_no_alignment_issue(
 def test_write_query_with_output_and_return_emits_no_alignment_issue(
     graph_definition: GraphDefinition,
 ) -> None:
-    """A WriteQuery declaring Output AND a RETURN clause must not emit alignment issues.
+    """WriteQueryModel with Output and RETURN clause emits no alignment issues.
 
-    Before the fix, the T5 gate checked for the presence of an ``Output`` ClassVar
-    without distinguishing read from write queries.  A write query with both
-    ``Output`` and a ``RETURN`` clause would emit a false-positive
+    Before the fix, the T5 gate checked for the presence of an ``Output``
+    ClassVar without distinguishing read from write queries.  A write query
+    with both ``Output`` and a ``RETURN`` clause would emit a false-positive
     ``QUERY_RETURN_OUTPUT_MISMATCH`` (INFO) for every Output field missing from the
     RETURN projection.  Writes expose only mutation counters — not projected rows —
-    so the RETURN→Output alignment check must be skipped entirely for WriteQuery
+    so the RETURN→Output alignment check must be skipped entirely for WriteQueryModel
     instances regardless of what the template projects.
     """
 
-    class CreateMovieWithReturn(CypherWriteQuery[ReleasedYearParams, int]):
-        Params = ReleasedYearParams
+    class CreateMovieWithReturn(TypedCypherWriteQueryModel[ReleasedYearParams, int]):
+        params_schema = ReleasedYearParams
         # Output declares two fields; the RETURN only projects one — would have
         # triggered a false-positive mismatch on 'released' before the fix.
         Output = MovieTitleOutput
-        name = "create_movie_with_return"
+        query_id = "create_movie_with_return"
         cypher_template = (
             "CREATE (m:Movie {released: $released}) RETURN m.title AS title"
         )
@@ -511,7 +524,7 @@ def test_write_query_with_output_and_return_emits_no_alignment_issue(
         i for i in result.issues if i.code == "QUERY_RETURN_OUTPUT_MISMATCH"
     ]
     assert mismatch_issues == [], (
-        "WriteQuery instances must never emit QUERY_RETURN_OUTPUT_MISMATCH "
+        "WriteQueryModel instances must never emit QUERY_RETURN_OUTPUT_MISMATCH "
         "even when Output is declared and the template has a partial RETURN clause"
     )
 
@@ -528,11 +541,11 @@ def test_query_with_identifier_injection_emits_info_issue(
     class LabelIdentifiers(BaseModel):
         label: str
 
-    class QueryWithIdentifierInjection(CypherReadQuery[NoParams, Movie]):
-        Params = NoParams
+    class QueryWithIdentifierInjection(TypedCypherReadQueryModel[NoParams, Movie]):
+        params_schema = NoParams
         Output = Movie
-        Identifiers = LabelIdentifiers
-        name = "query_with_identifier_injection"
+        identifiers_schema = LabelIdentifiers
+        query_id = "query_with_identifier_injection"
         cypher_template = (
             "MATCH (n:`<<label>>`) RETURN n.title AS title, n.released AS released"
         )
@@ -574,11 +587,11 @@ def test_query_with_multiple_identifier_placeholders_emits_single_issue(
         label: str
         rel_type: str
 
-    class QueryWithMultipleIdentifiers(CypherReadQuery[NoParams, Movie]):
-        Params = NoParams
+    class QueryWithMultipleIdentifiers(TypedCypherReadQueryModel[NoParams, Movie]):
+        params_schema = NoParams
         Output = Movie
-        Identifiers = MultipleIdentifiers
-        name = "query_with_multiple_identifiers"
+        identifiers_schema = MultipleIdentifiers
+        query_id = "query_with_multiple_identifiers"
         cypher_template = (
             "MATCH (n:`<<label>>`) "
             "-[r:`<<rel_type>>`]->() "

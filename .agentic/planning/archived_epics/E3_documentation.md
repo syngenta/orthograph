@@ -1,5 +1,12 @@
 # Epic E3: Documentation & Onboarding
 
+> **⚠ SUPERSEDED → E61 (ADR-046).** Do not pick up work from this file directly.
+> Its three tasks now live in the phased documentation epic:
+> E3.1 (README rewrite) → **E61.1.4**, E3.2 (notebook titles) → **E61.2.1**,
+> E3.3 (architecture diagram) → **E61.2.3**. See
+> [E61_documentation_readthedocs.md](../active_epics/E61_documentation_readthedocs.md) and
+> [../../decisions/046-documentation-architecture.md](../../decisions/046-documentation-architecture.md).
+>
 > **Priority:** High
 > **Origin:** Code review 2026-05-07 (sections 2, 8: README, notebooks)
 > **Goal:** Ensure a new developer or pilot user can understand, install, and use Orthograph within 15 minutes

@@ -10,7 +10,10 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from orthograph.cypher.base_models import CypherReadQuery, CypherWriteQuery
+from orthograph.cypher.base_models import (
+    TypedCypherReadQueryModel,
+    TypedCypherWriteQueryModel,
+)
 from orthograph.cypher.bindings import NoIdentifiers
 from orthograph.cypher.query_execution import CypherExecutor, CypherWriteResultSummary
 from orthograph.graph_definition.models import NodeModel
@@ -28,23 +31,23 @@ class Movie(NodeModel):
     released: int
 
 
-class MoviesByYearCypher(CypherReadQuery[ReleasedYearParams, Movie]):
+class MoviesByYearCypher(TypedCypherReadQueryModel[ReleasedYearParams, Movie]):
     """Declarative read — default build() uses cypher_template."""
 
-    Params = ReleasedYearParams
+    params_schema = ReleasedYearParams
     Output = Movie
-    name = "movies_by_year"
+    query_id = "movies_by_year"
     cypher_template = "MATCH (m:Movie {released: $released}) RETURN m.title, m.released"
 
     def materialize(self, raw: dict[str, Any]) -> Movie:
         return Movie(title=raw["m.title"], released=raw["m.released"])
 
 
-class CreateMovieCypher(CypherWriteQuery[ReleasedYearParams, int]):
+class CreateMovieCypher(TypedCypherWriteQueryModel[ReleasedYearParams, int]):
     """Declarative write — default build() uses cypher_template."""
 
-    Params = ReleasedYearParams
-    name = "create_movie"
+    params_schema = ReleasedYearParams
+    query_id = "create_movie"
     cypher_template = "CREATE (m:Movie {released: $released})"
 
     def interpret_result(self, raw: WriteResultSummary) -> int:
@@ -242,10 +245,10 @@ def test_read_unparseable_cypher_raises_before_session_run() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
 
-        class BadImperativeRead(CypherReadQuery[ReleasedYearParams, Movie]):
-            Params = ReleasedYearParams
+        class BadImperativeRead(TypedCypherReadQueryModel[ReleasedYearParams, Movie]):
+            params_schema = ReleasedYearParams
             Output = Movie
-            name = "bad_imperative_read"
+            query_id = "bad_imperative_read"
 
             def build(self, params: ReleasedYearParams) -> CypherQueryData:
                 return CypherQueryData(
@@ -275,9 +278,9 @@ def test_write_unparseable_cypher_raises_before_session_run() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
 
-        class BadImperativeWrite(CypherWriteQuery[ReleasedYearParams, int]):
-            Params = ReleasedYearParams
-            name = "bad_imperative_write"
+        class BadImperativeWrite(TypedCypherWriteQueryModel[ReleasedYearParams, int]):
+            params_schema = ReleasedYearParams
+            query_id = "bad_imperative_write"
 
             def build(self, params: ReleasedYearParams) -> CypherQueryData:
                 return CypherQueryData(
@@ -336,16 +339,15 @@ def test_write_result_summary_satisfied_by_simple_dataclass() -> None:
 
 
 # ---------------------------------------------------------------------------
-# E37.6 — CypherQuery executed via adapter + CypherExecutor (no live DB)
+# E60.3 — CypherQuery executed directly via CypherExecutor (no live DB)
 # ---------------------------------------------------------------------------
 
 
-def test_cypher_query_read_via_adapter_returns_raw_rows() -> None:
-    """CypherQueryReadAdapter + CypherExecutor returns list[dict] for a simple query."""
+def test_cypher_query_read_returns_raw_rows() -> None:
+    """A CypherQuery passed directly to CypherExecutor returns list[dict]."""
     from pydantic import BaseModel
 
     from orthograph.cypher.query import CypherQuery
-    from orthograph.cypher.query_execution import CypherQueryReadAdapter
 
     class FindMoviesParams(BaseModel):
         released: int
@@ -365,9 +367,8 @@ def test_cypher_query_read_via_adapter_returns_raw_rows() -> None:
         ]
     )
     executor = CypherExecutor(lambda: session)
-    adapter = CypherQueryReadAdapter(query)
 
-    result: list[dict[str, Any]] = executor.read(adapter, {"released": 1999})  # type: ignore[arg-type]
+    result: list[dict[str, Any]] = executor.read(query, {"released": 1999})  # type: ignore[arg-type]
 
     assert result == [
         {"m.title": "The Matrix", "m.released": 1999},
@@ -379,12 +380,11 @@ def test_cypher_query_read_via_adapter_returns_raw_rows() -> None:
     assert params == {"released": 1999}
 
 
-def test_cypher_query_read_adapter_with_typed_params_model() -> None:
-    """CypherQueryReadAdapter uses the declared Params model for validation."""
+def test_cypher_query_read_with_typed_params_model() -> None:
+    """CypherExecutor uses the CypherQuery's declared params_schema for validation."""
     from pydantic import BaseModel
 
     from orthograph.cypher.query import CypherQuery
-    from orthograph.cypher.query_execution import CypherQueryReadAdapter
 
     class MovieParams(BaseModel):
         released: int
@@ -397,22 +397,17 @@ def test_cypher_query_read_adapter_with_typed_params_model() -> None:
     )
     session = FakeGraphSession(records=[{"m.title": "Inception"}])
     executor = CypherExecutor(lambda: session)
-    adapter = CypherQueryReadAdapter(query)
 
-    result: list[dict[str, Any]] = executor.read(adapter, {"released": 2010})  # type: ignore[arg-type]
+    result: list[dict[str, Any]] = executor.read(query, {"released": 2010})  # type: ignore[arg-type]
 
     assert result == [{"m.title": "Inception"}]
 
 
-def test_cypher_query_write_via_adapter_returns_full_summary() -> None:
-    """CypherQueryWriteAdapter + CypherExecutor returns CypherWriteResultSummary."""
+def test_cypher_query_write_returns_full_summary() -> None:
+    """A CypherQuery write via CypherExecutor returns CypherWriteResultSummary."""
     from pydantic import BaseModel
 
     from orthograph.cypher.query import CypherQuery
-    from orthograph.cypher.query_execution import (
-        CypherQueryWriteAdapter,
-        CypherWriteResultSummary,
-    )
 
     class CreateMovieParams(BaseModel):
         title: str
@@ -437,9 +432,8 @@ def test_cypher_query_write_via_adapter_returns_full_summary() -> None:
 
     session = _FakeSessionWithCounters()
     executor = CypherExecutor(lambda: session)
-    adapter = CypherQueryWriteAdapter(query)
 
-    result: CypherWriteResultSummary = executor.write(adapter, {"title": "Dune"})  # type: ignore[arg-type]
+    result: CypherWriteResultSummary = executor.write(query, {"title": "Dune"})  # type: ignore[arg-type]
 
     assert isinstance(result, CypherWriteResultSummary)
     assert result.nodes_created == 1
@@ -451,12 +445,11 @@ def test_cypher_query_write_via_adapter_returns_full_summary() -> None:
     assert params == {"title": "Dune"}
 
 
-def test_cypher_query_write_adapter_commits_transaction() -> None:
-    """CypherQueryWriteAdapter write path commits the transaction."""
+def test_cypher_query_write_commits_transaction() -> None:
+    """CypherQuery write path commits the transaction."""
     from pydantic import BaseModel
 
     from orthograph.cypher.query import CypherQuery
-    from orthograph.cypher.query_execution import CypherQueryWriteAdapter
 
     class SetPropertyParams(BaseModel):
         title: str
@@ -469,9 +462,8 @@ def test_cypher_query_write_adapter_commits_transaction() -> None:
     )
     session = FakeGraphSession(nodes_created=1)
     executor = CypherExecutor(lambda: session)
-    adapter = CypherQueryWriteAdapter(query)
 
-    _: Any = executor.write(adapter, {"title": "Arrival"})  # type: ignore[arg-type]
+    _: Any = executor.write(query, {"title": "Arrival"})  # type: ignore[arg-type]
 
     assert session.committed is True
     assert session.rolled_back is False

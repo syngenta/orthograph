@@ -11,8 +11,8 @@ from orthograph.query.base_models import (
     Executor,
     QueryBackedReadPort,
     ReadPort,
-    ReadQuery,
-    WriteQuery,
+    ReadQueryModel,
+    WriteQueryModel,
 )
 
 
@@ -25,10 +25,10 @@ class SampleRecord(BaseModel):
     label: str
 
 
-class ConcreteRead(ReadQuery[ProtocolParams, SampleRecord]):
-    Params = ProtocolParams
+class ConcreteRead(ReadQueryModel[ProtocolParams, SampleRecord]):
+    params_schema = ProtocolParams
     Output = SampleRecord
-    name = "samples_by_protocol"
+    query_id = "samples_by_protocol"
     backend = Backend.CYPHER
 
     def build(self, params: ProtocolParams) -> tuple[str, dict[str, Any]]:
@@ -41,9 +41,9 @@ class ConcreteRead(ReadQuery[ProtocolParams, SampleRecord]):
         return SampleRecord(**raw)
 
 
-class ConcreteWrite(WriteQuery[ProtocolParams, int]):
-    Params = ProtocolParams
-    name = "create_sample"
+class ConcreteWrite(WriteQueryModel[ProtocolParams, int]):
+    params_schema = ProtocolParams
+    query_id = "create_sample"
     backend = Backend.CYPHER
 
     def build(self, params: ProtocolParams) -> tuple[str, dict[str, Any]]:

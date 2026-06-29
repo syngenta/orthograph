@@ -185,8 +185,8 @@ def test_check_placeholder_alignment_returns_problems_without_raising() -> None:
         label: str
 
     class Q:
-        Params = ParamsModel
-        Identifiers = IdsModel
+        params_schema = ParamsModel
+        identifiers_schema = IdsModel
 
     # Both a missing $param field and a missing <<name>> field.
     problems = check_placeholder_alignment(Q, "MATCH (n) RETURN n")
@@ -201,8 +201,8 @@ def test_check_placeholder_alignment_clean_query_has_no_problems() -> None:
         released: int
 
     class Q:
-        Params = ParamsModel
-        Identifiers = NoIdentifiers
+        params_schema = ParamsModel
+        identifiers_schema = NoIdentifiers
 
     assert (
         check_placeholder_alignment(Q, "MATCH (m:Movie {released: $released}) RETURN m")
@@ -219,8 +219,8 @@ def test_check_placeholder_alignment_flags_unused_identifier_field() -> None:
         label: str
 
     class Q:
-        Params = NoParams
-        Identifiers = IdsModel
+        params_schema = NoParams
+        identifiers_schema = IdsModel
 
     problems = check_placeholder_alignment(Q, "MATCH (n:Movie) RETURN n")
     assert any("<<label>>" in p and "no matching placeholder" in p for p in problems)
@@ -232,8 +232,8 @@ def test_check_placeholder_alignment_flags_undeclared_identifier_placeholder() -
     """
 
     class Q:
-        Params = NoParams
-        Identifiers = NoIdentifiers
+        params_schema = NoParams
+        identifiers_schema = NoIdentifiers
 
     problems = check_placeholder_alignment(Q, "MATCH (n:`<<label>>`) RETURN n")
     assert any("<<label>>" in p and "not declared" in p for p in problems)
@@ -248,8 +248,8 @@ def test_check_placeholder_alignment_ignores_absent_or_non_model_attrs() -> None
         pass
 
     class BadTypes:
-        Params = "not a model"
-        Identifiers = 123
+        params_schema = "not a model"
+        identifiers_schema = 123
 
     assert check_placeholder_alignment(NoAttrs, "MATCH (n) RETURN n") == []
     assert check_placeholder_alignment(BadTypes, "MATCH (n) RETURN n") == []

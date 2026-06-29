@@ -18,10 +18,11 @@ Two output shapes:
     validated against the full model before being returned.
   * **Typed-query methods** (``match_by_uid_query``, ``merge_query``,
     ``create_query``, ``delete_by_uid_query``) return
-    ``CypherReadQuery`` / ``CypherWriteQuery`` *instances* that register in a
-    ``QueryCatalogue``, carry ``Params`` / ``Output`` models, and pass the
-    definition-time ``$param`` ↔ ``Params`` alignment check. The label is fixed
-    by the model at synthesis time and validated before the instance is returned.
+    ``TypedCypherReadQueryModel`` / ``TypedCypherWriteQueryModel`` *instances*
+    that register in a ``QueryCatalogue``, carry ``params_schema`` / ``Output``
+    models, and pass the definition-time ``$param`` ↔ ``params_schema`` alignment
+    check. The label is fixed by the model at synthesis time and validated
+    before the instance is returned.
 """
 
 from typing import Any, cast
@@ -29,8 +30,8 @@ from typing import Any, cast
 from pydantic import BaseModel, create_model
 
 from orthograph.cypher.base_models import (
-    CypherReadQuery,
-    CypherWriteQuery,
+    TypedCypherReadQueryModel,
+    TypedCypherWriteQueryModel,
 )
 from orthograph.cypher.exceptions import (
     CypherModelValidationError,
@@ -221,14 +222,14 @@ class CypherGenerator:
 
     # --- Typed-query emission -------------------------------------------
     #
-    # These return CypherReadQuery / CypherWriteQuery instances whose
-    # cypher_template bakes in the model-fixed label as a validated literal and
-    # whose $param names equal the synthesised Params fields. They are pure —
-    # no session touched.
+    # These return TypedCypherReadQueryModel / TypedCypherWriteQueryModel
+    # instances whose cypher_template bakes in the model-fixed label as a
+    # validated literal and whose $param names equal the synthesised Params
+    # fields. They are pure — no session touched.
 
     def match_by_uid_query(
         self, node_type: type[NodeModel]
-    ) -> CypherReadQuery[BaseModel, NodeModel]:
+    ) -> TypedCypherReadQueryModel[BaseModel, NodeModel]:
         """A typed read that matches one node of ``node_type`` by its UID field."""
         label, uid_field = self._require_uid(node_type)
         params_model = _params_model(node_type, label, [uid_field])
@@ -246,7 +247,7 @@ class CypherGenerator:
 
     def merge_query(
         self, node_type: type[NodeModel]
-    ) -> CypherWriteQuery[BaseModel, int]:
+    ) -> TypedCypherWriteQueryModel[BaseModel, int]:
         """A typed write that merges a node of ``node_type`` by its UID field."""
         label, uid_field = self._require_uid(node_type)
         prop_names = sorted(node_type.get_all_property_names())
@@ -267,7 +268,7 @@ class CypherGenerator:
 
     def create_query(
         self, node_type: type[NodeModel]
-    ) -> CypherWriteQuery[BaseModel, int]:
+    ) -> TypedCypherWriteQueryModel[BaseModel, int]:
         """A typed write that creates a node of ``node_type``."""
         label = validate_identifier(node_type.__label__, kind="label")
         prop_names = sorted(node_type.get_all_property_names())
@@ -284,7 +285,7 @@ class CypherGenerator:
 
     def delete_by_uid_query(
         self, node_type: type[NodeModel]
-    ) -> CypherWriteQuery[BaseModel, int]:
+    ) -> TypedCypherWriteQueryModel[BaseModel, int]:
         """A typed write that deletes one node of ``node_type`` by its UID field."""
         label, uid_field = self._require_uid(node_type)
         params_model = _params_model(node_type, label, [uid_field])
@@ -431,24 +432,24 @@ def _read_query(
     cypher: str,
     params_model: type[BaseModel],
     output_model: type[D],
-) -> CypherReadQuery[BaseModel, D]:
-    """Synthesise and instantiate a concrete declarative ``CypherReadQuery``."""
+) -> TypedCypherReadQueryModel[BaseModel, D]:
+    """Synthesise and instantiate a concrete declarative query."""
 
     def materialize(self: Any, raw: dict[str, Any]) -> D:
         return output_model.model_validate(raw[_RETURN_ALIAS])
 
     cls = type(
         f"{name}_Query",
-        (CypherReadQuery,),
+        (TypedCypherReadQueryModel,),
         {
-            "Params": params_model,
+            "params_schema": params_model,
             "Output": output_model,
-            "name": name,
+            "query_id": name,
             "cypher_template": cypher,
             "materialize": materialize,
         },
     )
-    return cast(CypherReadQuery[BaseModel, D], cls())
+    return cast(TypedCypherReadQueryModel[BaseModel, D], cls())
 
 
 def _write_query(
@@ -457,8 +458,8 @@ def _write_query(
     cypher: str,
     params_model: type[BaseModel],
     counter: str,
-) -> CypherWriteQuery[BaseModel, int]:
-    """Synthesise and instantiate a concrete declarative ``CypherWriteQuery``.
+) -> TypedCypherWriteQueryModel[BaseModel, int]:
+    """Synthesise and instantiate a concrete declarative ``TypedCypherWriteQueryModel``.
 
     ``counter`` is the ``SummaryCounters`` attribute to read from the driver
     result (e.g. ``"nodes_created"``, ``"nodes_deleted"``).  A mapping-shaped
@@ -475,12 +476,12 @@ def _write_query(
 
     cls = type(
         f"{name}_Query",
-        (CypherWriteQuery,),
+        (TypedCypherWriteQueryModel,),
         {
-            "Params": params_model,
-            "name": name,
+            "params_schema": params_model,
+            "query_id": name,
             "cypher_template": cypher,
             "interpret_result": interpret_result,
         },
     )
-    return cast(CypherWriteQuery[BaseModel, int], cls())
+    return cast(TypedCypherWriteQueryModel[BaseModel, int], cls())

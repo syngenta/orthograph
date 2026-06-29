@@ -1,4 +1,4 @@
-"""QueryCatalogue — a typed object registry over ReadQuery / WriteQuery / CypherQuery.
+"""QueryCatalogue — a typed object registry for multiple query types.
 
 The catalogue stores query *instances* and introspects them via ``describe()``.
 Queries reference their Output model by direct import (a Pydantic class), so the
@@ -16,7 +16,14 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from orthograph.cypher.query import CypherQuery
-from orthograph.query.base_models import Backend, D, P, R, ReadQuery, WriteQuery
+from orthograph.query.base_models import (
+    Backend,
+    D,
+    P,
+    R,
+    ReadQueryModel,
+    WriteQueryModel,
+)
 
 
 @dataclass(frozen=True)
@@ -31,7 +38,7 @@ class QueryDescription:
     queries that declare it; ``None`` for queries without an Output.
     """
 
-    name: str
+    query_id: str
     kind: Literal["read", "write"]
     backend: Backend
     params_schema: dict[str, Any]
@@ -40,7 +47,7 @@ class QueryDescription:
 
 
 class QueryCatalogue:
-    """A typed object registry for ReadQuery / WriteQuery / CypherQuery instances.
+    """A typed object registry for query instances (read, write, and simple).
 
     Register queries with ``register_read`` / ``register_write`` /
     ``register_cypher_query`` and introspect them with ``describe()`` /
@@ -53,30 +60,30 @@ class QueryCatalogue:
     """
 
     def __init__(self) -> None:
-        self._reads: dict[str, ReadQuery[Any, Any]] = {}
-        self._writes: dict[str, WriteQuery[Any, Any]] = {}
+        self._reads: dict[str, ReadQueryModel[Any, Any]] = {}
+        self._writes: dict[str, WriteQueryModel[Any, Any]] = {}
         self._cypher_queries: dict[str, CypherQuery] = {}
 
     def _reject_duplicate(self, name: str) -> None:
         if name in self._reads or name in self._writes or name in self._cypher_queries:
             raise ValueError(f"a query named {name!r} is already registered")
 
-    def register_read(self, query: ReadQuery[P, D]) -> ReadQuery[P, D]:
+    def register_read(self, query: ReadQueryModel[P, D]) -> ReadQueryModel[P, D]:
         """Register a read query. Returns the query. Raises on duplicate name."""
-        self._reject_duplicate(query.name)
-        self._reads[query.name] = query
+        self._reject_duplicate(query.query_id)
+        self._reads[query.query_id] = query
         return query
 
-    def register_write(self, query: WriteQuery[P, R]) -> WriteQuery[P, R]:
+    def register_write(self, query: WriteQueryModel[P, R]) -> WriteQueryModel[P, R]:
         """Register a write query. Returns the query. Raises on duplicate name."""
-        self._reject_duplicate(query.name)
-        self._writes[query.name] = query
+        self._reject_duplicate(query.query_id)
+        self._writes[query.query_id] = query
         return query
 
     def register_cypher_query(self, query: CypherQuery) -> CypherQuery:
         """Register a simple CypherQuery. Returns the query. Raises on duplicate name.
 
-        Simple queries are stored separately from typed ReadQuery / WriteQuery
+        Simple queries are stored separately from typed ReadQueryModel / WriteQueryModel
         instances but participate in ``queries()`` and ``validate_query_catalogue``
         so that YAML-loaded queries receive the same static validation as typed ones.
         """
@@ -86,7 +93,7 @@ class QueryCatalogue:
 
     def queries(
         self, backend: Backend | None = None
-    ) -> list[ReadQuery[Any, Any] | WriteQuery[Any, Any] | CypherQuery]:
+    ) -> list[ReadQueryModel[Any, Any] | WriteQueryModel[Any, Any] | CypherQuery]:
         """Return the registered query instances (reads, then writes, then simple).
 
         Unlike ``describe()`` (which returns backend-neutral descriptions), this
@@ -94,7 +101,9 @@ class QueryCatalogue:
         Cypher validator that needs each query's ``cypher_template`` — can inspect
         them. Filtered by ``backend`` when given.
         """
-        all_queries: list[ReadQuery[Any, Any] | WriteQuery[Any, Any] | CypherQuery] = [
+        all_queries: list[
+            ReadQueryModel[Any, Any] | WriteQueryModel[Any, Any] | CypherQuery
+        ] = [
             *self._reads.values(),
             *self._writes.values(),
             *self._cypher_queries.values(),
@@ -112,7 +121,7 @@ class QueryCatalogue:
         If ``backend`` is given, only names of queries targeting that backend are
         returned; ``None`` (the default) returns every name.
         """
-        return [d.name for d in self.describe(backend=backend)]
+        return [d.query_id for d in self.describe(backend=backend)]
 
     def get(self, name: str) -> QueryDescription:
         """Return the ``QueryDescription`` for a single registered query by name.
@@ -120,7 +129,7 @@ class QueryCatalogue:
         Raises ``KeyError`` if no query with that name has been registered.
         """
         for desc in self.describe():
-            if desc.name == name:
+            if desc.query_id == name:
                 return desc
         raise KeyError(f"no query named {name!r} is registered")
 
@@ -133,41 +142,32 @@ class QueryCatalogue:
         If ``backend`` is given, only queries targeting that backend are
         described; ``None`` (the default) describes every query.
         """
-        descriptions: list[QueryDescription] = [
-            QueryDescription(
-                name=q.name,
-                kind="read",
-                backend=q.backend,
-                params_schema=q.Params.model_json_schema(),
-                output_schema=q.Output.model_json_schema(),
-                output_class=q.Output,
+        descriptions: list[QueryDescription] = []
+        for q in self.queries():
+            if isinstance(q, CypherQuery):
+                kind: Literal["read", "write"] = "read"
+                output_schema = None
+                output_class = None
+            elif isinstance(q, WriteQueryModel):
+                kind = "write"
+                output_schema = (
+                    q.Output.model_json_schema() if q.Output is not None else None
+                )
+                output_class = q.Output
+            else:  # ReadQueryModel
+                kind = "read"
+                output_schema = q.Output.model_json_schema()
+                output_class = q.Output
+            descriptions.append(
+                QueryDescription(
+                    query_id=q.query_id,
+                    kind=kind,
+                    backend=q.backend,
+                    params_schema=q.params_schema.model_json_schema(),
+                    output_schema=output_schema,
+                    output_class=output_class,
+                )
             )
-            for q in self._reads.values()
-        ]
-        descriptions.extend(
-            QueryDescription(
-                name=q.name,
-                kind="write",
-                backend=q.backend,
-                params_schema=q.Params.model_json_schema(),
-                output_schema=q.Output.model_json_schema()
-                if q.Output is not None
-                else None,
-                output_class=q.Output,
-            )
-            for q in self._writes.values()
-        )
-        descriptions.extend(
-            QueryDescription(
-                name=q.query_id,
-                kind="read",
-                backend=q.backend,
-                params_schema=q.params_schema.model_json_schema(),
-                output_schema=None,
-                output_class=None,
-            )
-            for q in self._cypher_queries.values()
-        )
         if backend is not None:
             descriptions = [d for d in descriptions if d.backend == backend]
         return descriptions

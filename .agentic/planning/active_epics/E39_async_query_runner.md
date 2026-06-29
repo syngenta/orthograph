@@ -372,9 +372,8 @@ service's `transaction_context` does). Mirror that.
    ```
    Notes: `materialize()` is called **after** the `async with` block on a plain list — it stays sync
    and pure (ADR-028). No `begin_transaction`, no `commit`, no `rollback`.
-3. The existing `CypherQueryReadAdapter` / `CypherQueryWriteAdapter` are reused unchanged — they are
-   pure and async-agnostic; `AsyncCypherExecutor.read/write` accept them exactly as the sync executor
-   does.
+3. The async executor accepts `CypherQuery` and typed queries directly (adapters removed by E60);
+   all expose `params_schema`/`query_id` and `build(params)` uniformly.
 4. `python -c "from orthograph.cypher.query_execution import AsyncCypherExecutor"` must succeed.
    Run `python -m pytest -q` — still green (no async tests yet; T6 adds them).
 
@@ -606,7 +605,7 @@ that E39 is complete.
 
 | File | Role |
 |---|---|
-| `src/orthograph/cypher/query_execution.py` | Sync `CypherExecutor` (the I/O seam); `CypherWriteResultSummary`; adapters. T1/T2 edit; T5 adds `AsyncCypherExecutor` here. |
+| `src/orthograph/cypher/query_execution.py` | Sync `CypherExecutor` (the I/O seam); `CypherWriteResultSummary`. T1/T2 edit; T5 adds `AsyncCypherExecutor` here. |
 | `src/orthograph/query/base_models.py` | `Executor`/`ReadQuery`/`WriteQuery`/`ReadPort`/`QueryBackedReadPort` ABCs + `P`/`D`/`R` TypeVars. T4 adds async ABCs here. |
 | `src/orthograph/backends/loader.py` | `BackendSpec`, `_BACKENDS`, `load_executor`, `ExecutorClass` Protocol. T7 adds `load_async_executor`. |
 | `src/orthograph/api/database.py` | Public verbs `inspect`/`validate`/`query`/`execute`. T8 adds `query_async`/`execute_async`. |

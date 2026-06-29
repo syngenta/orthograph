@@ -9,7 +9,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
-from orthograph.cypher.base_models import CypherReadQuery
+from orthograph.cypher.base_models import TypedCypherReadQueryModel
 from orthograph.cypher.bindings import (
     CypherQueryData,
     NoParams,
@@ -51,7 +51,7 @@ class _LabelRelEndpointIdentifiers(BaseModel):
     endpoint_label: str
 
 
-class InspectCardinalityQuery(CypherReadQuery[NoParams, CardinalityStats]):
+class InspectCardinalityQuery(TypedCypherReadQueryModel[NoParams, CardinalityStats]):
     """Cardinality statistics for one ``(source, rel_type, target)`` shape.
 
     Endpoint-aware: anchors on the source ``<<label>>`` and counts each
@@ -60,10 +60,10 @@ class InspectCardinalityQuery(CypherReadQuery[NoParams, CardinalityStats]):
     relationship shape rather than a bare label blended across endpoint pairs.
     """
 
-    Params = NoParams
+    params_schema = NoParams
     Output = CardinalityStats
-    name = "inspect.cardinality"
-    Identifiers = CardinalityIdentifiers
+    query_id = "inspect.cardinality"
+    identifiers_schema = CardinalityIdentifiers
     cypher_template = (
         "MATCH (n:`<<label>>`)"
         " OPTIONAL MATCH (n)-[r:`<<rel_type>>`]->(m:`<<target_label>>`)"
@@ -81,7 +81,9 @@ class InspectCardinalityQuery(CypherReadQuery[NoParams, CardinalityStats]):
         )
 
 
-class InspectEndpointLabelsQuery(CypherReadQuery[NoParams, EndpointLabelsRow]):
+class InspectEndpointLabelsQuery(
+    TypedCypherReadQueryModel[NoParams, EndpointLabelsRow]
+):
     """Discover the distinct ``(source_labels, target_labels)`` pairs for a rel type.
 
     Matches every instance of the bare ``<<rel_type>>`` and returns the distinct
@@ -90,10 +92,10 @@ class InspectEndpointLabelsQuery(CypherReadQuery[NoParams, EndpointLabelsRow]):
     ``(source_label, target_label)`` pair.
     """
 
-    Params = NoParams
+    params_schema = NoParams
     Output = EndpointLabelsRow
-    name = "inspect.endpoint_labels"
-    Identifiers = BareRelTypeIdentifiers
+    query_id = "inspect.endpoint_labels"
+    identifiers_schema = BareRelTypeIdentifiers
     cypher_template = (
         "MATCH (src)-[r:`<<rel_type>>`]->(tgt)"
         " RETURN DISTINCT labels(src) AS source_labels, labels(tgt) AS target_labels"
@@ -199,7 +201,7 @@ with _warnings.catch_warnings():
     _warnings.simplefilter("ignore", UserWarning)
 
     class InspectSourcePartitionedCardinalityQuery(
-        CypherReadQuery[NoParams, PartitionedCardinalityRow]
+        TypedCypherReadQueryModel[NoParams, PartitionedCardinalityRow]
     ):
         """Per-pair cardinality for the **source side** (variable-width grouping).
 
@@ -219,10 +221,10 @@ with _warnings.catch_warnings():
         The symmetric counterpart is :class:`InspectTargetPartitionedCardinalityQuery`.
         """
 
-        Params = NoParams
+        params_schema = NoParams
         Output = PartitionedCardinalityRow
-        name = "inspect.partitioned_cardinality.source"
-        Identifiers = PartitionedCardinalityIdentifiers
+        query_id = "inspect.partitioned_cardinality.source"
+        identifiers_schema = PartitionedCardinalityIdentifiers
 
         def build(self, params: NoParams) -> CypherQueryData:
             ident = cast(PartitionedCardinalityIdentifiers, self._identifiers)
@@ -258,7 +260,7 @@ with _warnings.catch_warnings():
             )
 
     class InspectTargetPartitionedCardinalityQuery(
-        CypherReadQuery[NoParams, PartitionedCardinalityRow]
+        TypedCypherReadQueryModel[NoParams, PartitionedCardinalityRow]
     ):
         """Per-pair cardinality for the **target side** (variable-width grouping).
 
@@ -275,10 +277,10 @@ with _warnings.catch_warnings():
         differs.
         """
 
-        Params = NoParams
+        params_schema = NoParams
         Output = PartitionedCardinalityRow
-        name = "inspect.partitioned_cardinality.target"
-        Identifiers = PartitionedCardinalityIdentifiers
+        query_id = "inspect.partitioned_cardinality.target"
+        identifiers_schema = PartitionedCardinalityIdentifiers
 
         def build(self, params: NoParams) -> CypherQueryData:
             ident = cast(PartitionedCardinalityIdentifiers, self._identifiers)
