@@ -1,0 +1,89 @@
+# Manual release workflow — mirrors the GitLab bumpver-{major,minor,patch} jobs.
+#
+# How to release:
+#   Actions → Release → Run workflow → pick release_type → Run
+#   A required reviewer in the "release" environment must approve before the
+#   job executes.
+#
+# Secrets required:
+#   ROOT_CA  – PEM-encoded root CA cert used by twine to reach internal PyPI
+#
+# OIDC trusted publishing must be configured on PyPI:
+#   publisher:   <org>/<repo>
+#   workflow:    release.yml
+#   environment: release
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+# No concurrency group — only one release should ever run at a time, and we
+# do NOT want to cancel a release that is already in progress.
+
+jobs:
+  bumpver:
+    name: Release — bump ${{ inputs.release_type }}
+    runs-on: ubuntu-latest
+    environment: release          # required-reviewer gate lives here
+    permissions:
+      contents: write             # push version-bump commit + tag
+      id-token: write             # OIDC token for PyPI trusted publishing
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use GITHUB_TOKEN so the push triggers status checks on the new tag.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install release tools
+        run: pip install bumpver build twine
+
+      - name: Configure git identity
+        run: |
+          git config user.email "bumpver@users.noreply.github.com"
+          git config user.name "bumpver"
+
+      - name: Bump ${{ inputs.release_type }} version (no push yet)
+        run: bumpver update --${{ inputs.release_type }} --no-push
+
+      - name: Push version-bump commit and tag
+        # --follow-tags pushes the annotated tag created by bumpver alongside
+        # the commit.  [skip ci] keeps the push from re-triggering ci.yml.
+        run: |
+          git commit --amend --no-edit -m "$(git log -1 --format=%s) [skip ci]"
+          git push --follow-tags origin HEAD:main
+
+      - name: Build distribution
+        run: python -m build
+
+      - name: Validate distribution
+        run: twine check dist/*
+
+      - name: Install ROOT CA certificate
+        env:
+          ROOT_CA: ${{ secrets.ROOT_CA }}
+        run: |
+          echo "$ROOT_CA" > /usr/local/share/ca-certificates/root-ca.crt
+          update-ca-certificates
+
+      - name: Publish to PyPI (OIDC trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
