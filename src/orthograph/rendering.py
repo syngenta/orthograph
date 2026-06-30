@@ -5,14 +5,48 @@
 * ``render_result``  — :class:`ValidationResult` → text only.
 * ``display``        — :class:`GraphDefinition` → Mermaid inline in Jupyter.
 
-Example::
-
-    import orthograph
-
-    p = orthograph.profile.inspect_neo4j(driver)
-    print(orthograph.rendering.render_profile(p))
-
 ``RenderFormat`` values are also accepted as strings (``"text"``, ``"mermaid"``).
+
+Examples
+--------
+Render a definition as a human-readable text summary:
+
+>>> from typing import Optional
+>>> from orthograph.definition import GraphDefinition, NodeModel, RelationshipModel
+>>> from orthograph.rendering import render_model
+>>> class Person(NodeModel):
+...     __label__ = "Person"
+...     __uid_field__ = "name"
+...     name: str
+...     born: Optional[int] = None
+>>> class Movie(NodeModel):
+...     __label__ = "Movie"
+...     __uid_field__ = "title"
+...     title: str
+...     year: int
+>>> class ActedIn(RelationshipModel):
+...     __label__ = "ACTED_IN"
+...     __source_label__ = "Person"
+...     __target_label__ = "Movie"
+...     role: str
+>>> definition = GraphDefinition(
+...     name="Filmography",
+...     node_types=[Person, Movie],
+...     relationship_types=[ActedIn],
+... )
+>>> text = render_model(definition)
+>>> text.startswith("Model: Filmography")
+True
+>>> "ACTED_IN" in text
+True
+
+Render as a Mermaid diagram:
+
+>>> mermaid = render_model(definition, fmt="mermaid")
+>>> mermaid.startswith("graph TD")
+True
+>>> "ACTED_IN" in mermaid
+True
 """
 
 from orthograph.diagnostics.result import ValidationResult
@@ -33,14 +67,41 @@ def render_model(
 
     Parameters
     ----------
-    definition:  :class:`GraphDefinition`
-    fmt:
+    definition : :class:`GraphDefinition`
+        The graph definition to render.
+    fmt :
         ``RenderFormat.TEXT`` (default) or ``RenderFormat.MERMAID``.
+        String values ``"text"`` and ``"mermaid"`` are also accepted.
 
     Raises
     ------
     ValueError
         If ``fmt`` is unrecognised or not supported by this renderer.
+
+    Examples
+    --------
+    Render as text (default):
+
+    >>> from orthograph.definition import GraphDefinition, NodeModel
+    >>> from orthograph.rendering import render_model
+    >>> class Person(NodeModel):
+    ...     __label__ = "Person"
+    ...     __uid_field__ = "name"
+    ...     name: str
+    >>> definition = GraphDefinition(
+    ...     name="Social", node_types=[Person], relationship_types=[]
+    ... )
+    >>> text = render_model(definition)
+    >>> text.startswith("Model: Social")
+    True
+    >>> "Person" in text
+    True
+
+    Render as a Mermaid diagram:
+
+    >>> mermaid = render_model(definition, fmt="mermaid")
+    >>> mermaid.startswith("graph TD")
+    True
     """
     fmt = RenderFormat(fmt)
     if fmt is RenderFormat.TEXT:
@@ -84,6 +145,51 @@ def render_result(
     ------
     ValueError
         If ``fmt`` is not ``RenderFormat.TEXT``.
+
+    Examples
+    --------
+    A passing result renders with a ``PASS`` banner:
+
+    >>> from orthograph.definition import (
+    ...     GraphDefinition, NodeModel, RelationshipModel,
+    ...     validate_data, validate_definition,
+    ... )
+    >>> from orthograph.rendering import render_result
+    >>> class Person(NodeModel):
+    ...     __label__ = "Person"
+    ...     __uid_field__ = "name"
+    ...     name: str
+    >>> class Movie(NodeModel):
+    ...     __label__ = "Movie"
+    ...     __uid_field__ = "title"
+    ...     title: str
+    ...     year: int
+    >>> class ActedIn(RelationshipModel):
+    ...     __label__ = "ACTED_IN"
+    ...     __source_label__ = "Person"
+    ...     __target_label__ = "Movie"
+    ...     role: str
+    >>> definition = GraphDefinition(
+    ...     name="Filmography",
+    ...     node_types=[Person, Movie],
+    ...     relationship_types=[ActedIn],
+    ... )
+    >>> nodes = [
+    ...     {"__label__": "Person", "name": "Alice"},
+    ...     {"__label__": "Movie", "title": "Inception", "year": 2010},
+    ... ]
+    >>> result = validate_data(definition, nodes)
+    >>> "PASS" in render_result(result)
+    True
+
+    A failing result renders with a ``FAIL`` banner and error details:
+
+    >>> bad = [{"__label__": "Movie", "title": "Dune"}]  # missing year
+    >>> output = render_result(validate_data(definition, bad))
+    >>> "FAIL" in output
+    True
+    >>> "PROPERTY_VALIDATION_ERROR" in output
+    True
     """
     fmt = RenderFormat(fmt)
     if fmt is RenderFormat.TEXT:

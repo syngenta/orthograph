@@ -40,11 +40,14 @@ If you would like to contribute to the package, we recommend the following devel
     git checkout -b a-super-nice-feature-we-all-need
     ```
 
-5. Create and activate a dedicated conda environment (any other virtual environment management would work):
+5. Create and activate a dedicated Python environment (any virtual environment tool works):
 
     ```sh
-    conda env create -n orthograph
-    conda activate orthograph
+    python -m venv .venv
+    # Linux / macOS
+    source .venv/bin/activate
+    # Windows
+    .venv\Scripts\activate
     ```
 
 6. Install orthograph in editable mode:
@@ -120,3 +123,122 @@ All of these checks run automatically via pre-commit hooks when you commit. Make
 - Update relevant documentation in the `docs/` directory if your changes affect API or behavior
 - Include docstrings in your code following the project's existing conventions
 - Consider adding examples in notebooks if you add significant new functionality
+
+---
+
+## Running the tests
+
+### Test categories
+
+| Category | What runs | When |
+|---|---|---|
+| Unit | Pure Python, no external process | Always (default CI) |
+| In-process integration | NetworkX backend, YAML round-trips | Always (no flag needed) |
+| Live Neo4j | Tests marked `@pytest.mark.neo4j` + Neo4j notebooks | `--neo4j` flag |
+| Live Memgraph | Tests marked `@pytest.mark.memgraph` + Memgraph notebooks | `--memgraph` flag |
+
+### Basic usage
+
+```sh
+# Unit + in-process integration only (CI default)
+pytest
+
+# With verbose output
+pytest -v
+```
+
+### Live-database flags
+
+Passing credentials via the CLI is intentional — there are no `.env` file defaults for tests, ensuring explicit credential handling in CI/CD.
+
+```sh
+# Run with live Neo4j
+pytest --neo4j --neo4j-password <password>
+
+# Run with live Memgraph
+pytest --memgraph --memgraph-password <password>
+
+# Run with both
+pytest --neo4j --neo4j-password <pw> --memgraph --memgraph-password <pw>
+```
+
+### Credential options
+
+All connection details are passed via CLI. Defaults listed below; only passwords have no default.
+
+| Option | Default | Notes |
+|---|---|---|
+| `--neo4j-uri` | `bolt://localhost:7687` | |
+| `--neo4j-user` | `neo4j` | |
+| `--neo4j-password` | *(required for `--neo4j`)* | No default — must be passed explicitly |
+| `--memgraph-uri` | `bolt://localhost:7688` | |
+| `--memgraph-user` | *(empty)* | |
+| `--memgraph-password` | *(empty)* | |
+
+### Full test matrix
+
+```sh
+# Unit tests only
+pytest
+
+# Unit + live Neo4j
+pytest --neo4j --neo4j-password <pw>
+
+# Unit + live Memgraph
+pytest --memgraph --memgraph-password <pw>
+
+# Unit + live Neo4j + live Memgraph
+pytest --neo4j --neo4j-password <pw> --memgraph --memgraph-password <pw>
+```
+
+### Running notebooks
+
+Notebooks are validated via [nbval](https://nbval.readthedocs.io/). They are split into three groups:
+
+**CI-safe notebooks** — execute at build time, no external DB required:
+
+```sh
+pytest notebooks/ --nbval-lax
+```
+
+**Live-DB notebooks** — require the corresponding flag and a running database:
+
+```sh
+pytest notebooks/ --nbval-lax --neo4j --neo4j-password <pw>
+pytest notebooks/ --nbval-lax --memgraph --memgraph-password <pw>
+```
+
+The following notebooks require a live database (source of truth: `notebooks/conftest.py`):
+
+| Notebook | Requires flag |
+|---|---|
+| `03.03_cypher_query_usage.ipynb` | `--neo4j` |
+| `04.02_neo4j_backend.ipynb` | `--neo4j` |
+| `04.03_gqlalchemy_backend.ipynb` | `--memgraph` |
+| `04.04_multi_shape_relationships.ipynb` | `--neo4j` |
+| `04.06_cypher_query_definitions.ipynb` | `--neo4j` |
+
+**UI notebooks** — require optional UI dependencies (`dash`, `fastapi`, `plotly`). Excluded from collection unless the `NOTEBOOKS_UI` environment variable is set:
+
+```sh
+NOTEBOOKS_UI=1 pytest notebooks/ --nbval-lax
+```
+
+UI notebooks: `06.01_fastapi_integration.ipynb`, `06.02_dash_profile_explorer.ipynb`, `06.03_async_query_runner.ipynb`.
+
+### Adding live-DB tests
+
+1. Mark the test with `@pytest.mark.neo4j` or `@pytest.mark.memgraph`.
+2. Use the session-scoped fixture `neo4j_driver` or `memgraph_driver` (defined in the root `conftest.py`) to get a driver.
+3. Use `neo4j_clean` / `memgraph_clean` if your test needs a blank database — these fixtures wipe all nodes and relationships before and after each test.
+
+```python
+import pytest
+
+@pytest.mark.neo4j
+def test_something_against_neo4j(neo4j_clean, neo4j_driver):
+    neo4j_driver.execute_query("CREATE (n:Person {name: 'Alice'})")
+    # ... assertions ...
+```
+
+The test is automatically skipped when `--neo4j` is not passed.

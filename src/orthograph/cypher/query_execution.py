@@ -197,8 +197,9 @@ class CypherQueryExecutor:
 
     CypherQuery declares no Output model and makes no read/write distinction, so this
     executor exposes two operations named by return shape:
-      - fetch()   -> list[dict[str, Any]]    (a RETURN query)
-      - execute() -> CypherWriteResultSummary (a mutation)
+
+    - fetch()   -> list[dict[str, Any]]    (a RETURN query)
+    - execute() -> CypherWriteResultSummary (a mutation)
 
     It never commits or rolls back;
     the factory yields the session or a live transaction.

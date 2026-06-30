@@ -185,9 +185,9 @@ credential management, notebook running, adding live-DB tests, full matrix) into
 names while moving (the `_DB_NOTEBOOKS` source of truth is
 `notebooks/conftest.py`).
 **Acceptance:**
-- [ ] full test matrix present in CONTRIBUTING
-- [ ] live-DB notebook list matches `notebooks/conftest.py`
-- [ ] no duplication left in README
+- [x] full test matrix present in CONTRIBUTING
+- [x] live-DB notebook list matches `notebooks/conftest.py`
+- [x] no duplication left in README
 
 ---
 
@@ -210,9 +210,25 @@ pillars (ADR-046 map): declaration → visualization → query management → ba
 How-to (editorial). Each pillar gets a 2–3 line lead-in linking the relevant
 Explanation page.
 **Acceptance:**
-- [ ] all tutorial notebooks reachable via toctree (single source, no copies)
-- [ ] pillars ordered as a learning progression
-- [ ] CI-safe notebooks execute at build; live-DB ones render saved outputs
+- [x] all tutorial notebooks reachable via toctree (single source, no copies)
+- [x] pillars ordered as a learning progression
+- [x] CI-safe notebooks execute at build; live-DB ones render saved outputs
+
+> **Editorial call (ADR-046 D3):** the `06.x` integration notebooks
+> (`06.01_fastapi_integration`, `06.02_dash_profile_explorer`,
+> `06.03_async_query_runner`) are task-shaped, so they go under **How-to** (wired
+> in E61.3.2), not the Tutorials learning path. The five tutorial pillars are
+> ordered declaration → visualization → query management → backends → profiling &
+> comparison.
+>
+> **Wiring fix (conf.py):** the P0 Windows copy-fallback exposed only one
+> notebook and broke the notebooks' `from shared.filmography import …` imports and
+> `data/*.json` reads (they execute with CWD inside `docs/source/notebooks/`).
+> Replaced with a link-first strategy: POSIX symlink → Windows directory junction
+> (`mklink /J`, no Developer Mode needed) → copy-of-notebooks-plus-support-dirs as
+> last resort. The junction keeps a single source and lets all CI-safe notebooks
+> execute at build (18 prior `CellExecutionError`s cleared; warnings 63 → 43, the
+> remainder pre-existing autodoc/lexer issues outside this task).
 
 ### E61.2.3 — Architecture diagram  `[sonnet]`  *(was E3.3)*
 Add a Mermaid diagram of the three-layer stack (definition ↔ query-set ↔ DB
@@ -220,9 +236,9 @@ schema) and the seven-module surface, placed in `explanation/architecture.md`
 (stub created here, fleshed out in P4) and linked from `index.md`. Use the PRD
 stack diagram as the source.
 **Acceptance:**
-- [ ] valid Mermaid, renders in build
-- [ ] matches ADR-017 topology + PRD stack
-- [ ] discoverable from the landing page
+- [x] valid Mermaid, renders in build
+- [x] matches ADR-017 topology + PRD stack
+- [x] discoverable from the landing page
 
 ---
 
@@ -243,17 +259,17 @@ lesson; reuse notebook snippets by reference where possible.
 Surface `06.01_fastapi_integration` and `06.02_dash_profile_explorer` under
 How-to (per ADR-046 D3 editorial call), with a one-line task framing each.
 **Acceptance:**
-- [ ] both integration notebooks reachable under How-to, single source
-- [ ] build green
+- [x] both integration notebooks reachable under How-to, single source
+- [x] build green
 
 ### E61.3.3 — Enable doctest and convert priority docstrings  `[opus]`
 Wire `pytest --doctest-modules` into the test config; convert the public-surface
 docstrings referenced by the Quick Start and the P3 how-to pages into runnable
 doctests. Incremental — prioritise the most-referenced symbols.
 **Acceptance:**
-- [ ] `pytest --doctest-modules src/orthograph` passes
-- [ ] Quick Start example exists as a doctest somewhere on the public surface
-- [ ] `make doctest` (sphinx) passes for converted pages
+- [x] `pytest --doctest-modules src/orthograph` passes
+- [x] Quick Start example exists as a doctest somewhere on the public surface
+- [x] `make doctest` (sphinx) passes for converted pages
 
 ---
 
@@ -274,8 +290,8 @@ Explain the governance positioning: ontology → graph definition → schema, an
 bidirectional drift detection (query-set vs definition; DB schema vs definition).
 Source: PRD §Vision + §Capability 3. Governance framing, not replacement.
 **Acceptance:**
-- [ ] reproduces the three-layer stack with drift arrows (Mermaid from E61.2.3)
-- [ ] distinguishes Orthograph from ORMs/migration tools (PRD Constraints)
+- [x] reproduces the three-layer stack with drift arrows (Mermaid from E61.2.3)
+- [x] distinguishes Orthograph from ORMs/migration tools (PRD Constraints)
 
 ### E61.4.3 — Advanced-topic placeholders  `[haiku]`
 Create stub Explanation pages for advanced/algorithmic topics that will rot if

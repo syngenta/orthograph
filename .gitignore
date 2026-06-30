@@ -24,6 +24,9 @@ pytest-report.xml
 # Sphinx documentation
 docs/build/
 docs/source/reference/generated/*rst
+# notebooks/ under source is a symlink (Linux) or copy (Windows) — never committed
+docs/source/notebooks/
+docs/jupyter_execute/notebooks/
 
 # managing secrets
 .secrets.*

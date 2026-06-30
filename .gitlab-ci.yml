@@ -100,6 +100,8 @@ pytest:
     - pip install --cache-dir "$PIP_CACHE_DIR" -e '.[dev]'
     # --junitxml feeds the GitLab MR test report widget.
     - python -m pytest -v --junitxml=report.xml
+    # Docstring examples — runnable doctests on the public surface.
+    - python -m pytest --doctest-modules src/orthograph -v
     # Notebook regression tests (cell execution via nbval).
     # DB-required notebooks are excluded via notebooks/conftest.py.
     - pytest notebooks/ --nbval-lax -v

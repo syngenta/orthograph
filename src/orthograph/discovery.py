@@ -15,6 +15,18 @@ Verbs:
 
 ``available`` is the source of legal ``backend`` strings for
 :mod:`orthograph.profile` and :mod:`orthograph.execution`.
+
+Examples
+--------
+List available backends and probe their capabilities:
+
+>>> from orthograph.discovery import available, is_available, can_inspect
+>>> isinstance(available(), list)
+True
+>>> is_available("unknown_backend")
+False
+>>> can_inspect("networkx")     # True if networkx is installed
+True
 """
 
 from orthograph import dependencies
@@ -26,6 +38,14 @@ def available() -> list[str]:
 
     A subset of :func:`loader.backend_names`; the strings here name the
     inspectable/executable backends behind ``profile`` / ``execution``.
+
+    Examples
+    --------
+    >>> from orthograph.discovery import available
+    >>> isinstance(available(), list)
+    True
+    >>> "networkx" in available()   # True if networkx is installed
+    True
     """
     return [n for n in loader.backend_names() if dependencies.is_available(n)]
 
@@ -35,6 +55,14 @@ def is_available(backend: str) -> bool:
 
     Unknown names return ``False`` (delegates to
     :func:`dependencies.is_available`).
+
+    Examples
+    --------
+    >>> from orthograph.discovery import is_available
+    >>> is_available("networkx")        # True if networkx is installed
+    True
+    >>> is_available("unknown_backend")
+    False
     """
     return dependencies.is_available(backend)
 
@@ -46,6 +74,12 @@ def can_inspect(backend: str) -> bool:
     ------
     MissingDependencyError
         If ``backend`` is not a wired backend.
+
+    Examples
+    --------
+    >>> from orthograph.discovery import can_inspect
+    >>> can_inspect("networkx")
+    True
     """
     return loader.capabilities(backend).can_inspect
 
@@ -57,6 +91,14 @@ def can_execute(backend: str) -> bool:
     ------
     MissingDependencyError
         If ``backend`` is not a wired backend.
+
+    Examples
+    --------
+    >>> from orthograph.discovery import can_execute
+    >>> can_execute("networkx")
+    False
+    >>> can_execute("neo4j")
+    True
     """
     return loader.capabilities(backend).can_execute
 

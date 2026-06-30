@@ -36,6 +36,25 @@ networkx: the :class:`MultiDiGraph` itself).  ``execution.run_*`` accept a
 **Async inspection** — inspection is synchronous.  Async variants
 (``inspect_*_async``) are deliberately absent; async inspection is deferred.
 The query-runner async path is separate.
+
+Examples
+--------
+Inspect a networkx in-memory graph into a vendor-free ``GraphProfile``
+(requires the ``networkx`` extra):
+
+>>> import networkx as nx
+>>> from orthograph.profile import inspect_networkx
+>>> g = nx.MultiDiGraph()
+>>> _ = g.add_node("alice", __label__="Person", name="Alice")
+>>> _ = g.add_node("inception", __label__="Movie", title="Inception", year=2010)
+>>> _ = g.add_edge("alice", "inception", __label__="ACTED_IN", role="Lead")
+>>> profile = inspect_networkx(g)
+>>> profile.source
+'networkx'
+>>> sorted(profile.node_labels)
+['Movie', 'Person']
+>>> "Person:ACTED_IN:Movie" in profile.relationship_types
+True
 """
 
 from typing import Any, Protocol, runtime_checkable
@@ -194,6 +213,24 @@ def inspect_networkx(
         additionally receive per-side partitioned cardinality breakdowns.
         Without a definition the breakdowns are ``None`` (comparison reports
         ``CARDINALITY_UNVERIFIABLE``).
+
+    Examples
+    --------
+    Inspect a small in-memory graph (requires the ``networkx`` extra):
+
+    >>> import networkx as nx
+    >>> from orthograph.profile import inspect_networkx
+    >>> g = nx.MultiDiGraph()
+    >>> _ = g.add_node("alice", __label__="Person", name="Alice")
+    >>> _ = g.add_node("inception", __label__="Movie", title="Inception")
+    >>> _ = g.add_edge("alice", "inception", __label__="ACTED_IN", role="Lead")
+    >>> profile = inspect_networkx(g)
+    >>> profile.source
+    'networkx'
+    >>> sorted(profile.node_labels)
+    ['Movie', 'Person']
+    >>> "Person:ACTED_IN:Movie" in profile.relationship_types
+    True
     """
     return loader.run_inspection(
         "networkx",

@@ -22,21 +22,29 @@ Two supported import styles::
     from orthograph.profile import inspect_neo4j
     from orthograph.compare import profile_to_definition
 
-Example::
+Examples
+--------
+Define a graph contract, validate data against it, and render the result:
 
-    import orthograph
+>>> import orthograph
+>>> class Person(orthograph.definition.NodeModel):
+...     __label__ = "Person"
+...     __uid_field__ = "name"
+...     name: str
+>>> definition = orthograph.definition.GraphDefinition(
+...     name="Social", node_types=[Person], relationship_types=[]
+... )
+>>> nodes = [{"__label__": "Person", "name": "Alice"}]
+>>> result = orthograph.definition.validate_data(definition, nodes)
+>>> result.is_valid
+True
+>>> "PASS" in orthograph.rendering.render_result(result)
+True
 
-    class Person(orthograph.definition.NodeModel):
-        __label__ = "Person"
-        name: str
+Query a list of installed backends:
 
-    definition = orthograph.definition.GraphDefinition(
-        name="Social", node_types=[Person], relationship_types=[]
-    )
-    profile = orthograph.profile.inspect_neo4j(driver)
-    result  = orthograph.compare.profile_to_definition(profile, definition)
-    print(orthograph.rendering.render_result(result))
-    print(orthograph.discovery.available())
+>>> isinstance(orthograph.discovery.available(), list)
+True
 """  # NOQA E501
 
 import importlib.metadata

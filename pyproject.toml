@@ -91,8 +91,11 @@ notebooks_integration_extensions = [
 
 # Support for documentation generation with Sphinx
 docs = [
-    "sphinx>=5.0",
-    "sphinx-rtd-theme>=3.0.0",
+    "sphinx>=7.0",
+    "myst-nb>=1.0",
+    "furo>=2024.0",
+    "sphinx-design>=0.5",
+    "sphinxcontrib-mermaid>=0.9",
 ]
 
 # Development: testing, linting, type checking
@@ -149,6 +152,11 @@ markers = [
     "neo4j: requires a live Neo4j instance (run with --neo4j)",
     "memgraph: requires a live Memgraph instance (run with --memgraph)",
 ]
+# Doctest runner — run separately to avoid loading notebook infrastructure:
+#   pytest --doctest-modules src/orthograph
+# This tests all >>> examples in public-surface docstrings without executing
+# notebooks or requiring live-DB extras.
+doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
 
 # --------------------------------------------------------------------------- #
 #  Ruff
@@ -161,10 +169,10 @@ exclude = ["build"]
 
 [tool.ruff.lint]
 select = [
-    "E",      # pycodestyle errors
-    "W",      # pycodestyle warnings
-    "F",      # pyflakes
-    "I",      # isort
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F",    # pyflakes
+    "I",       # isort
 ]
 ignore = [
     "E203",   # whitespace before ':'
