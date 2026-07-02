@@ -1,0 +1,9 @@
+# Dependabot keeps GitHub Actions pins up to date.
+# Opens a PR once a year when a new version of a pinned action is released.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: yearly
