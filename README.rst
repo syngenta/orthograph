@@ -27,6 +27,7 @@ Orthograph
 .. image:: https://static.pepy.tech/badge/orthograph
    :target: https://pepy.tech/project/orthograph
    :alt: Downloads total
+
 .. image:: https://img.shields.io/github/actions/workflow/status/syngenta/orthograph/ci.yml
    :alt: GitHub Workflow Status
 
