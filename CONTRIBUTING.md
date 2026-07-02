@@ -24,7 +24,7 @@ If you would like to contribute to the package, we recommend the following devel
 2. Clone the orthograph repository:
 
     ```sh
-    git clone git@github.com:${GH_ACCOUNT_OR_ORG}/orthograph.git
+    git clone git@github.com:syngenta/orthograph.git
     ```
 
 3. Add remote orthograph repo as an "upstream" in your local repo, so you can check/update remote changes.
