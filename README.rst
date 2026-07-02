@@ -4,6 +4,23 @@ Orthograph
 .. image:: https://img.shields.io/pypi/v/orthograph
    :target: https://pypi.python.org/pypi/orthograph
    :alt: PyPI - Version
+.. image:: https://img.shields.io/pypi/pyversions/orthograph.svg
+   :target: https://pypi.python.org/pypi/orthograph/
+   :alt: PyPI pyversions
+.. image:: https://readthedocs.org/projects/orthograph/badge/?version=latest
+   :target: https://orthograph.readthedocs.io/en/latest/?badge=latest
+   :alt: Documentation Status
+
+   :alt: Contributions
+.. image:: https://img.shields.io/badge/license-MIT-blue.svg
+   :target: https://opensource.org/licenses/MIT
+
+.. image:: https://img.shields.io/badge/repo%20status-Active-Green
+   :target: https://www.repostatus.org/#active
+   :alt: Project Status: Active
+.. image:: https://img.shields.io/badge/contributions-welcome-blue
+   :target: https://github.com/syngenta/orthograph/blob/main/CONTRIBUTING.md
+
 .. image:: https://static.pepy.tech/badge/orthograph/month
    :target: https://pepy.tech/project/orthograph
    :alt: Downloads monthly
@@ -12,20 +29,10 @@ Orthograph
    :alt: Downloads total
 .. image:: https://img.shields.io/github/actions/workflow/status/syngenta/orthograph/ci.yml
    :alt: GitHub Workflow Status
-.. image:: https://readthedocs.org/projects/orthograph/badge/?version=latest
-   :target: https://orthograph.readthedocs.io/en/latest/?badge=latest
-   :alt: Documentation Status
-.. image:: https://img.shields.io/badge/contributions-welcome-blue
-   :target: https://github.com/syngenta/orthograph/blob/main/CONTRIBUTING.md
-   :alt: Contributions
-.. image:: https://img.shields.io/badge/license-MIT-blue.svg
-   :target: https://opensource.org/licenses/MIT
-.. image:: https://img.shields.io/badge/repo%20status-Active-Green
-   :target: https://www.repostatus.org/#active
-   :alt: Project Status: Active
-.. image:: https://img.shields.io/pypi/pyversions/orthograph.svg
-   :target: https://pypi.python.org/pypi/orthograph/
-   :alt: PyPI pyversions
+
+
+
+
 
 ---------------------
 
