@@ -10,7 +10,7 @@ Orthograph
 .. image:: https://static.pepy.tech/badge/orthograph
    :target: https://pepy.tech/project/orthograph
    :alt: Downloads total
-.. image:: https://img.shields.io/github/actions/workflow/status/syngenta/orthograph/pytest.yml?branch=main
+.. image:: https://img.shields.io/github/actions/workflow/status/syngenta/orthograph/pytest.yml?branch=dev
    :alt: GitHub Workflow Status
 .. image:: https://readthedocs.org/projects/orthograph/badge/?version=latest
    :target: https://orthograph.readthedocs.io/en/latest/?badge=latest
