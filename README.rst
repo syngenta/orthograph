@@ -10,7 +10,7 @@ Orthograph
 .. image:: https://static.pepy.tech/badge/orthograph
    :target: https://pepy.tech/project/orthograph
    :alt: Downloads total
-.. image:: https://img.shields.io/github/actions/workflow/status/syngenta/orthograph/pytest.yml?branch=dev
+.. image:: https://img.shields.io/github/actions/workflow/status/syngenta/orthograph/ci.yml?branch=dev
    :alt: GitHub Workflow Status
 .. image:: https://readthedocs.org/projects/orthograph/badge/?version=latest
    :target: https://orthograph.readthedocs.io/en/latest/?badge=latest
@@ -20,10 +20,14 @@ Orthograph
    :alt: Contributions
 .. image:: https://img.shields.io/badge/license-MIT-blue.svg
    :target: https://opensource.org/licenses/MIT
+.. image:: https://img.shields.io/badge/repo%20status-Active-Green?style=for-the-badge
+   :target: https://www.repostatus.org/#active
+   :alt: Project Status: Active
+.. image:: https://img.shields.io/pypi/pyversions/orthograph.svg?style=for-the-badge
+   :target: https://pypi.python.org/pypi/orthograph/
+   :alt: PyPI pyversions
 
 ---------------------
-
-
 
 Pydantic-native graph data governance: one declared contract for your property
 graph, continuously checked against your data, your queries, and your live
