@@ -12,6 +12,12 @@
 #   publisher:   <org>/<repo>
 #   workflow:    release.yml
 #   environment: release
+#
+# All actions are pinned to full commit SHAs (org policy).
+# To update a pin: look up the new SHA for the tag/branch and replace below.
+#   actions/checkout              v4          => 34e114876b0b11c390a56381ad16ebd13914f8d5
+#   actions/setup-python          v5          => a26af69be951a213d495a4c3e4e4022e16d87065
+#   pypa/gh-action-pypi-publish   release/v1  => cef221092ed1bacb1cc03d23a2d87d1d172e277b
 
 name: Release
 
@@ -40,13 +46,13 @@ jobs:
       id-token: write             # OIDC token for PyPI trusted publishing
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           fetch-depth: 0
           # Use GITHUB_TOKEN so the push triggers status checks on the new tag.
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"
           cache: pip
@@ -84,6 +90,6 @@ jobs:
           update-ca-certificates
 
       - name: Publish to PyPI (OIDC trusted publishing)
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
         with:
           skip-existing: true
