@@ -1,21 +1,21 @@
 Orthograph
 ==========
 
-.. image:: https://img.shields.io/pypi/v/orthograph
+.. image:: https://img.shields.io/pypi/v/orthograph?style=for-the-badge
    :target: https://pypi.python.org/pypi/orthograph
    :alt: PyPI - Version
-.. image:: https://static.pepy.tech/badge/orthograph/month
+.. image:: https://static.pepy.tech/badge/orthograph/month?style=for-the-badge
    :target: https://pepy.tech/project/orthograph
    :alt: Downloads monthly
-.. image:: https://static.pepy.tech/badge/orthograph
+.. image:: https://static.pepy.tech/badge/orthograph?style=for-the-badge
    :target: https://pepy.tech/project/orthograph
    :alt: Downloads total
-.. image:: https://img.shields.io/github/actions/workflow/status/syngenta/orthograph/ci.yml?branch=dev
+.. image:: https://img.shields.io/github/actions/workflow/status/syngenta/orthograph/ci.yml?branch=dev?style=for-the-badge
    :alt: GitHub Workflow Status
-.. image:: https://readthedocs.org/projects/orthograph/badge/?version=latest
+.. image:: https://readthedocs.org/projects/orthograph/badge/?version=latest?style=for-the-badge
    :target: https://orthograph.readthedocs.io/en/latest/?badge=latest
    :alt: Documentation Status
-.. image:: https://img.shields.io/badge/contributions-welcome-blue
+.. image:: https://img.shields.io/badge/contributions-welcome-blue?style=for-the-badge
    :target: https://github.com/syngenta/orthograph/blob/main/CONTRIBUTING.md
    :alt: Contributions
 .. image:: https://img.shields.io/badge/license-MIT-blue.svg
