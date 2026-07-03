@@ -14,10 +14,7 @@
 #   environment: release
 #
 # All actions are pinned to full commit SHAs (org policy).
-# To update a pin: look up the new SHA for the tag/branch and replace below.
-#   actions/checkout              v4          => 34e114876b0b11c390a56381ad16ebd13914f8d5
-#   actions/setup-python          v5          => a26af69be951a213d495a4c3e4e4022e16d87065
-#   pypa/gh-action-pypi-publish   release/v1  => cef221092ed1bacb1cc03d23a2d87d1d172e277b
+
 
 name: Release
 
@@ -46,13 +43,13 @@ jobs:
       id-token: write             # OIDC token for PyPI trusted publishing
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
           # Use GITHUB_TOKEN so the push triggers status checks on the new tag.
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -82,14 +79,7 @@ jobs:
       - name: Validate distribution
         run: twine check dist/*
 
-      - name: Install ROOT CA certificate
-        env:
-          ROOT_CA: ${{ secrets.ROOT_CA }}
-        run: |
-          echo "$ROOT_CA" > /usr/local/share/ca-certificates/root-ca.crt
-          update-ca-certificates
-
       - name: Publish to PyPI (OIDC trusted publishing)
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         with:
           skip-existing: true
