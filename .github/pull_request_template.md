@@ -15,4 +15,3 @@
 
 ## Checklist
 - [ ] Tests pass
-- [ ] CHANGELOG / version bump handled (if applicable)
