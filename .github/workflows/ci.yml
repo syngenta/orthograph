@@ -1,0 +1,176 @@
+# Mirror of .gitlab-ci.yml  (lint + security + test only)
+# Stages: lint → security → pytest
+#
+# Trigger rules (match GitLab workflow):
+#   - Pull requests targeting any branch  (mirrors merge_request_event)
+#   - Pushes to main                       (mirrors CI_COMMIT_BRANCH == "main")
+#
+# Release is handled separately in release.yml (workflow_dispatch).
+#
+# All actions are pinned to full commit SHAs (org policy).
+# To update a pin: look up the new SHA for the tag and replace below.
+
+# gitleaks: binary installed directly (MIT-licensed, no org license required)
+#   binary version pinned via GITLEAKS_VERSION env var in each security job
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# Cancel in-flight runs for the same ref (mirrors `interruptible: true`)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Shared pip cache key tied to pyproject.toml (mirrors GitLab cache key)
+env:
+  PIP_CACHE_DIR: ~/.cache/pip
+
+# ---------------------------------------------------------------------------
+# LINT
+# ---------------------------------------------------------------------------
+jobs:
+  pre-commit:
+    name: pre-commit (lint)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package with dev extras
+        run: pip install -e '.[dev]'
+
+      - name: Run pre-commit (skip branch-protection hook)
+        env:
+          SKIP: no-commit-to-branch
+        run: pre-commit run --all-files --show-diff-on-failure --color=always
+
+# ---------------------------------------------------------------------------
+# SECURITY
+# ---------------------------------------------------------------------------
+  gitleaks-mr:
+    name: gitleaks secret scan (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: "8.21.2"   # pin explicitly; bump when updating
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0          # full history needed by gitleaks
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            -o gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan MR-introduced commits
+        run: >-
+          gitleaks git
+          --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+          --report-format json
+          --report-path gitleaks-report.json
+          --verbose
+          --exit-code 1
+          .
+
+      - name: Upload gitleaks report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: gitleaks-report-pr
+          path: gitleaks-report.json
+          retention-days: 30
+
+  gitleaks-full:
+    name: gitleaks secret scan (full history)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: "8.21.2"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            -o gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan full repository history
+        run: >-
+          gitleaks git
+          --report-format json
+          --report-path gitleaks-report.json
+          --verbose
+          --exit-code 1
+          .
+
+      - name: Upload gitleaks report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: gitleaks-report-full
+          path: gitleaks-report.json
+          retention-days: 30
+
+# ---------------------------------------------------------------------------
+# PYTEST  (4-way matrix: 3.11 / 3.12 / 3.13 / 3.14)
+# ---------------------------------------------------------------------------
+  pytest:
+    name: pytest (Python ${{ matrix.python-version }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false        # run all matrix legs even if one fails
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true   # needed for 3.14
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package with dev extras
+        run: pip install -e '.[dev]'
+
+      - name: Run unit tests
+        run: python -m pytest -v --junitxml=report.xml
+
+      - name: Run doctests
+        run: python -m pytest --doctest-modules src/orthograph -v
+
+      - name: Run notebook regression tests
+        run: pytest notebooks/ --nbval-lax -v
+
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: junit-report-py${{ matrix.python-version }}
+          path: report.xml
+          retention-days: 7
