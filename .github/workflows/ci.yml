@@ -1,9 +1,7 @@
-# Mirror of .gitlab-ci.yml  (lint + security + test only)
-# Stages: lint → security → pytest
+# CI — lint + security + test
 #
-# Trigger rules (match GitLab workflow):
-#   - Pull requests targeting any branch  (mirrors merge_request_event)
-#   - Pushes to main                       (mirrors CI_COMMIT_BRANCH == "main")
+# Runs on every pull request (feature→dev and dev→main identically).
+# All jobs must pass before a PR can be merged (enforce via branch protection rules).
 #
 # Release is handled separately in release.yml (workflow_dispatch).
 #
@@ -11,22 +9,18 @@
 # To update a pin: look up the new SHA for the tag and replace below.
 
 # gitleaks: binary installed directly (MIT-licensed, no org license required)
-#   binary version pinned via GITLEAKS_VERSION env var in each security job
+#   binary version pinned via GITLEAKS_VERSION env var
 
 name: CI
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
 
-# Cancel in-flight runs for the same ref (mirrors `interruptible: true`)
+# Cancel in-flight runs for the same PR when a new commit is pushed.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Shared pip cache key tied to pyproject.toml (mirrors GitLab cache key)
 env:
   PIP_CACHE_DIR: ~/.cache/pip
 
@@ -36,7 +30,6 @@ env:
 jobs:
   pre-commit:
     name: pre-commit (lint)
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -58,59 +51,15 @@ jobs:
 # ---------------------------------------------------------------------------
 # SECURITY
 # ---------------------------------------------------------------------------
-  gitleaks-mr:
-    name: gitleaks secret scan (PR)
-    if: github.event_name == 'pull_request'
+  gitleaks:
+    name: gitleaks secret scan (full history)
     runs-on: ubuntu-latest
     env:
       GITLEAKS_VERSION: "8.21.2"   # pin explicitly; bump when updating
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
-          fetch-depth: 0          # full history needed by gitleaks
-
-      - name: Install gitleaks
-        run: |
-          curl -sSfL \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            -o gitleaks.tar.gz
-          tar -xzf gitleaks.tar.gz gitleaks
-          sudo install gitleaks /usr/local/bin/gitleaks
-          gitleaks version
-
-      - name: Scan MR-introduced commits
-        run: >-
-          gitleaks git
-          --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
-          --report-format json
-          --report-path gitleaks-report.json
-          --verbose
-          --exit-code 1
-          .
-
-      - name: Upload gitleaks report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: gitleaks-report-pr
-          path: gitleaks-report.json
-          retention-days: 30
-
-  gitleaks-full:
-    name: gitleaks secret scan (full history)
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    # Each SHA gets its own group so a subsequent push never cancels an
-    # in-flight security scan (overrides the top-level cancel-in-progress).
-    concurrency:
-      group: gitleaks-full-${{ github.sha }}
-      cancel-in-progress: false
-    runs-on: ubuntu-latest
-    env:
-      GITLEAKS_VERSION: "8.21.2"
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-        with:
-          fetch-depth: 0
+          fetch-depth: 0            # full history required
 
       - name: Install gitleaks
         run: |
@@ -134,7 +83,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: gitleaks-report-full
+          name: gitleaks-report
           path: gitleaks-report.json
           retention-days: 30
 
@@ -143,7 +92,6 @@ jobs:
 # ---------------------------------------------------------------------------
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false        # run all matrix legs even if one fails
